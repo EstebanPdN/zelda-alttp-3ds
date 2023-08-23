@@ -6,6 +6,8 @@ Original Repository: https://github.com/snesrev/zelda3 <br>
 Use the instructions on the original repository to extract the zelda3_assets.dat file from your rom and put it in Android/data/com.dishii.zelda3/files <br>
 Running the app once will create the directory. <br>
 
+Android 13 users: check the releases tab for the Android 13 version of the app. 
+
 NOTE: Controller only. No touch controls yet. <br>
 
 How to Change Settings: <br>
