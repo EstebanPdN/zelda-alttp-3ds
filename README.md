@@ -18,7 +18,7 @@ L3 Turbo button <br>
 18:9 Aspect Ratio <br>
 Fullscreen(no android on-screen controls) <br>
 
-<h3>Instructions for creating zelda3_assets.dat on android:</h3> <br>
+<h3>Instructions for creating zelda3_assets.dat on android:</h3>
 1. Download PyDroid: https://play.google.com/store/apps/details?id=ru.iiec.pydroid3&hl=en_US. Choose to skip any options that ask for money, you can do all of the following steps without paying.<br>
 2. Open the hamburger menu at the top left of the app and select Pip.<br>
 3. Type in "Pillow" without the quotes and it will have you install the repository app from the app store.<br>
