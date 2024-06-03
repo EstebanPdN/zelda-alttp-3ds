@@ -23,7 +23,7 @@ Fullscreen(no android on-screen controls) <br>
 2. Open the hamburger menu at the top left of the app and select Pip.<br>
 3. Type in "Pillow" without the quotes and it will have you install the repository app from the app store.<br>
 4. Once the repository app is installed, you can install "Pillow" and "pyyaml" <br>
-5. Download the <b>source code<b> zip file for zelda3 at https://github.com/snesrev/zelda3/releases/tag/v0.3. The zip file with the exe file in it will not work. <br>
+5. Download the <b>source code</b> zip file for zelda3 at https://github.com/snesrev/zelda3/releases/tag/v0.3. The zip file with the exe file in it will not work. <br>
 6. Extract the zip file. <br>
 7. Place your rom file in the main zelda3 directory that you extracted, the same one as extract_assets.bat, and rename it to zelda3.sfc <br>
 8. Open PyDroid again, open the hamburger menu, and select Terminal.<br>
