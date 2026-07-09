@@ -1,7 +1,12 @@
 # zelda3-android
-A port of Zelda3 to Android. <br>
+A port of Zelda3 to Android with a second screen mod for dual screen devices like the AYN Thor. <br>
 
 Original Repository: https://github.com/snesrev/zelda3 <br>
+Based on: https://github.com/Waterdish/zelda3-android <br>
+
+The bottom screen shows a live world map, a dungeon map with the rooms you visited, and a touch inventory where you can tap an item to equip it. On the title screen and during cutscenes it just shows a triforce. <br>
+
+The second screen graphics are made from your zelda3_assets.dat while the game runs, so there is no extra setup and the app contains no game assets. <br>
 
 Use the instructions on the original repository (or below if you don't have access to a computer) to extract the zelda3_assets.dat file from your rom and put it in Android/data/com.dishii.zelda3/files <br>
 Running the app once will create the directory. <br>
