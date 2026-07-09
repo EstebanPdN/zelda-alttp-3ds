@@ -15,7 +15,7 @@ Running the app once will create the directory. <br>
 
 Android 13 users: check the releases tab for the Android 13 version of the app. 
 
-NOTE: Controller only. No touch controls yet. <br>
+NOTE: The game itself is controller only, but the bottom screen has full touch controls (map, inventory, equipping items). <br>
 
 How to Change Settings: <br>
 Android/data/com.dishii.zelda3/files contains zelda3.ini. Use a text editor to change options. <br>
