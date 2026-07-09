@@ -8,6 +8,8 @@ The bottom screen shows a live world map, a dungeon map with the rooms you visit
 
 The second screen graphics are made from your zelda3_assets.dat while the game runs, so there is no extra setup and the app contains no game assets. <br>
 
+![](showcase.png)
+
 Use the instructions on the original repository (or below if you don't have access to a computer) to extract the zelda3_assets.dat file from your rom and put it in Android/data/com.dishii.zelda3/files <br>
 Running the app once will create the directory. <br>
 
