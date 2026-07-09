@@ -459,6 +459,9 @@ int main(int argc, char** argv) {
       g_gamepad_buttons = 0;
     inputs |= g_gamepad_buttons;
 
+    extern void SecondScreen_RunFrameHook(void);
+    SecondScreen_RunFrameHook();
+
     SDL_LockMutex(g_audio_mutex);
     bool is_replay = ZeldaRunFrame(inputs);
     SDL_UnlockMutex(g_audio_mutex);

@@ -1,8 +1,16 @@
 
 package com.dishii.zelda3;
 import org.libsdl.app.SDLActivity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.hardware.display.DisplayManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.view.Display;
+import android.view.WindowManager;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,9 +20,59 @@ import android.util.Log;
 //This class is the main SDLActivity and just sets up a bunch of default files
 public class MainActivity extends SDLActivity {
 
+    private static final String TAG = "Zelda3SecondScreen";
+
+    private SecondScreenPresentation secondScreen;
+    private DisplayManager displayManager;
+
+    private final DisplayManager.DisplayListener displayListener =
+            new DisplayManager.DisplayListener() {
+        @Override
+        public void onDisplayAdded(int displayId) {
+            showSecondScreenIfPresent();
+        }
+
+        @Override
+        public void onDisplayRemoved(int displayId) {
+            if (secondScreen != null && secondScreen.getDisplay().getDisplayId() == displayId) {
+                dismissSecondScreen();
+            }
+        }
+
+        @Override
+        public void onDisplayChanged(int displayId) {}
+    };
+
+    // Debug: `adb shell am broadcast -a com.dishii.zelda3.DUMP` writes the
+    // second screen's current frame to the app's external files dir.
+    private final BroadcastReceiver dumpReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (secondScreen != null) {
+                secondScreen.dumpToFile(new File(getExternalFilesDir(null), "second_screen.png"));
+            }
+            byte[] b = new byte[256];
+            try {
+                GameState.readSram(b);
+                Log.i(TAG, String.format("pendants=0x%02x crystals=0x%02x", b[0x74], b[0x7A]));
+            } catch (UnsatisfiedLinkError ignored) {}
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        displayManager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
+        displayManager.registerDisplayListener(displayListener, null);
+        showSecondScreenIfPresent();
+
+        IntentFilter dumpFilter = new IntentFilter("com.dishii.zelda3.DUMP");
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(dumpReceiver, dumpFilter, 2 /* Context.RECEIVER_EXPORTED */);
+        } else {
+            registerReceiver(dumpReceiver, dumpFilter);
+        }
 
         // Check if external storage is available
         if (isExternalStorageWritable()) {
@@ -60,6 +118,49 @@ public class MainActivity extends SDLActivity {
 
             }
         }
+    }
+
+    // Show the companion Presentation on the first non-default display
+    // (the Ayn Thor's bottom screen, or an emulator's simulated display).
+    private void showSecondScreenIfPresent() {
+        if (secondScreen != null) {
+            return;
+        }
+        for (Display display : displayManager.getDisplays()) {
+            if (display.getDisplayId() == Display.DEFAULT_DISPLAY) {
+                continue;
+            }
+            try {
+                secondScreen = new SecondScreenPresentation(this, display);
+                secondScreen.show();
+                Log.i(TAG, "Showing second screen on display " + display.getDisplayId()
+                        + " (" + display.getName() + ")");
+            } catch (WindowManager.InvalidDisplayException e) {
+                Log.w(TAG, "Display " + display.getDisplayId() + " rejected Presentation", e);
+                secondScreen = null;
+                continue;
+            }
+            return;
+        }
+    }
+
+    private void dismissSecondScreen() {
+        if (secondScreen != null) {
+            secondScreen.dismiss();
+            secondScreen = null;
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        try {
+            unregisterReceiver(dumpReceiver);
+        } catch (IllegalArgumentException ignored) {}
+        dismissSecondScreen();
+        if (displayManager != null) {
+            displayManager.unregisterDisplayListener(displayListener);
+        }
+        super.onDestroy();
     }
 
     private void writeDataToFile(File file,InputStream inputStream) {
