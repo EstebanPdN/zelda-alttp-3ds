@@ -15,7 +15,7 @@ public class GameState {
     public static native void readSram(byte[] out);
     /** Equipped Y-item as an inventory grid slot, 1..20 (0 = none). */
     public static native int getEquippedSlot();
-    /** Low byte: palace index 0..13; high byte: current floor as int8 (0=1F, -1=B1). */
+    /** Low byte: palace index 0..13 (0xFF in houses/caves); high byte: current floor as int8 (0=1F, -1=B1). */
     public static native int getDungeon();
     /** Fills out (up to 0x500 bytes) with save_dung_info: uint16/room, low nibble = visited quadrants. */
     public static native void readDungFlags(byte[] out);

@@ -58,7 +58,8 @@ JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getEquippedSlot(JNIEnv *
 // Palace index (0..13, 0xFF when not in a palace) in the low byte,
 // current floor (int8: 0=1F, -1=B1...) in the high byte.
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getDungeon(JNIEnv *env, jclass clazz) {
-  return (uint8)(cur_palace_index_x2 >> 1) | ((dung_cur_floor & 0xFF) << 8);
+  uint8 palace = (uint8)cur_palace_index_x2;
+  return (palace == 0xff ? 0xff : palace >> 1) | ((dung_cur_floor & 0xFF) << 8);
 }
 
 // Copies save_dung_info (g_ram[0xF000..0xF500): uint16 per room; low nibble =

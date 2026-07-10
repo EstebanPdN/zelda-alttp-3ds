@@ -294,6 +294,8 @@ public class MinimapView extends View {
         // intro/file-select screens and a quiet cinema frame during cutscenes;
         // the same screen also covers the brief window before the art is ready
         uiMode = modeForModule(module);
+        if (uiMode == MODE_GAME && indoors && (dungeonInfo & 0xFF) == 0xFF)
+            uiMode = MODE_CINEMA;   // houses and caves have no map (same test the game uses for X)
         if (uiMode != MODE_GAME || !artReady) {
             drawCinemaScreen(canvas, w, h);
             if (isAttachedToWindow()) postInvalidateOnAnimation();
