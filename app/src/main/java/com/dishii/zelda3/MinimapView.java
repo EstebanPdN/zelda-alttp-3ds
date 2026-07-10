@@ -52,7 +52,7 @@ public class MinimapView extends View {
     private static final int COL_PLAQUE = Color.rgb(88, 96, 112);
     private static final int COL_PLAQUE_SEL = Color.rgb(58, 108, 196);
 
-    private static final int TAB_MAP = 0, TAB_ITEMS = 1, TAB_GEAR = 2;
+    private static final int TAB_MAP = 0, TAB_ITEMS = 1, TAB_GEAR = 2, TAB_SETTINGS = 3;
 
     // what the second screen shows, derived from the game's main module
     private static final int MODE_GAME = 0, MODE_TITLE = 1, MODE_CINEMA = 2;
@@ -99,7 +99,20 @@ public class MinimapView extends View {
 
     // touch regions (recomputed during draw)
     private final RectF tabItemsR = new RectF(), tabGearR = new RectF();
+    private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
+    private final RectF[] settingsRowR = {new RectF(), new RectF(), new RectF()};
+    private final RectF[] remapRowR = new RectF[12];
     private final RectF mapAreaR = new RectF(), yRingR = new RectF();
+
+    // settings state
+    private boolean remapMode = false;
+    private int remapArm = -1;          // command index waiting for a button press
+    private long remapArmAt;
+    private final int[] padControls = new int[12];
+    private boolean hudPrefApplied = false;
+    private static final String[] PAD_CMD_NAMES = {
+        "UP", "DOWN", "LEFT", "RIGHT", "SELECT", "START", "A", "B", "X", "Y", "L", "R",
+    };
     private final RectF[] plaqueR = new RectF[10];
     private int plaqueCount = 0;
     private final int[] plaqueFloor = new int[10];
@@ -144,6 +157,7 @@ public class MinimapView extends View {
         bmp.setFilterBitmap(false);
         stroke.setStyle(Paint.Style.STROKE);
         for (int i = 0; i < plaqueR.length; i++) plaqueR[i] = new RectF();
+        for (int i = 0; i < remapRowR.length; i++) remapRowR[i] = new RectF();
         loadAssets(context);
     }
 
@@ -297,6 +311,13 @@ public class MinimapView extends View {
         // generate the art from zelda3_assets.dat once the engine has loaded it
         if (!artReady && !nativeBroken) artReady = tryLoadNativeArt();
 
+        // re-apply the persisted top-screen HUD choice once per app start
+        if (!hudPrefApplied && !nativeBroken) {
+            hudPrefApplied = true;
+            if (getContext().getSharedPreferences("secondscreen", 0).getBoolean("hideTopHud", false))
+                GameState.setHudHidden(true);
+        }
+
         // outside gameplay the minimap makes no sense: show a title card on the
         // intro/file-select screens and a quiet cinema frame during cutscenes;
         // the same screen also covers the brief window before the art is ready
@@ -329,6 +350,8 @@ public class MinimapView extends View {
             drawItemsPanel(canvas, mapAreaR);
         } else if (tab == TAB_GEAR) {
             drawGearPanel(canvas, mapAreaR);
+        } else if (tab == TAB_SETTINGS) {
+            drawSettingsPanel(canvas, mapAreaR);
         } else if (dungeonMode) {
             drawDungeonMap(canvas, mapAreaR, linkX, linkY, area & 0xFF, dungeonInfo);
         } else {
@@ -601,6 +624,138 @@ public class MinimapView extends View {
         return (dungFlags[off] & 0xFF) | ((dungFlags[off + 1] & 0xFF) << 8);
     }
 
+    // ---------- settings ----------
+
+    private void drawSettingsPanel(Canvas c, RectF r) {
+        menuBox(c, r, COL_BOX_BORDER);
+        if (remapMode) {
+            drawRemapPanel(c, r);
+            return;
+        }
+        drawText(c, "SETTINGS", r.centerX() - textWidth("SETTINGS", 3 * u) / 2, r.top + 18 * u, 3 * u);
+
+        boolean ws = false, hudHidden = false;
+        if (!nativeBroken) {
+            ws = GameState.isWidescreen();
+            hudHidden = GameState.isHudHidden();
+        }
+        String[] labels = {"REMAP BUTTONS", "WIDESCREEN", "TOP SCREEN HUD"};
+        String[] values = {"", ws ? "ON" : "OFF", hudHidden ? "OFF" : "ON"};
+        float rowH = 76 * u, gap = 18 * u;
+        float y0 = r.top + 60 * u;
+        for (int i = 0; i < 3; i++) {
+            RectF row = settingsRowR[i];
+            row.set(r.left + 28 * u, y0 + i * (rowH + gap), r.right - 28 * u, y0 + i * (rowH + gap) + rowH);
+            fill.setColor(Color.rgb(28, 28, 28));
+            c.drawRoundRect(row, 8 * u, 8 * u, fill);
+            stroke.setStrokeWidth(3 * u); stroke.setColor(COL_GOLD_DARK);
+            c.drawRoundRect(row, 8 * u, 8 * u, stroke);
+            float ty = row.centerY() - 12 * u;
+            drawText(c, labels[i], row.left + 22 * u, ty, 3 * u);
+            String v = values[i];
+            if (v.isEmpty()) {
+                // chevron for the remap sub-screen
+                aa.setStyle(Paint.Style.STROKE); aa.setStrokeWidth(5 * u); aa.setColor(COL_GOLD);
+                float ax = row.right - 40 * u, ay = row.centerY();
+                c.drawLine(ax - 8 * u, ay - 12 * u, ax + 6 * u, ay, aa);
+                c.drawLine(ax + 6 * u, ay, ax - 8 * u, ay + 12 * u, aa);
+            } else {
+                drawText(c, v, row.right - 22 * u - textWidth(v, 3 * u), ty, 3 * u);
+            }
+        }
+    }
+
+    private void drawRemapPanel(Canvas c, RectF r) {
+        drawText(c, "REMAP BUTTONS", r.centerX() - textWidth("REMAP BUTTONS", 3 * u) / 2, r.top + 18 * u, 3 * u);
+        remapBackR.set(r.left + 20 * u, r.top + 12 * u, r.left + 110 * u, r.top + 50 * u);
+        fill.setColor(Color.rgb(28, 28, 28));
+        c.drawRoundRect(remapBackR, 8 * u, 8 * u, fill);
+        stroke.setStrokeWidth(3 * u); stroke.setColor(COL_GOLD_DARK);
+        c.drawRoundRect(remapBackR, 8 * u, 8 * u, stroke);
+        drawText(c, "BACK", remapBackR.centerX() - textWidth("BACK", 2.2f * u) / 2,
+                remapBackR.centerY() - 9 * u, 2.2f * u);
+
+        // resolve a pending capture from the game thread
+        if (remapArm >= 0 && !nativeBroken) {
+            int b = GameState.getCapturedButton();
+            if (b >= 0) {
+                padControls[remapArm] = b;
+                GameState.setGamepadControls(padControls);
+                writeIniGamepadControls();
+                remapArm = -1;
+            } else if (b == -1 || System.nanoTime() - remapArmAt > 8_000_000_000L) {
+                GameState.armButtonCapture(false);
+                remapArm = -1;
+            }
+        }
+
+        float rowH = 58 * u, gap = 12 * u;
+        float colW = (r.width() - 3 * 24 * u) / 2;
+        float y0 = r.top + 70 * u;
+        for (int i = 0; i < 12; i++) {
+            int col = i / 6, rowI = i % 6;
+            float x = r.left + 24 * u + col * (colW + 24 * u);
+            float y = y0 + rowI * (rowH + gap);
+            RectF row = remapRowR[i];
+            row.set(x, y, x + colW, y + rowH);
+            boolean armed = remapArm == i;
+            fill.setColor(armed ? Color.rgb(58, 48, 12) : Color.rgb(28, 28, 28));
+            c.drawRoundRect(row, 8 * u, 8 * u, fill);
+            stroke.setStrokeWidth(3 * u); stroke.setColor(armed ? COL_GOLD : COL_GOLD_DARK);
+            c.drawRoundRect(row, 8 * u, 8 * u, stroke);
+            float ty = row.centerY() - 9 * u;
+            drawText(c, PAD_CMD_NAMES[i], row.left + 14 * u, ty, 2.2f * u);
+            String v = armed ? "PRESS KEY"
+                    : (padControls[i] >= 0 && padControls[i] < GameState.PAD_BUTTON_LABEL.length
+                       ? GameState.PAD_BUTTON_LABEL[padControls[i]] : "----");
+            drawText(c, v, row.right - 14 * u - textWidth(v, 2.2f * u), ty, 2.2f * u);
+        }
+    }
+
+    // Rewrite one `key = value` line inside a section of the user's zelda3.ini.
+    private void updateIni(String section, String key, String value) {
+        try {
+            java.io.File f = new java.io.File(getContext().getExternalFilesDir(null), "zelda3.ini");
+            java.io.BufferedReader in = new java.io.BufferedReader(new java.io.FileReader(f));
+            StringBuilder sb = new StringBuilder();
+            String line, cur = "";
+            boolean done = false;
+            while ((line = in.readLine()) != null) {
+                String t = line.trim();
+                if (t.startsWith("["))
+                    cur = t;
+                else if (!done && cur.equalsIgnoreCase(section)
+                        && t.toLowerCase().startsWith(key.toLowerCase())
+                        && t.substring(key.length()).trim().startsWith("=")) {
+                    line = key + " = " + value;
+                    done = true;
+                }
+                sb.append(line).append('\n');
+            }
+            in.close();
+            if (!done) {
+                int at = sb.indexOf(section + "\n");
+                if (at >= 0) sb.insert(at + section.length() + 1, key + " = " + value + "\n");
+                else sb.append(section).append('\n').append(key).append(" = ").append(value).append('\n');
+            }
+            java.io.FileWriter out = new java.io.FileWriter(f);
+            out.write(sb.toString());
+            out.close();
+        } catch (java.io.IOException e) {
+            Log.w(TAG, "failed to update zelda3.ini", e);
+        }
+    }
+
+    private void writeIniGamepadControls() {
+        StringBuilder v = new StringBuilder();
+        for (int i = 0; i < 12; i++) {
+            if (i > 0) v.append(", ");
+            if (padControls[i] >= 0 && padControls[i] < GameState.PAD_BUTTON_INI.length)
+                v.append(GameState.PAD_BUTTON_INI[padControls[i]]);
+        }
+        updateIni("[GamepadMap]", "Controls", v.toString());
+    }
+
     // ---------- sidebar ----------
 
     private void drawSidebar(Canvas c, float x, float y, float w, float h, boolean dungeonMode) {
@@ -696,11 +851,28 @@ public class MinimapView extends View {
     private void drawTabBar(Canvas c, int w, int h, int tabH) {
         float y = h - tabH + 4 * u;
         float bh = tabH - 34 * u;   // keep clear of the bottom gesture inset
-        float half = w / 2f;
+        float sq = bh;              // square settings button on the right
+        tabSettingsR.set(w - 8 * u - sq, y, w - 8 * u, y + bh);
+        float half = (w - sq - 10 * u) / 2f;
         tabGearR.set(8 * u, y, half - 5 * u, y + bh);
-        tabItemsR.set(half + 5 * u, y, w - 8 * u, y + bh);
+        tabItemsR.set(half + 5 * u, y, w - 18 * u - sq, y + bh);
         drawTabButton(c, tabGearR, "GEAR", tab == TAB_GEAR);
         drawTabButton(c, tabItemsR, "ITEMS", tab == TAB_ITEMS);
+        drawTabButton(c, tabSettingsR, null, tab == TAB_SETTINGS);
+        drawCog(c, tabSettingsR.centerX(), tabSettingsR.centerY(), bh * 0.28f);
+    }
+
+    private void drawCog(Canvas c, float cx, float cy, float r) {
+        aa.setStyle(Paint.Style.FILL);
+        aa.setColor(Color.WHITE);
+        for (int i = 0; i < 8; i++) {
+            double a = Math.PI / 4 * i;
+            float tx = cx + (float) Math.cos(a) * r, ty = cy + (float) Math.sin(a) * r;
+            c.drawCircle(tx, ty, r * 0.3f, aa);
+        }
+        c.drawCircle(cx, cy, r * 0.85f, aa);
+        aa.setColor(COL_BOX);
+        c.drawCircle(cx, cy, r * 0.38f, aa);
     }
 
     private void drawTabButton(Canvas c, RectF r, String label, boolean active) {
@@ -710,7 +882,8 @@ public class MinimapView extends View {
         stroke.setColor(active ? COL_GOLD : COL_BOX_BORDER2);
         c.drawRoundRect(r.left + 3 * u, r.top + 3 * u, r.right - 3 * u, r.bottom - 3 * u, 8 * u, 8 * u, stroke);
         float s = 3 * u;
-        drawText(c, label, r.centerX() - textWidth(label, s) / 2, r.centerY() - 4 * s, s);
+        if (label != null)
+            drawText(c, label, r.centerX() - textWidth(label, s) / 2, r.centerY() - 4 * s, s);
     }
 
     // ---------- title / cutscene screens ----------
@@ -962,8 +1135,47 @@ public class MinimapView extends View {
         if (uiMode != MODE_GAME) return true;   // no touch UI on title/cutscene screens
         float x = ev.getX(), y = ev.getY();
 
-        if (tabItemsR.contains(x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; return true; }
-        if (tabGearR.contains(x, y)) { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; return true; }
+        if (tabItemsR.contains(x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leaveRemap(); return true; }
+        if (tabGearR.contains(x, y)) { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leaveRemap(); return true; }
+        if (tabSettingsR.contains(x, y)) {
+            tab = (tab == TAB_SETTINGS) ? TAB_MAP : TAB_SETTINGS;
+            leaveRemap();
+            return true;
+        }
+
+        if (tab == TAB_SETTINGS) {
+            if (remapMode) {
+                if (remapBackR.contains(x, y)) { leaveRemap(); return true; }
+                for (int i = 0; i < 12; i++) {
+                    if (remapRowR[i].contains(x, y) && !nativeBroken) {
+                        if (remapArm == i) {
+                            GameState.armButtonCapture(false);
+                            remapArm = -1;
+                        } else {
+                            remapArm = i;
+                            remapArmAt = System.nanoTime();
+                            GameState.armButtonCapture(true);
+                        }
+                        return true;
+                    }
+                }
+            } else if (!nativeBroken) {
+                if (settingsRowR[0].contains(x, y)) {
+                    GameState.getGamepadControls(padControls);
+                    remapMode = true;
+                } else if (settingsRowR[1].contains(x, y)) {
+                    boolean on = !GameState.isWidescreen();
+                    GameState.setWidescreen(on);
+                    updateIni("[General]", "ExtendedAspectRatio", on ? "16:9" : "4:3");
+                } else if (settingsRowR[2].contains(x, y)) {
+                    boolean hide = !GameState.isHudHidden();
+                    GameState.setHudHidden(hide);
+                    getContext().getSharedPreferences("secondscreen", 0)
+                            .edit().putBoolean("hideTopHud", hide).apply();
+                }
+            }
+            return true;
+        }
 
         if (yRingR.contains(x, y)) {
             // cycle to the next owned item
@@ -1009,6 +1221,12 @@ public class MinimapView extends View {
             }
         }
         return true;
+    }
+
+    private void leaveRemap() {
+        if (remapArm >= 0 && !nativeBroken) GameState.armButtonCapture(false);
+        remapArm = -1;
+        remapMode = false;
     }
 
     @Override

@@ -12,6 +12,9 @@
 #include "assets.h"
 #include "load_gfx.h"
 #include "messaging.h"
+#include "config.h"
+#include "zelda_rtl.h"
+#include "snes/ppu.h"
 #include "second_screen_tables.h"
 
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getLinkX(JNIEnv *env, jclass clazz) {
@@ -388,14 +391,96 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderMapIcons(JNIEn
 
 // Requested from the UI thread; applied on the game thread at frame start.
 static volatile int g_pending_equip_slot;
+static volatile int g_pending_widescreen = -1;
+static volatile int g_pending_hide_hud = -1;
+static volatile int g_pending_controls_set;
+static uint8 g_pending_controls[12];
+
+// Read by nmi.c: blanks the HUD strip in VRAM instead of copying it.
+bool g_ss_hide_hud;
+// -1 idle, -2 armed (main.c swallows the next press), >= 0 captured button.
+volatile int g_ss_capture_button = -1;
 
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_equipSlot(JNIEnv *env, jclass clazz, jint slot) {
   if (slot >= 1 && slot <= 20)
     g_pending_equip_slot = slot;
 }
 
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setWidescreen(JNIEnv *env, jclass clazz, jboolean on) {
+  g_pending_widescreen = on ? 1 : 0;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isWidescreen(JNIEnv *env, jclass clazz) {
+  int pending = g_pending_widescreen;
+  if (pending >= 0) return pending != 0;
+  return g_zenv.ppu && g_zenv.ppu->extraLeftRight != 0;
+}
+
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setHudHidden(JNIEnv *env, jclass clazz, jboolean hide) {
+  g_pending_hide_hud = hide ? 1 : 0;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isHudHidden(JNIEnv *env, jclass clazz) {
+  int pending = g_pending_hide_hud;
+  if (pending >= 0) return pending != 0;
+  return g_ss_hide_hud;
+}
+
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_armButtonCapture(JNIEnv *env, jclass clazz, jboolean arm) {
+  g_ss_capture_button = arm ? -2 : -1;
+}
+
+// Returns the captured gamepad button and rearms idle; -2 still waiting, -1 idle.
+JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getCapturedButton(JNIEnv *env, jclass clazz) {
+  int b = g_ss_capture_button;
+  if (b >= 0) g_ss_capture_button = -1;
+  return b;
+}
+
+// Fills out (12 ints) with the gamepad button bound to each joypad command
+// (Up, Down, Left, Right, Select, Start, A, B, X, Y, L, R); -1 = unbound.
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_getGamepadControls(JNIEnv *env, jclass clazz, jintArray out) {
+  if ((*env)->GetArrayLength(env, out) < 12) return;
+  uint8 btns[12];
+  GamepadMap_GetControls(btns);
+  jint *p = (*env)->GetIntArrayElements(env, out, NULL);
+  for (int i = 0; i < 12; i++)
+    p[i] = btns[i] == 0xff ? -1 : btns[i];
+  (*env)->ReleaseIntArrayElements(env, out, p, 0);
+}
+
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setGamepadControls(JNIEnv *env, jclass clazz, jintArray in) {
+  if ((*env)->GetArrayLength(env, in) < 12) return;
+  jint buf[12];
+  (*env)->GetIntArrayRegion(env, in, 0, 12, buf);
+  for (int i = 0; i < 12; i++)
+    g_pending_controls[i] = (buf[i] >= 0 && buf[i] < kGamepadBtn_Count) ? (uint8)buf[i] : 0xff;
+  g_pending_controls_set = 1;
+}
+
 // Called from the main loop right before ZeldaRunFrame (game thread).
 void SecondScreen_RunFrameHook(void) {
+  int ws = g_pending_widescreen;
+  if (ws >= 0) {
+    g_pending_widescreen = -1;
+    extern void ZeldaSetWidescreen(bool enable);
+    ZeldaSetWidescreen(ws != 0);
+  }
+  int hh = g_pending_hide_hud;
+  if (hh >= 0) {
+    g_pending_hide_hud = -1;
+    g_ss_hide_hud = hh != 0;
+    if (main_module_index == 7 || main_module_index == 9 || main_module_index == 14) {
+      if (g_ss_hide_hud)
+        flag_update_hud_in_nmi++;
+      else
+        Hud_Rebuild();
+    }
+  }
+  if (g_pending_controls_set) {
+    g_pending_controls_set = 0;
+    GamepadMap_SetControls(g_pending_controls);
+  }
   int slot = g_pending_equip_slot;
   if (!slot) return;
   g_pending_equip_slot = 0;

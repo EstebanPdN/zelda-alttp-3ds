@@ -21,6 +21,32 @@ public class GameState {
     public static native void readDungFlags(byte[] out);
     /** Request equipping the item in grid slot 1..20; applied on the game thread. */
     public static native void equipSlot(int slot);
+    /** Toggle the extended aspect ratio at runtime; applied on the game thread. */
+    public static native void setWidescreen(boolean on);
+    public static native boolean isWidescreen();
+    /** Blank the game's own HUD strip on the top screen; applied on the game thread. */
+    public static native void setHudHidden(boolean hide);
+    public static native boolean isHudHidden();
+    /** Arm (or cancel) capture of the next gamepad button press; the press is swallowed. */
+    public static native void armButtonCapture(boolean arm);
+    /** The captured button index, consuming it; -2 = still waiting, -1 = idle. */
+    public static native int getCapturedButton();
+    /** Fills out (12 ints) with the button bound to each joypad command, -1 = unbound.
+     *  Command order: Up, Down, Left, Right, Select, Start, A, B, X, Y, L, R. */
+    public static native void getGamepadControls(int[] out);
+    /** Rebind the 12 joypad commands; applied on the game thread. */
+    public static native void setGamepadControls(int[] buttons);
+
+    // Gamepad button names by index, matching the native kGamepadBtn enum; the
+    // ini names are what config.c's ParseGamepadButtonName accepts.
+    public static final String[] PAD_BUTTON_INI = {
+        "A", "B", "X", "Y", "Back", "Guide", "Start", "L3", "R3",
+        "L1", "R1", "DpadUp", "DpadDown", "DpadLeft", "DpadRight", "L2", "R2",
+    };
+    public static final String[] PAD_BUTTON_LABEL = {
+        "A", "B", "X", "Y", "BACK", "GUIDE", "START", "L3", "R3",
+        "L1", "R1", "D UP", "D DOWN", "D LEFT", "D RIGHT", "L2", "R2",
+    };
 
     // ---- runtime art generation from the user's zelda3_assets.dat ----
     // All return false (or -1) until the game has loaded its assets file.

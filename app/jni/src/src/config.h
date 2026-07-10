@@ -108,3 +108,5 @@ extern Config g_config;
 void ParseConfigFile(const char *filename);
 int FindCmdForSdlKey(SDL_Keycode code, SDL_Keymod mod);
 int FindCmdForGamepadButton(int button, uint32 modifiers);
+void GamepadMap_GetControls(uint8 *out);
+void GamepadMap_SetControls(const uint8 *btns);

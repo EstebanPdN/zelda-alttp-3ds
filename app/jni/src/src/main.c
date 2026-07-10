@@ -268,6 +268,24 @@ static void SdlRenderer_EndDraw() {
   SDL_RenderPresent(g_renderer); // vsyncs to 60 FPS?
 }
 
+// Toggle the extended aspect ratio while running (game thread).
+void ZeldaSetWidescreen(bool enable) {
+  int extra = enable ? (g_snes_height * 16 / 9 - 256) / 2 : 0;
+  g_config.extended_aspect_ratio = extra;
+  g_zenv.ppu->extraLeftRight = UintMin(extra, kPpuExtraLeftRight);
+  if (!enable)
+    PpuSetExtraSideSpace(g_zenv.ppu, 0, 0, 0);
+  g_snes_width = extra * 2 + 256;
+  if (g_renderer && !g_config.ignore_aspect_ratio)
+    SDL_RenderSetLogicalSize(g_renderer, g_snes_width, g_snes_height);
+  if (g_texture) {
+    SDL_DestroyTexture(g_texture);
+    int tex_mult = (g_ppu_render_flags & kPpuRenderFlags_4x4Mode7) ? 4 : 1;
+    g_texture = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                  g_snes_width * tex_mult, g_snes_height * tex_mult);
+  }
+}
+
 static const struct RendererFuncs kSdlRendererFuncs  = {
   &SdlRenderer_Init,
   &SdlRenderer_Destroy,
@@ -690,6 +708,12 @@ static int RemapSdlButton(int button) {
 }
 
 static void HandleGamepadInput(int button, bool pressed) {
+  extern volatile int g_ss_capture_button;
+  if (g_ss_capture_button == -2) {
+    if (pressed)
+      g_ss_capture_button = button;
+    return;
+  }
   if (!!(g_gamepad_modifiers & (1 << button)) == pressed)
     return;
   g_gamepad_modifiers ^= 1 << button;

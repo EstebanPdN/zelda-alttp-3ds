@@ -185,6 +185,37 @@ static void GamepadMap_Add(int button, uint32 modifiers, uint16 cmd) {
   *p = i + 1;
 }
 
+// Report the unmodified button bound to each of the 12 joypad commands (0xff = none).
+void GamepadMap_GetControls(uint8 *out) {
+  for (int i = 0; i < 12; i++)
+    out[i] = 0xff;
+  for (int b = 0; b < kGamepadBtn_Count; b++) {
+    for (int e = joymap_first[b]; e != 0; e = joymap_ents[e - 1].next) {
+      GamepadMapEnt *ent = &joymap_ents[e - 1];
+      int cmd = ent->cmd - kKeys_Controls;
+      if (ent->modifiers == 0 && (unsigned)cmd < 12 && out[cmd] == 0xff)
+        out[cmd] = b;
+    }
+  }
+}
+
+// Rebind the 12 joypad commands, leaving other gamepad mappings untouched.
+void GamepadMap_SetControls(const uint8 *btns) {
+  for (int b = 0; b < kGamepadBtn_Count; b++) {
+    uint16 *p = &joymap_first[b];
+    while (*p) {
+      GamepadMapEnt *ent = &joymap_ents[*p - 1];
+      if (ent->cmd >= kKeys_Controls && ent->cmd <= kKeys_Controls_Last)
+        *p = ent->next;
+      else
+        p = &ent->next;
+    }
+  }
+  for (int i = 0; i < 12; i++)
+    if (btns[i] < kGamepadBtn_Count)
+      GamepadMap_Add(btns[i], 0, kKeys_Controls + i);
+}
+
 int FindCmdForGamepadButton(int button, uint32 modifiers) {
   GamepadMapEnt *ent;
   for(int e = joymap_first[button]; e != 0; e = ent->next) {

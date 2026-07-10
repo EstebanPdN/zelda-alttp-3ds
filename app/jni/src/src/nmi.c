@@ -205,7 +205,14 @@ void NMI_DoUpdates() {  // 8089e0
   }
 
   if (flag_update_hud_in_nmi) {
-    memcpy(&g_zenv.vram[word_7E0219], hud_tile_indices_buffer, 165 * sizeof(uint16));
+    extern bool g_ss_hide_hud;
+    if (g_ss_hide_hud) {
+      uint16 *hud = &g_zenv.vram[word_7E0219];
+      for (int i = 0; i < 165; i++)
+        hud[i] = 0x207f;
+    } else {
+      memcpy(&g_zenv.vram[word_7E0219], hud_tile_indices_buffer, 165 * sizeof(uint16));
+    }
   }
 
   if (flag_update_cgram_in_nmi) {
