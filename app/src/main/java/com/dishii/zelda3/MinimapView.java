@@ -634,8 +634,9 @@ public class MinimapView extends View {
         // center the equip ring in the space that remains — fills any aspect
         float hs = 19 * u;
         float barH = 18 * u;
+        boolean halfMagic = sram(0x7B) >= 1;
         float my = y + h - barH - 6 * u;
-        float hy = my - 2 * hs - 16 * u;
+        float hy = my - 2 * hs - 16 * u - (halfMagic ? 18 * u : 0);
 
         // equipped item ring: tap cycles to the next owned item
         float ringR = 66 * u;
@@ -661,7 +662,11 @@ public class MinimapView extends View {
             drawGlyph(c, k, hx0 + (i % 10) * hs, hy + (i / 10) * hs, 2.2f * u);
         }
 
-        // magic bar
+        // magic bar (with the HUD's 1/2 marker when the upgrade is owned)
+        if (halfMagic) {
+            float gx = x + (w - 48 * u) / 2;
+            for (int i = 0; i < 3; i++) drawGlyph(c, "half" + i, gx + i * 16 * u, my - 20 * u, 2 * u);
+        }
         int magic = Math.min(sram(0x6E), 128);
         dst.set(x + 16 * u, my, x + w - 16 * u, my + barH);
         fill.setColor(COL_BOX);
@@ -881,6 +886,8 @@ public class MinimapView extends View {
 
         float y3 = y2 + 2 * hs + 20 * u;
         drawText(c, "MAGIC", x0, y3, 2.4f * u);
+        if (sram(0x7B) >= 1)
+            for (int i = 0; i < 3; i++) drawGlyph(c, "half" + i, x0 + 100 * u + i * 16 * u, y3 + 2 * u, 2 * u);
         int magic = Math.min(sram(0x6E), 128);
         float barL = x0 + 150 * u, barR = px - 24 * u;
         dst.set(barL, y3 - 2 * u, barR, y3 + 22 * u);
