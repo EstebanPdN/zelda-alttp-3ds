@@ -468,7 +468,7 @@ public class MinimapView extends View {
         fill.setColor(Color.WHITE);
         float cxb = dst.centerX(), cyb = dst.centerY(), arm = 14 * u, th = 5 * u;
         c.drawRect(cxb - arm, cyb - th / 2, cxb + arm, cyb + th / 2, fill);
-        if (!wholeMap) c.drawRect(cxb - th / 2, cyb - arm, cxb + th / 2, cyb + arm, fill);
+        if (wholeMap) c.drawRect(cxb - th / 2, cyb - arm, cxb + th / 2, cyb + arm, fill);
     }
 
     private static float clamp(float v, float lo, float hi) {
