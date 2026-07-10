@@ -49,9 +49,6 @@ public class MinimapView extends View {
     private static final int COL_STONE_EDGE_L = Color.rgb(134, 142, 158);
     private static final int COL_STONE_EDGE_D = Color.rgb(44, 50, 62);
     private static final int COL_STONE_INSET = Color.rgb(38, 44, 56);
-    private static final int COL_ROOM_VISITED = Color.rgb(108, 168, 244);
-    private static final int COL_ROOM_VISITED_HI = Color.rgb(150, 198, 255);
-    private static final int COL_ROOM_HIDDEN = Color.rgb(64, 74, 94);
     private static final int COL_PLAQUE = Color.rgb(88, 96, 112);
     private static final int COL_PLAQUE_SEL = Color.rgb(58, 108, 196);
 
@@ -86,7 +83,8 @@ public class MinimapView extends View {
     /** UI scale: design reference is a 1280x720 screen; everything scales with min(w,h). */
     private float u = 1f;
     private final byte[] sram = new byte[256];
-    private final byte[] dungFlags = new byte[0x500];
+    private final int[] dungFloorBuf = new int[80 * 80];
+    private Bitmap dungFloorBmp;
     private int tab = TAB_MAP;
     private boolean wholeMap = false;
     private int viewFloorOffset = 0;
@@ -276,7 +274,6 @@ public class MinimapView extends View {
                 dungeonInfo = GameState.getDungeon();
                 module = GameState.getModule() & 0xFF;
                 GameState.readSram(sram);
-                GameState.readDungFlags(dungFlags);
             } catch (UnsatisfiedLinkError e) {
                 nativeBroken = true;
             }
@@ -528,28 +525,20 @@ public class MinimapView extends View {
         float cell = (msize - 24 * u) / 5f;
         float gx = mp.left + 12 * u, gy = mp.top + 12 * u;
 
+        // the floor's rooms drawn with the game's own map tiles
+        if (!GameState.renderDungeonFloor(palace, li, dungFloorBuf)) return;
+        if (dungFloorBmp == null) dungFloorBmp = Bitmap.createBitmap(80, 80, Bitmap.Config.ARGB_8888);
+        dungFloorBmp.setPixels(dungFloorBuf, 0, 80, 0, 0, 80, 80);
+        src.set(0, 0, 80, 80);
+        dst.set(gx, gy, gx + 5 * cell, gy + 5 * cell);
+        c.drawBitmap(dungFloorBmp, src, dst, bmp);
+
         for (int i = 0; i < 25; i++) {
             int v = lay[i] & 0xFF;
             if (v == 0x0F) continue;
             int col = i % 5, row = i / 5;
             float x = gx + col * cell, y = gy + row * cell;
-            dst.set(x + 3 * u, y + 3 * u, x + cell - 3 * u, y + cell - 3 * u);
-
-            int flags = dungFlag(v);
-            boolean visited = (flags & 0xF) != 0;
             boolean isCur = (v == (room & 0xFF)) && viewFloor == floor;
-
-            if (visited || isCur) {
-                fill.setColor(isCur ? COL_ROOM_VISITED_HI : COL_ROOM_VISITED);
-            } else if (hasMapItem) {
-                fill.setColor(COL_ROOM_HIDDEN);
-            } else {
-                continue;
-            }
-            c.drawRoundRect(dst, 7 * u, 7 * u, fill);
-            stroke.setStrokeWidth(2 * u);
-            stroke.setColor(visited || isCur ? Color.rgb(30, 60, 110) : COL_STONE_EDGE_D);
-            c.drawRoundRect(dst, 7 * u, 7 * u, stroke);
 
             if (hasMapItem && v == d.boss) {
                 aa.setStyle(Paint.Style.STROKE);
@@ -560,6 +549,9 @@ public class MinimapView extends View {
             }
 
             if (isCur) {
+                stroke.setStrokeWidth(3 * u);
+                stroke.setColor(COL_GOLD);
+                c.drawRect(x + 1.5f * u, y + 1.5f * u, x + cell - 1.5f * u, y + cell - 1.5f * u, stroke);
                 float lx = x + ((linkX & 0x1FF) / 512f) * cell;
                 float ly = y + ((linkY & 0x1FF) / 512f) * cell;
                 float bob = (float) Math.sin(System.nanoTime() / 3.0e8) * 2f * u;
@@ -567,12 +559,6 @@ public class MinimapView extends View {
                 drawSprite(c, linkFace, faceSrc, lx - 16 * fs, ly - 16 * fs + bob, fs);
             }
         }
-    }
-
-    private int dungFlag(int roomLowByte) {
-        int off = roomLowByte * 2;
-        if (off + 1 >= dungFlags.length) return 0;
-        return (dungFlags[off] & 0xFF) | ((dungFlags[off + 1] & 0xFF) << 8);
     }
 
     // ---------- sidebar ----------

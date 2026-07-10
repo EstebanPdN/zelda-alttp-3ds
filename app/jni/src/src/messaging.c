@@ -233,6 +233,10 @@ uint8 GetOtherDungmapInfo(int count) {
   return p[count];
 }
 
+const uint16 *GetDungmapRoomShape(int idx) {
+  return &kDungMap_Tab23[idx * 4];
+}
+
 void DungMap_4() {
   BG2VOFS_copy2 += dungmap_var4;
   dungmap_var5 -= dungmap_var4;

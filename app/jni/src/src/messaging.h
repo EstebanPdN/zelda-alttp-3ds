@@ -3,6 +3,7 @@
 
 const uint8 *GetDungmapFloorLayout();
 uint8 GetOtherDungmapInfo(int count);
+const uint16 *GetDungmapRoomShape(int idx);
 void DungMap_4();
 void Module_Messaging_6();
 void OverworldMap_SetupHdma();

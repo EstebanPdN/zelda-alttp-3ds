@@ -843,6 +843,10 @@ void InitializeTilesets() {  // 80e19b
   LoadBackgroundGraphics(&g_zenv.vram[0x3c00], mt[7], 0, &g_ram[0x14000]);
 }
 
+const uint8 *GetSpriteTilesetPacks(int idx) {
+  return kSpriteTilesets[idx];
+}
+
 void LoadDefaultGraphics() {  // 80e2d0
   const uint8 *src = GetCompSpritePtr(0);
 

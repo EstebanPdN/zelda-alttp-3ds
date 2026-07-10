@@ -48,6 +48,7 @@ void Do3To4High16Bit(uint8 *dst, const uint8 *src, int num);
 void Do3To4Low16Bit(uint8 *dst, const uint8 *src, int num);
 void LoadNewSpriteGFXSet();
 void InitializeTilesets();
+const uint8 *GetSpriteTilesetPacks(int idx);
 void LoadDefaultGraphics();
 void Attract_LoadBG3GFX();
 void Graphics_LoadChrHalfSlot();

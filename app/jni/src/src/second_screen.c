@@ -11,6 +11,7 @@
 #include "hud.h"
 #include "assets.h"
 #include "load_gfx.h"
+#include "messaging.h"
 #include "second_screen_tables.h"
 
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getLinkX(JNIEnv *env, jclass clazz) {
@@ -81,8 +82,8 @@ static bool g_ss_tiles_ready;
 
 static bool SS_AssetsReady(void) {
   return g_asset_ptrs[57] && g_asset_ptrs[65] && g_asset_ptrs[66] && g_asset_ptrs[67] &&
-         g_asset_ptrs[68] && g_asset_ptrs[81] && g_asset_ptrs[92] && g_asset_ptrs[93] &&
-         g_asset_ptrs[97];
+         g_asset_ptrs[68] && g_asset_ptrs[81] && g_asset_ptrs[90] && g_asset_ptrs[92] &&
+         g_asset_ptrs[93] && g_asset_ptrs[97] && g_asset_ptrs[98];
 }
 
 static void SS_EnsureTiles(void) {
@@ -270,6 +271,95 @@ JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getDungeonLayout(JNIEnv 
   if ((jsize)b.size < n) n = (jsize)b.size;
   (*env)->SetByteArrayRegion(env, out, 0, n, (const jbyte *)b.ptr);
   return (jint)(b.size / 25) | (kBasements[palace] << 8);
+}
+
+// decoded dungeon-map tiles: BG chars 0x300-0x3bf as pixel values (0..7).
+// The map screen's BG char base is vram 0x2000 (BG12NBA=0x22), so those chars
+// alias vram 0x5000-0x5bff: sprite subsets 0-2 of the per-palace tileset
+// 0x80|palace loaded by Module0E_03_01_00_PrepMapGraphics.
+static uint8 g_ss_dmap_tiles[192 * 64];
+static int g_ss_dmap_palace = -1;
+
+static void SS_EnsureDmapTiles(int palace) {
+  if (g_ss_dmap_palace == palace) return;
+  const uint8 *packs = GetSpriteTilesetPacks(0x80 | palace);
+  uint8 raw[0x1000];
+  for (int s = 0; s < 3; s++) {
+    Decomp_spr(raw, packs[s]);  // these packs all take the Do3To4Low path
+    for (int t = 0; t < 64; t++) {
+      const uint8 *tp = raw + t * 24;  // 3bpp: 8 rows of planes 0+1, then 8 bytes of plane 2
+      uint8 *out = g_ss_dmap_tiles + (s * 64 + t) * 64;
+      for (int y = 0; y < 8; y++) {
+        uint8 b0 = tp[y * 2], b1 = tp[y * 2 + 1], b2 = tp[16 + y];
+        for (int x = 0; x < 8; x++)
+          out[y * 8 + x] = ((b0 >> (7 - x)) & 1) | (((b1 >> (7 - x)) & 1) << 1) |
+                           (((b2 >> (7 - x)) & 1) << 2);
+      }
+    }
+  }
+  g_ss_dmap_palace = palace;
+}
+
+// draw one dungeon-map tile; the palace map palette rows sit at BG palettes 2..7
+static void SS_DmapDrawTile(jint *px, int stride, int x0, int y0, uint16 v) {
+  int id = (v & 0x3ff) - 0x300;
+  if (id < 0 || id >= 192) return;
+  const uint8 *t = g_ss_dmap_tiles + id * 64;
+  int p = (v >> 10) & 7;
+  if (p < 2) p = 2;
+  for (int y = 0; y < 8; y++) {
+    int sy = (v & 0x8000) ? 7 - y : y;
+    for (int x = 0; x < 8; x++) {
+      int sx = (v & 0x4000) ? 7 - x : x;
+      uint8 pix = t[sy * 8 + sx];
+      if (pix) px[(y0 + y) * stride + x0 + x] = SS_Snes555(kPalette_PalaceMapBg[(p - 2) * 16 + pix]);
+    }
+  }
+}
+
+// per-quadrant tile choice, same rules as DungeonMap_DrawSingleRowOfRooms:
+// visited quadrants in full color, map-item-only ones dimmed, otherwise blank
+static uint16 SS_DmapQuad(uint16 e, bool visited, bool have_map) {
+  if (visited || e == 0xB00)
+    return (visited || have_map) ? e : 0xb00;
+  if (!have_map)
+    return 0xb00;
+  return (e & 0x1000) ? (e & ~0x1c00) | 0xc00 : e + 0x400;
+}
+
+// One dungeon floor as the game's own map mode draws it: each room of the 5x5
+// grid becomes a 2x2 block of map tiles keyed by its shape id from asset 98
+// (16x16 px per room -> 80x80 out), read live from save_dung_info.
+JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderDungeonFloor(JNIEnv *env, jclass clazz, jint palace, jint floorIdx, jintArray out) {
+  if (palace < 0 || palace >= 14 || !SS_AssetsReady()) return false;
+  if ((*env)->GetArrayLength(env, out) < 80 * 80) return false;
+  MemBlk lay = FindInAssetArray(97, palace);
+  MemBlk shapes = FindInAssetArray(98, palace);
+  if (floorIdx < 0 || (size_t)(floorIdx + 1) * 25 > lay.size) return false;
+  SS_EnsureDmapTiles(palace);
+  bool have_map = (link_dungeon_map & (0x8000 >> palace)) != 0;
+  jint *px = (*env)->GetIntArrayElements(env, out, NULL);
+  memset(px, 0, 80 * 80 * 4);
+  for (int i = 0; i < 25; i++) {
+    uint8 v = lay.ptr[floorIdx * 25 + i];
+    int visits = floorIdx, yv = 0x51;  // empty cells use the blank shape
+    if (v != 0xf) {
+      visits = save_dung_info[v] & 0xf;
+      size_t count = 0, k = 0;  // shape ids are indexed by room order, skipping empty cells
+      while (k < lay.size && lay.ptr[k] != v)
+        count += (lay.ptr[k++] != 0xf);
+      if (count < shapes.size) yv = shapes.ptr[count];
+      if (yv >= 186) yv = 0x51;
+    }
+    const uint16 *e = GetDungmapRoomShape(yv);
+    int x0 = i % 5 * 16, y0 = i / 5 * 16;
+    SS_DmapDrawTile(px, 80, x0, y0, SS_DmapQuad(e[0], (visits & 8) != 0, have_map));
+    SS_DmapDrawTile(px, 80, x0 + 8, y0, SS_DmapQuad(e[1], (visits & 4) != 0, have_map));
+    SS_DmapDrawTile(px, 80, x0, y0 + 8, SS_DmapQuad(e[2], (visits & 2) != 0, have_map));
+    SS_DmapDrawTile(px, 80, x0 + 8, y0 + 8, SS_DmapQuad(e[3], (visits & 1) != 0, have_map));
+  }
+  (*env)->ReleaseIntArrayElements(env, out, px, 0);
+  return true;
 }
 
 // Requested from the UI thread; applied on the game thread at frame start.
