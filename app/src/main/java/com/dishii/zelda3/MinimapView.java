@@ -108,6 +108,8 @@ public class MinimapView extends View {
     private final Rect faceSrc = new Rect(0, 0, 32, 32);
     private final Path triPath = new Path();
     private int uiMode = MODE_GAME;
+    private int lastOutX, lastOutY, lastOutArea;
+    private boolean hasLastOutdoor = false;
 
     private static final String[] ITEM_NAMES = {
         "bow", "boomerang", "hookshot", "bombs", "mushroom",
@@ -291,12 +293,23 @@ public class MinimapView extends View {
         // intro/file-select screens and a quiet cinema frame during cutscenes;
         // the same screen also covers the brief window before the art is ready
         uiMode = modeForModule(module);
-        if (uiMode == MODE_GAME && indoors && (dungeonInfo & 0xFF) == 0xFF)
-            uiMode = MODE_CINEMA;   // houses and caves have no map (same test the game uses for X)
+        if (module == 0x12 || module <= 0x05) hasLastOutdoor = false;   // death/file select: entrance unknown
+        // houses and caves have no dungeon map (same test the game uses for X); keep the
+        // overworld map with the marker frozen at the doorway Link came in through
+        boolean inHouse = uiMode == MODE_GAME && indoors && (dungeonInfo & 0xFF) == 0xFF;
+        if (inHouse && !hasLastOutdoor)
+            uiMode = MODE_CINEMA;
         if (uiMode != MODE_GAME || !artReady) {
             drawCinemaScreen(canvas, w, h);
             if (isAttachedToWindow()) postInvalidateOnAnimation();
             return;
+        }
+        if (!indoors && (module == 0x09 || module == 0x0B)) {
+            lastOutX = linkX; lastOutY = linkY; lastOutArea = area;
+            hasLastOutdoor = true;
+        } else if (inHouse) {
+            dungeonMode = false;
+            linkX = lastOutX; linkY = lastOutY; area = lastOutArea;
         }
 
         canvas.drawRect(0, 0, w, h, dungeonMode ? stonePaint : menuPaint);
