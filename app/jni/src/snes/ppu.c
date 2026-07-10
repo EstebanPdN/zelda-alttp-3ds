@@ -50,6 +50,7 @@ void ppu_reset(Ppu* ppu) {
   ppu->extraLeftCur = 0;
   ppu->extraRightCur = 0;
   ppu->extraBottomCur = 0;
+  ppu->windowExtLeft = ppu->windowExtRight = NULL;
   ppu->vramPointer = 0;
   ppu->vramIncrementOnHigh = false;
   ppu->vramIncrement = 1;
@@ -217,16 +218,21 @@ static void PpuWindows_Calc(PpuWindows *win, Ppu *ppu, uint layer) {
   int window_right = 256 + (layer != 2 ? ppu->extraRightCur : 0);
   win->edges[0] = - (layer != 2 ? ppu->extraLeftCur : 0);
   win->edges[1] = window_right;
+  int w1_left = ppu->window1left, w1_right = ppu->window1right;
+  if (ppu->windowExtLeft) {
+    w1_left = IntMax(ppu->windowExtLeftCur, win->edges[0]);
+    w1_right = IntMin(ppu->windowExtRightCur, window_right - 1);
+  }
   uint i, j;
   int t;
-  bool w1_ena = (winflags & kWindow1Enabled) && ppu->window1left <= ppu->window1right;
+  bool w1_ena = (winflags & kWindow1Enabled) && w1_left <= w1_right;
   if (w1_ena) {
-    if (ppu->window1left > win->edges[0]) {
-      win->edges[nr] = ppu->window1left;
+    if (w1_left > win->edges[0]) {
+      win->edges[nr] = w1_left;
       win->edges[++nr] = window_right;
     }
-    if (ppu->window1right + 1 < window_right) {
-      win->edges[nr] = ppu->window1right + 1;
+    if (w1_right + 1 < window_right) {
+      win->edges[nr] = w1_right + 1;
       win->edges[++nr] = window_right;
     }
   }
@@ -253,8 +259,8 @@ static void PpuWindows_Calc(PpuWindows *win, Ppu *ppu, uint layer) {
   // get a bitmap of how regions map to windows
   uint8 w1_bits = 0, w2_bits = 0;
   if (w1_ena) {
-    for (i = 0; win->edges[i] != ppu->window1left; i++);
-    for (j = i; win->edges[j] != ppu->window1right + 1; j++);
+    for (i = 0; win->edges[i] != w1_left; i++);
+    for (j = i; win->edges[j] != w1_right + 1; j++);
     w1_bits = ((1 << (j - i)) - 1) << i;
   }
   if ((winflags & (kWindow1Enabled | kWindow1Inversed)) == (kWindow1Enabled | kWindow1Inversed))
@@ -698,6 +704,11 @@ void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom) {
   ppu->extraBottomCur = UintMin(bottom, 16);
 }
 
+void PpuSetWindow1Ext(Ppu *ppu, const int16 *left, const int16 *right) {
+  ppu->windowExtLeft = left;
+  ppu->windowExtRight = right;
+}
+
 static FORCEINLINE float FloatInterpolate(float x, float xmin, float xmax, float ymin, float ymax) {
   return ymin + (ymax - ymin) * (x - xmin) * (1.0f / (xmax - xmin));
 }
@@ -845,6 +856,11 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
     size_t n = sizeof(uint32) * (256 + ppu->extraLeftRight * 2);
     memset(dst, 0, n);
     return;
+  }
+
+  if (ppu->windowExtLeft) {
+    ppu->windowExtLeftCur = ppu->windowExtLeft[y - 1];
+    ppu->windowExtRightCur = ppu->windowExtRight[y - 1];
   }
 
   if (ppu->mode == 7 && (ppu->renderFlags & kPpuRenderFlags_4x4Mode7)) {
