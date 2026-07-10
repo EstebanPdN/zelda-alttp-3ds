@@ -604,19 +604,30 @@ public class MinimapView extends View {
     // ---------- sidebar ----------
 
     private void drawSidebar(Canvas c, float x, float y, float w, float h, boolean dungeonMode) {
-        // counters chip (rupees + keys)
+        // counters chip (rupees + bombs + arrows, keys in dungeons)
         float s = 3 * u;
         boolean showKeys = dungeonMode && sram(0x6F) != 0xFF;
-        float chipH = showKeys ? 20 * s + 20 * u : 10 * s + 18 * u;
+        float chipH = (showKeys ? 40 : 30) * s + 20 * u;
         dst.set(x, y, x + w, y + chipH);
         menuBox(c, dst, COL_BOX_BORDER);
-        float rx = x + (w - 8 * s * 5) / 2;
-        drawGlyph(c, "rupee", rx, y + 12 * u, s);
-        drawNumber(c, Math.min(u16(0x62), 9999), 4, rx + 9 * s, y + 12 * u, s, false);
+        // icons centered in a 16px column on the left, numbers right-aligned
+        float ry = y + 12 * u;
+        float ix = x + 10 * u;
+        float ne = x + w - 10 * u;
+        drawGlyph(c, "rupee", ix + 4 * s, ry, s);
+        drawNumber(c, Math.min(u16(0x62), 9999), 4, ne - 32 * s, ry, s, false);
+        boolean bombsMax = sram(0x43) >= new int[]{10,15,20,25,30,35,40,50}[sram(0x70) & 7];
+        boolean arrowsMax = sram(0x77) >= new int[]{30,35,40,45,50,55,60,70}[sram(0x71) & 7];
+        ry += 10 * s;
+        drawGlyph(c, "bomb0", ix, ry, s); drawGlyph(c, "bomb1", ix + 8 * s, ry, s);
+        drawNumber(c, sram(0x43), 2, ne - 16 * s, ry, s, bombsMax);
+        ry += 10 * s;
+        drawGlyph(c, "arrow0", ix, ry, s); drawGlyph(c, "arrow1", ix + 8 * s, ry, s);
+        drawNumber(c, sram(0x77), 2, ne - 16 * s, ry, s, arrowsMax);
         if (showKeys) {
-            float kx = x + (w - 8 * s * 2) / 2;
-            drawGlyph(c, "key", kx, y + 12 * u + 10 * s, s);
-            drawNumber(c, sram(0x6F), 1, kx + 9 * s, y + 12 * u + 10 * s, s, false);
+            ry += 10 * s;
+            drawGlyph(c, "key", ix + 4 * s, ry, s);
+            drawNumber(c, sram(0x6F), 1, ne - 8 * s, ry, s, false);
         }
 
         // anchor the magic bar and hearts to the bottom of the column, then
