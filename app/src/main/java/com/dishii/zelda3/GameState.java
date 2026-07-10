@@ -38,6 +38,8 @@ public class GameState {
     public static native int getDungeonLayout(int palace, byte[] out);
     /** Fills out (80x80 ARGB) with one dungeon floor drawn with the game's own map tiles (16x16/room). */
     public static native boolean renderDungeonFloor(int palace, int floorIdx, int[] out);
+    /** Fills out (32x8 ARGB): the map's room dot in its three blink palettes, then the boss skull. */
+    public static native boolean renderMapIcons(int palace, int[] out);
 
     // Offsets into the readSram block (g_ram+0xF300 == offset 0).
     public static final int OFF_ITEMS = 0x40;        // 20 item bytes, order matches menu

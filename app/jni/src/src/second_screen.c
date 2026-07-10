@@ -82,8 +82,8 @@ static bool g_ss_tiles_ready;
 
 static bool SS_AssetsReady(void) {
   return g_asset_ptrs[57] && g_asset_ptrs[65] && g_asset_ptrs[66] && g_asset_ptrs[67] &&
-         g_asset_ptrs[68] && g_asset_ptrs[81] && g_asset_ptrs[90] && g_asset_ptrs[92] &&
-         g_asset_ptrs[93] && g_asset_ptrs[97] && g_asset_ptrs[98];
+         g_asset_ptrs[68] && g_asset_ptrs[81] && g_asset_ptrs[90] && g_asset_ptrs[91] &&
+         g_asset_ptrs[92] && g_asset_ptrs[93] && g_asset_ptrs[97] && g_asset_ptrs[98];
 }
 
 static void SS_EnsureTiles(void) {
@@ -358,6 +358,30 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderDungeonFloor(J
     SS_DmapDrawTile(px, 80, x0, y0 + 8, SS_DmapQuad(e[2], (visits & 2) != 0, have_map));
     SS_DmapDrawTile(px, 80, x0 + 8, y0 + 8, SS_DmapQuad(e[3], (visits & 1) != 0, have_map));
   }
+  (*env)->ReleaseIntArrayElements(env, out, px, 0);
+  return true;
+}
+
+// The map screen's overlay sprites as a 32x8 sheet: the current-room dot
+// (tile 0x34, DungeonMap_DrawBlinkingIndicator) in its three cycling sprite
+// palettes 4/5/6 from asset 91, then the boss skull (tile 0x31,
+// DungeonMap_DrawBossIcon) in live sprite palette 1.
+JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderMapIcons(JNIEnv *env, jclass clazz, jint palace, jintArray out) {
+  if (palace < 0 || palace >= 14 || !SS_AssetsReady()) return false;
+  if ((*env)->GetArrayLength(env, out) < 32 * 8) return false;
+  SS_EnsureDmapTiles(palace);
+  const uint8 *dot = g_ss_dmap_tiles + 0x34 * 64, *skull = g_ss_dmap_tiles + 0x31 * 64;
+  jint *px = (*env)->GetIntArrayElements(env, out, NULL);
+  memset(px, 0, 32 * 8 * 4);
+  for (int y = 0; y < 8; y++)
+    for (int x = 0; x < 8; x++) {
+      uint8 pix = dot[y * 8 + x];
+      if (pix)
+        for (int p = 0; p < 3; p++)
+          px[y * 32 + p * 8 + x] = SS_Snes555(kPalette_PalaceMapSpr[p * 7 + pix - 1]);
+      pix = skull[y * 8 + x];
+      if (pix) px[y * 32 + 24 + x] = SS_Snes555(main_palette_buffer[144 + pix]);
+    }
   (*env)->ReleaseIntArrayElements(env, out, px, 0);
   return true;
 }

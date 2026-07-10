@@ -83,8 +83,11 @@ public class MinimapView extends View {
     /** UI scale: design reference is a 1280x720 screen; everything scales with min(w,h). */
     private float u = 1f;
     private final byte[] sram = new byte[256];
+    private final byte[] dungFlags = new byte[0x500];
     private final int[] dungFloorBuf = new int[80 * 80];
     private Bitmap dungFloorBmp;
+    private final int[] mapIconBuf = new int[32 * 8];
+    private Bitmap mapIconBmp;
     private int tab = TAB_MAP;
     private boolean wholeMap = false;
     private int viewFloorOffset = 0;
@@ -168,6 +171,10 @@ public class MinimapView extends View {
         "TOWER OF HERA", "THIEVES TOWN", "TURTLE ROCK", "GANONS TOWER",
     };
     private static final int[] DUNGEON_BOSS = {15, 15, 200, 51, 32, 6, 90, 144, 41, 222, 7, 172, 164, 13};
+    private static final int[] DUNGEON_BOSS_POS = {   // x<<8|y of the skull inside its room (kDungMap_Tab37)
+        -1, -1, 0x808, 8, 0, 8, 0x808, 8, 0x808, 0x800, 0x404, 0x808, 8, 8,
+    };
+    private static final int[] DOT_PALETTE = {0, 1, 2, 1};   // marker blink cycle (kDungMap_Tab38)
 
     /** Generate all pixel art from the game's loaded zelda3_assets.dat.
      *  Returns false (and stays cheap) until the game has loaded its assets. */
@@ -276,6 +283,7 @@ public class MinimapView extends View {
                 dungeonInfo = GameState.getDungeon();
                 module = GameState.getModule() & 0xFF;
                 GameState.readSram(sram);
+                GameState.readDungFlags(dungFlags);
             } catch (UnsatisfiedLinkError e) {
                 nativeBroken = true;
             }
@@ -534,7 +542,6 @@ public class MinimapView extends View {
         c.drawRoundRect(mp, 10 * u, 10 * u, stroke);
 
         byte[] lay = d.layout[li];
-        boolean hasMapItem = (u16(0x68) & (0x8000 >> palace)) != 0;
         float cell = (msize - 24 * u) / 5f;
         float gx = mp.left + 12 * u, gy = mp.top + 12 * u;
 
@@ -546,6 +553,16 @@ public class MinimapView extends View {
         dst.set(gx, gy, gx + 5 * cell, gy + 5 * cell);
         c.drawBitmap(dungFloorBmp, src, dst, bmp);
 
+        // the game's own map overlay sprites: blinking room dot + boss skull
+        boolean icons = GameState.renderMapIcons(palace, mapIconBuf);
+        if (icons) {
+            if (mapIconBmp == null) mapIconBmp = Bitmap.createBitmap(32, 8, Bitmap.Config.ARGB_8888);
+            mapIconBmp.setPixels(mapIconBuf, 0, 32, 0, 0, 32, 8);
+        }
+        boolean hasCompass = (u16(0x64) & (0x8000 >> palace)) != 0;
+        long frame = System.nanoTime() / 16_666_667L;
+        float ms = cell / 16f;
+
         for (int i = 0; i < 25; i++) {
             int v = lay[i] & 0xFF;
             if (v == 0x0F) continue;
@@ -553,25 +570,35 @@ public class MinimapView extends View {
             float x = gx + col * cell, y = gy + row * cell;
             boolean isCur = (v == (room & 0xFF)) && viewFloor == floor;
 
-            if (hasMapItem && v == d.boss) {
-                aa.setStyle(Paint.Style.STROKE);
-                aa.setStrokeWidth(4 * u); aa.setColor(Color.rgb(224, 40, 32));
-                float cxm = x + cell / 2, cym = y + cell / 2, rr = cell / 5;
-                c.drawLine(cxm - rr, cym - rr, cxm + rr, cym + rr, aa);
-                c.drawLine(cxm - rr, cym + rr, cxm + rr, cym - rr, aa);
+            if (icons && hasCompass && palace >= 2 && v == d.boss
+                    && (dungFlag(v) & 0x800) == 0 && (frame & 0xF) < 10) {
+                int pos = DUNGEON_BOSS_POS[palace];
+                float sx = x + (pos >> 8) * ms, sy = y + (pos & 0xFF) * ms;
+                src.set(24, 0, 32, 8);
+                dst.set(sx, sy, sx + 8 * ms, sy + 8 * ms);
+                c.drawBitmap(mapIconBmp, src, dst, bmp);
             }
 
             if (isCur) {
                 stroke.setStrokeWidth(3 * u);
                 stroke.setColor(COL_GOLD);
                 c.drawRect(x + 1.5f * u, y + 1.5f * u, x + cell - 1.5f * u, y + cell - 1.5f * u, stroke);
-                float lx = x + ((linkX & 0x1FF) / 512f) * cell;
-                float ly = y + ((linkY & 0x1FF) / 512f) * cell;
-                float bob = (float) Math.sin(System.nanoTime() / 3.0e8) * 2f * u;
-                float fs = 0.9f * u;
-                drawSprite(c, linkFace, faceSrc, lx - 16 * fs, ly - 16 * fs + bob, fs);
+                if (icons) {
+                    int p = DOT_PALETTE[(int) (frame >> 2) & 3];
+                    float sx = x + (((linkX & 0x1E0) >> 5) - 3) * ms;
+                    float sy = y + (((linkY & 0x1E0) >> 5) - 3) * ms;
+                    src.set(p * 8, 0, p * 8 + 8, 8);
+                    dst.set(sx, sy, sx + 8 * ms, sy + 8 * ms);
+                    c.drawBitmap(mapIconBmp, src, dst, bmp);
+                }
             }
         }
+    }
+
+    private int dungFlag(int roomLowByte) {
+        int off = roomLowByte * 2;
+        if (off + 1 >= dungFlags.length) return 0;
+        return (dungFlags[off] & 0xFF) | ((dungFlags[off + 1] & 0xFF) << 8);
     }
 
     // ---------- sidebar ----------
