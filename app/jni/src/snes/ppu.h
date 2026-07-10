@@ -70,6 +70,8 @@ struct Ppu {
   uint8_t window2left;
   uint8_t window2right;
   uint32_t windowsel;
+  const int16_t *windowExtLeft, *windowExtRight;
+  int16_t windowExtLeftCur, windowExtRightCur;
 
   // color math
   uint8_t clipMode;
@@ -142,5 +144,6 @@ int PpuGetCurrentRenderScale(Ppu *ppu, uint32_t render_flags);
 
 void PpuSetMode7PerspectiveCorrection(Ppu *ppu, int low, int high);
 void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom);
+void PpuSetWindow1Ext(Ppu *ppu, const int16_t *left, const int16_t *right);
 
 #endif  // ZELDA3_SNES_PPU_H_

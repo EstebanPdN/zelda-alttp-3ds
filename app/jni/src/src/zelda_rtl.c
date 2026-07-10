@@ -1,6 +1,7 @@
 #include "zelda_rtl.h"
 #include "variables.h"
 #include "misc.h"
+#include "load_gfx.h"
 #include "nmi.h"
 #include "poly.h"
 #include "attract.h"
@@ -150,6 +151,10 @@ static void ConfigurePpuSideSpace() {
   int mod = main_module_index;
   if (mod == 14)
     mod = saved_module_for_menu;
+  if ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
+      (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
+       mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
+    mod = player_is_indoors ? 7 : 9;
   if (mod == 9) {
     if (main_module_index == 14 && submodule_index == 7 && overworld_map_state >= 4) {
       // World map
@@ -202,6 +207,9 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
 
   if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240)
     ConfigurePpuSideSpace();
+
+  PpuSetWindow1Ext(g_zenv.ppu, g_spotlight_ext_active ? g_spotlight_ext_left : NULL,
+                   g_spotlight_ext_active ? g_spotlight_ext_right : NULL);
 
   int height = render_flags & kPpuRenderFlags_Height240 ? 240 : 224;
 
@@ -262,6 +270,7 @@ static void ClearOamBuffer() {  // 80841e
 
 static void ZeldaRunGameLoop() {
   frame_counter++;
+  g_spotlight_ext_active = false;
   ClearOamBuffer();
   Module_MainRouting();
   NMI_PrepareSprites();

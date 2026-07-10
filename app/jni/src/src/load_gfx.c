@@ -307,6 +307,10 @@ static const int8 kOwSprPalInfo[40] = {
 };
 static const int8 kSpotlight_delta_size[4] = {-7, 7, 7, 7};
 static const uint8 kSpotlight_goal[4] = {0, 126, 35, 126};
+int16 g_spotlight_ext_left[240];
+int16 g_spotlight_ext_right[240];
+bool g_spotlight_ext_active;
+static int16 spotlight_ext_x0, spotlight_ext_x1;
 static const uint8 kConfigureSpotlightTable_Helper_Tab[129] = {
   0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0xfc, 0xfc, 0xfc, 0xfb, 0xfb, 0xfb, 0xfa, 0xfa, 0xf9, 0xf9, 0xf8, 0xf8,
   0xf7, 0xf7, 0xf6, 0xf6, 0xf5, 0xf5, 0xf4, 0xf3, 0xf3, 0xf2, 0xf1, 0xf1, 0xf0, 0xef, 0xee, 0xee, 0xed, 0xec, 0xeb, 0xea, 0xe9, 0xe9, 0xe8, 0xe7, 0xe6, 0xe5, 0xe4, 0xe3, 0xe2, 0xe1, 0xdf, 0xde,
@@ -1421,7 +1425,7 @@ void Trinexx_UnflashShellPalette_Blue() {  // 80f253
 }
 
 void IrisSpotlight_close() {  // 80f28b
-  SpotlightInternal(0x7e, 0);
+  SpotlightInternal((enhanced_features0 & kFeatures0_WidescreenVisualFixes) ? 144 : 0x7e, 0);
 }
 
 void Spotlight_open() {  // 80f295
@@ -1462,30 +1466,49 @@ void IrisSpotlight_ConfigureTable() {  // 80f312
   uint16 r4 = r14 * 2 - r6;
   for(;;) {
     uint16 r8 = 0xff;
+    spotlight_ext_x0 = 255, spotlight_ext_x1 = 0;
     if (r6 < spotlight_y_upper) {
       uint8 t = spotlight_var4;
       if (spotlight_var4)
         spotlight_var4--;
       r8 = IrisSpotlight_CalculateCircleValue(t);
     }
-    if (r4 < 240)
+    if (r4 < 240) {
       hdma_table_dynamic[r4] = r8;
-    if (r6 < 240)
+      g_spotlight_ext_left[r4] = spotlight_ext_x0, g_spotlight_ext_right[r4] = spotlight_ext_x1;
+    }
+    if (r6 < 240) {
       hdma_table_dynamic[r6] = r8;
+      g_spotlight_ext_left[r6] = spotlight_ext_x0, g_spotlight_ext_right[r6] = spotlight_ext_x1;
+    }
     if (r4 == r14)
       break;
     r4++, r6--;
   }
 
-  for (int i = 224; i < 240; i++)
+  for (int i = 224; i < 240; i++) {
     hdma_table_dynamic[i] = 0;
+    g_spotlight_ext_left[i] = 0, g_spotlight_ext_right[i] = 0;
+  }
 
   memcpy(hdma_table_unused, hdma_table_dynamic, 224  * sizeof(uint16));
 
-  spotlight_var1 += kSpotlight_delta_size[spotlight_var2 >> 1];
-
-  if (spotlight_var1 != kSpotlight_goal[spotlight_var2 >> 1])
-    return;
+  int delta = kSpotlight_delta_size[spotlight_var2 >> 1];
+  int goal = kSpotlight_goal[spotlight_var2 >> 1];
+  if (enhanced_features0 & kFeatures0_WidescreenVisualFixes) {
+    g_spotlight_ext_active = true;
+    delta = delta < 0 ? -8 : 8;
+    if (goal == 126)
+      goal = 144;
+    spotlight_var1 += delta;
+    if (delta < 0 ? (int16)spotlight_var1 > 0 : (int16)spotlight_var1 < goal)
+      return;
+    spotlight_var1 = goal;
+  } else {
+    spotlight_var1 += delta;
+    if (spotlight_var1 != goal)
+      return;
+  }
 
   if (!spotlight_var2) {
     INIDISP_copy = 0x80;
@@ -1507,8 +1530,10 @@ void IrisSpotlight_ConfigureTable() {  // 80f312
 }
 
 void IrisSpotlight_ResetTable() {  // 80f427
-  for (int i = 0; i < 240; i++)
+  for (int i = 0; i < 240; i++) {
     hdma_table_dynamic[i] = 0xff00;
+    g_spotlight_ext_left[i] = -kPpuExtraLeftRight, g_spotlight_ext_right[i] = 255 + kPpuExtraLeftRight;
+  }
 }
 
 uint16 IrisSpotlight_CalculateCircleValue(uint8 a) {  // 80f4cc
@@ -1523,7 +1548,10 @@ uint16 IrisSpotlight_CalculateCircleValue(uint8 a) {  // 80f4cc
          r0 < 255 ? r0 : 255;
   r2 = r2 < 255 ? r2 : 255;
   r0 |= r2 << 8;
-  return r0 == 0xffff ? 0xff : r0;
+  if (r0 == 0xffff)
+    return 0xff;
+  spotlight_ext_x0 = spotlight_var3 - p, spotlight_ext_x1 = spotlight_var3 + p;
+  return r0;
 }
 
 void AdjustWaterHDMAWindow() {  // 80f649

@@ -12,6 +12,9 @@ enum {
 };
 
 extern uint16 kGlovesColor[2];
+extern int16 g_spotlight_ext_left[240];
+extern int16 g_spotlight_ext_right[240];
+extern bool g_spotlight_ext_active;
 
 void ApplyPaletteFilter_bounce();
 void PaletteFilter_Range(int from, int to);
