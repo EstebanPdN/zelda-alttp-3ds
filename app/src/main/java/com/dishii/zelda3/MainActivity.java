@@ -138,6 +138,25 @@ public class MainActivity extends SDLActivity {
             }
             try {
                 secondScreen = new SecondScreenPresentation(this, display);
+                // If the system dismisses the Presentation behind our back (display
+                // config change etc.), drop the stale reference and try to re-show,
+                // otherwise the bottom screen is gone until the app restarts.
+                secondScreen.setOnDismissListener(new android.content.DialogInterface.OnDismissListener() {
+                    @Override
+                    public void onDismiss(android.content.DialogInterface dialog) {
+                        if (secondScreen == dialog) {
+                            secondScreen = null;
+                            if (!isFinishing()) {
+                                getWindow().getDecorView().post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        showSecondScreenIfPresent();
+                                    }
+                                });
+                            }
+                        }
+                    }
+                });
                 secondScreen.show();
                 Log.i(TAG, "Showing second screen on display " + display.getDisplayId()
                         + " (" + display.getName() + ")");

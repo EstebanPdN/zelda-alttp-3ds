@@ -30,7 +30,11 @@ public class SecondScreenPresentation extends Presentation {
             getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
             getWindow().setLayout(WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.MATCH_PARENT);
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            // Non-focusable: gamepad events must keep going to the game window even
+            // while the user touches this screen (touch works without focus), and a
+            // focused Dialog would dismiss on B (BUTTON_B falls back to BACK).
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
             // edge-to-edge: hide the nav/status bars of the secondary display
             getWindow().getDecorView().setSystemUiVisibility(
                     android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -40,6 +44,7 @@ public class SecondScreenPresentation extends Presentation {
                     | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                     | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
         }
+        setCancelable(false);
         minimap = new MinimapView(getContext());
         setContentView(minimap);
     }
