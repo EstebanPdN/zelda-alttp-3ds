@@ -1,9 +1,8 @@
-// JNI bridge for the second-screen companion UI (Ayn Thor bottom screen).
-// Exposes read-only game state from g_ram to com.dishii.zelda3.GameState.
-// The Java UI thread polls these while the game thread writes g_ram; values
-// are single loads of small integers, so torn reads are harmless for a minimap.
-#include <jni.h>
+// Game state access + art generation for the second screen. The SS_* core is
+// plain C; the Android UI reaches it through the JNI wrappers at the bottom
+// and the SDL UI (second_screen_sdl.c) calls it directly.
 #include <string.h>
+#include <stdbool.h>
 
 #include "types.h"
 #include "variables.h"
@@ -17,38 +16,30 @@
 #include "snes/ppu.h"
 #include "second_screen_tables.h"
 
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getLinkX(JNIEnv *env, jclass clazz) {
-  return link_x_coord;
-}
-
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getLinkY(JNIEnv *env, jclass clazz) {
-  return link_y_coord;
-}
+int SS_GetLinkX(void) { return link_x_coord; }
+int SS_GetLinkY(void) { return link_y_coord; }
 
 // Overworld area number when outdoors, dungeon room index when indoors.
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getArea(JNIEnv *env, jclass clazz) {
+int SS_GetArea(void) {
   return player_is_indoors ? dungeon_room_index : overworld_screen_index;
 }
 
-// 0x09 = overworld, 0x07 = dungeon. Low byte = main module, high byte = submodule.
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getModule(JNIEnv *env, jclass clazz) {
+// 0x09 = overworld, 0x07 = dungeon. Low byte = main module, high = submodule.
+int SS_GetModule(void) {
   return main_module_index | (submodule_index << 8);
 }
 
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isIndoors(JNIEnv *env, jclass clazz) {
-  return player_is_indoors != 0;
-}
+bool SS_IsIndoors(void) { return player_is_indoors != 0; }
 
 // Copies g_ram[0xF300..0xF400) (save/equipment block: items, rupees, hearts,
-// magic, keys, pendants, crystals) into the caller's byte[256] buffer.
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_readSram(JNIEnv *env, jclass clazz, jbyteArray out) {
-  jsize n = (*env)->GetArrayLength(env, out);
+// magic, keys, pendants, crystals) into the caller's buffer (up to 0x100).
+void SS_ReadSram(uint8 *out, int n) {
   if (n > 0x100) n = 0x100;
-  (*env)->SetByteArrayRegion(env, out, 0, n, (const jbyte *)(g_ram + 0xF300));
+  memcpy(out, g_ram + 0xF300, n);
 }
 
 // Maps a hud item id to an inventory grid slot (1..20, 0 = none).
-static jint SS_ItemToSlot(uint8 item) {
+static int SS_ItemToSlot(uint8 item) {
   if (item >= 21) return 16;  // Bottle1..4 -> the bottle cell
   if (item == 0 || item > 20) return 0;
   if (hud_inventory_order[0] != 0) {
@@ -59,36 +50,31 @@ static jint SS_ItemToSlot(uint8 item) {
 }
 
 // The equipped Y-item as an inventory grid slot (1..20, 0 = none).
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getEquippedSlot(JNIEnv *env, jclass clazz) {
-  return SS_ItemToSlot(hud_cur_item);
-}
+int SS_GetEquippedSlot(void) { return SS_ItemToSlot(hud_cur_item); }
 
 // The item assigned to the X button (hud_cur_item_x, set on the item screen
 // when the ItemSwitchLR feature is on) as a grid slot; 0 when nothing is
 // assigned or the feature is disabled.
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getEquippedSlotX(JNIEnv *env, jclass clazz) {
+int SS_GetEquippedSlotX(void) {
   if (!(enhanced_features0 & kFeatures0_SwitchLR)) return 0;
   return SS_ItemToSlot(hud_cur_item_x);
 }
 
 // Palace index (0..13, 0xFF when not in a palace) in the low byte,
 // current floor (int8: 0=1F, -1=B1...) in the high byte.
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getDungeon(JNIEnv *env, jclass clazz) {
+int SS_GetDungeon(void) {
   uint8 palace = (uint8)cur_palace_index_x2;
   return (palace == 0xff ? 0xff : palace >> 1) | ((dung_cur_floor & 0xFF) << 8);
 }
 
 // Copies save_dung_info (g_ram[0xF000..0xF500): uint16 per room; low nibble =
-// visited quadrant bits) into the caller's byte[] (up to 0x500 bytes).
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_readDungFlags(JNIEnv *env, jclass clazz, jbyteArray out) {
-  jsize n = (*env)->GetArrayLength(env, out);
+// visited quadrant bits) into the caller's buffer (up to 0x500 bytes).
+void SS_ReadDungFlags(uint8 *out, int n) {
   if (n > 0x500) n = 0x500;
-  (*env)->SetByteArrayRegion(env, out, 0, n, (const jbyte *)(g_ram + 0xF000));
+  memcpy(out, g_ram + 0xF000, n);
 }
 
 // ============ runtime asset generation ============
-// All second-screen artwork is generated from the user's own zelda3_assets.dat
-// (already required by the game), so the APK ships no copyrighted pixels.
 
 // decoded HUD 2bpp sheets 0x6a,0x6b,0x69 -> 384 tiles of 64 pixel values (0..3),
 // matching the tile ids used by the tables in second_screen_tables.h
@@ -120,18 +106,18 @@ static void SS_EnsureTiles(void) {
   g_ss_tiles_ready = true;
 }
 
-static jint SS_Snes555(uint16 w) {
+static uint32 SS_Snes555(uint16 w) {
   int r = w & 31, g = (w >> 5) & 31, b = (w >> 10) & 31;
   r = (r << 3) | (r >> 2); g = (g << 3) | (g >> 2); b = (b << 3) | (b >> 2);
-  return (jint)0xff000000 | (r << 16) | (g << 8) | b;
+  return 0xff000000u | (r << 16) | (g << 8) | b;
 }
 
-static jint SS_HudColor(int group, int pix) {
+static uint32 SS_HudColor(int group, int pix) {
   return SS_Snes555(kHudPalData[group * 4 + pix]);
 }
 
 // draw one HUD tile (tilemap word: id | pal<<10 | hflip 0x4000 | vflip 0x8000)
-static void SS_DrawTile(jint *px, int stride, int x0, int y0, uint16 v) {
+static void SS_DrawTile(uint32 *px, int stride, int x0, int y0, uint16 v) {
   int id = v & 0x3ff;
   if (id >= 384) return;
   const uint8 *t = g_ss_tiles + id * 64;
@@ -147,10 +133,10 @@ static void SS_DrawTile(jint *px, int stride, int x0, int y0, uint16 v) {
 }
 
 // remove the near-black icon-box background connected to the 16x16 border
-static void SS_StripBg(jint *px, int stride, int x0, int y0) {
+static void SS_StripBg(uint32 *px, int stride, int x0, int y0) {
   bool dark[256], seen[256];
   for (int i = 0; i < 256; i++) {
-    jint c = px[(y0 + i / 16) * stride + x0 + i % 16];
+    uint32 c = px[(y0 + i / 16) * stride + x0 + i % 16];
     int sum = ((c >> 16) & 0xff) + ((c >> 8) & 0xff) + (c & 0xff);
     dark[i] = (c >> 24) != 0 && sum < 60;
     seen[i] = false;
@@ -173,12 +159,12 @@ static void SS_StripBg(jint *px, int stride, int x0, int y0) {
   }
 }
 
-// Item icon sheet: kIconCount cells of 16x16, kIconCols per row (matches icons.json).
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderIconSheet(JNIEnv *env, jclass clazz, jintArray out) {
+// Item icon sheet: kIconCount cells of 16x16, kIconCols per row (ss_sheets.h).
+// px must hold (kIconCols*16) x (ceil(kIconCount/kIconCols)*16) ARGB pixels.
+bool SS_RenderIconSheet(uint32 *px) {
   int w = kIconCols * 16, h = ((kIconCount + kIconCols - 1) / kIconCols) * 16;
-  if (!SS_AssetsReady() || (*env)->GetArrayLength(env, out) < w * h) return false;
+  if (!SS_AssetsReady()) return false;
   SS_EnsureTiles();
-  jint *px = (*env)->GetIntArrayElements(env, out, NULL);
   memset(px, 0, (size_t)w * h * 4);
   for (int i = 0; i < kIconCount; i++) {
     int x0 = (i % kIconCols) * 16, y0 = (i / kIconCols) * 16;
@@ -188,30 +174,26 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderIconSheet(JNIE
     SS_DrawTile(px, w, x0 + 8, y0 + 8, kIconTilemap[i][3]);
     SS_StripBg(px, w, x0, y0);
   }
-  (*env)->ReleaseIntArrayElements(env, out, px, 0);
   return true;
 }
 
-// Glyph sheet: kGlyphCount cells of 8x8, kGlyphCols per row (matches glyphs.json).
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderGlyphSheet(JNIEnv *env, jclass clazz, jintArray out) {
+// Glyph sheet: kGlyphCount cells of 8x8, kGlyphCols per row (ss_sheets.h).
+bool SS_RenderGlyphSheet(uint32 *px) {
   int w = kGlyphCols * 8, h = ((kGlyphCount + kGlyphCols - 1) / kGlyphCols) * 8;
-  if (!SS_AssetsReady() || (*env)->GetArrayLength(env, out) < w * h) return false;
+  if (!SS_AssetsReady()) return false;
   SS_EnsureTiles();
-  jint *px = (*env)->GetIntArrayElements(env, out, NULL);
   memset(px, 0, (size_t)w * h * 4);
   for (int i = 0; i < kGlyphCount; i++)
     SS_DrawTile(px, w, (i % kGlyphCols) * 8, (i / kGlyphCols) * 8, kGlyphTiles[i]);
-  (*env)->ReleaseIntArrayElements(env, out, px, 0);
   return true;
 }
 
-// Letter sheet A-Z: 16 cols x 2 rows of 8x8 (matches letters.json);
-// HUD tiles 0x150-0x15F (A-P) and 0x160-0x169 (Q-Z), fixed white-on-outline palette.
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderLetterSheet(JNIEnv *env, jclass clazz, jintArray out) {
+// Letter sheet A-Z: 16 cols x 2 rows of 8x8; HUD tiles 0x150-0x15F (A-P) and
+// 0x160-0x169 (Q-Z), fixed white-on-outline palette.
+bool SS_RenderLetterSheet(uint32 *px) {
   int w = 16 * 8, h = 2 * 8;
-  if (!SS_AssetsReady() || (*env)->GetArrayLength(env, out) < w * h) return false;
+  if (!SS_AssetsReady()) return false;
   SS_EnsureTiles();
-  jint *px = (*env)->GetIntArrayElements(env, out, NULL);
   memset(px, 0, (size_t)w * h * 4);
   for (int i = 0; i < 26; i++) {
     int id = i < 16 ? 0x150 + i : 0x160 + (i - 16);
@@ -220,22 +202,20 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderLetterSheet(JN
     for (int y = 0; y < 8; y++)
       for (int x = 0; x < 8; x++) {
         uint8 pix = t[y * 8 + x];
-        if (pix == 1) px[(y0 + y) * w + x0 + x] = (jint)0xff282830;
-        else if (pix == 2) px[(y0 + y) * w + x0 + x] = (jint)0xfff8f8f8;
+        if (pix == 1) px[(y0 + y) * w + x0 + x] = 0xff282830u;
+        else if (pix == 2) px[(y0 + y) * w + x0 + x] = 0xfff8f8f8u;
       }
   }
-  (*env)->ReleaseIntArrayElements(env, out, px, 0);
   return true;
 }
 
 // The 512x512 world map, composited from the game's mode-7 map data.
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderWorldMap(JNIEnv *env, jclass clazz, jintArray out, jboolean dark) {
-  if (!SS_AssetsReady() || (*env)->GetArrayLength(env, out) < 512 * 512) return false;
+bool SS_RenderWorldMap(uint32 *px, bool dark) {
+  if (!SS_AssetsReady()) return false;
   const uint8 *gfx = kOverworldMapGfx;                 // 256 mode-7 tiles, 64 bytes each
   const uint8 *light = kLightOverworldTilemap;         // 64x64 tiles as four 32x32 quadrants
   const uint8 *darkm = kDarkOverworldTilemap;          // 32x32 tiles, replaces the center
   const uint16 *pal = kOverworldMapPaletteData + (dark ? 128 : 0);
-  jint *px = (*env)->GetIntArrayElements(env, out, NULL);
   for (int ty = 0; ty < 64; ty++) {
     for (int tx = 0; tx < 64; tx++) {
       int q = (ty >= 32 ? 2 : 0) + (tx >= 32 ? 1 : 0);
@@ -248,16 +228,14 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderWorldMap(JNIEn
           px[(ty * 8 + y) * 512 + tx * 8 + x] = SS_Snes555(pal[t[y * 8 + x] & 0x7f]);
     }
   }
-  (*env)->ReleaseIntArrayElements(env, out, px, 0);
   return true;
 }
 
 // Link's 16x16 head (map marker) from his sprite sheet, green-mail palette.
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderLinkFace(JNIEnv *env, jclass clazz, jintArray out, jint chunk) {
-  if (!SS_AssetsReady() || (*env)->GetArrayLength(env, out) < 16 * 16) return false;
+bool SS_RenderLinkFace(uint32 *px, int chunk) {
+  if (!SS_AssetsReady()) return false;
   const uint8 *gfx = kLinkGraphics;
   const uint16 *pal = kPalette_ArmorAndGloves;         // first 15 colors = green mail
-  jint *px = (*env)->GetIntArrayElements(env, out, NULL);
   memset(px, 0, 16 * 16 * 4);
   static const int kOffs[4][2] = {{0, 0}, {8, 0}, {0, 8}, {8, 8}};
   for (int part = 0; part < 4; part++) {
@@ -273,19 +251,19 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderLinkFace(JNIEn
       }
     }
   }
-  (*env)->ReleaseIntArrayElements(env, out, px, 0);
   return true;
 }
 
-// Dungeon floor layouts (5x5 room ids per floor). Returns floors | basements<<8, or -1.
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getDungeonLayout(JNIEnv *env, jclass clazz, jint palace, jbyteArray out) {
+// Dungeon floor layouts (5x5 room ids per floor) into out (cap bytes).
+// Returns floors | basements<<8, or -1 while assets aren't loaded yet.
+int SS_GetDungeonLayout(int palace, uint8 *out, int cap) {
   static const uint8 kBasements[14] = {1, 3, 0, 1, 0, 2, 1, 2, 2, 7, 0, 2, 3, 1};  // kDungMap_Tab5 low nibbles
   if (palace < 0 || palace >= 14 || !g_asset_ptrs[97]) return -1;
   MemBlk b = FindInAssetArray(97, palace);
-  jsize n = (*env)->GetArrayLength(env, out);
-  if ((jsize)b.size < n) n = (jsize)b.size;
-  (*env)->SetByteArrayRegion(env, out, 0, n, (const jbyte *)b.ptr);
-  return (jint)(b.size / 25) | (kBasements[palace] << 8);
+  int n = cap;
+  if ((int)b.size < n) n = (int)b.size;
+  memcpy(out, b.ptr, n);
+  return (int)(b.size / 25) | (kBasements[palace] << 8);
 }
 
 // decoded dungeon-map tiles: BG chars 0x300-0x3bf as pixel values (0..7).
@@ -316,7 +294,7 @@ static void SS_EnsureDmapTiles(int palace) {
 }
 
 // draw one dungeon-map tile; the palace map palette rows sit at BG palettes 2..7
-static void SS_DmapDrawTile(jint *px, int stride, int x0, int y0, uint16 v) {
+static void SS_DmapDrawTile(uint32 *px, int stride, int x0, int y0, uint16 v) {
   int id = (v & 0x3ff) - 0x300;
   if (id < 0 || id >= 192) return;
   const uint8 *t = g_ss_dmap_tiles + id * 64;
@@ -345,15 +323,13 @@ static uint16 SS_DmapQuad(uint16 e, bool visited, bool have_map) {
 // One dungeon floor as the game's own map mode draws it: each room of the 5x5
 // grid becomes a 2x2 block of map tiles keyed by its shape id from asset 98
 // (16x16 px per room -> 80x80 out), read live from save_dung_info.
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderDungeonFloor(JNIEnv *env, jclass clazz, jint palace, jint floorIdx, jintArray out) {
+bool SS_RenderDungeonFloor(int palace, int floorIdx, uint32 *px) {
   if (palace < 0 || palace >= 14 || !SS_AssetsReady()) return false;
-  if ((*env)->GetArrayLength(env, out) < 80 * 80) return false;
   MemBlk lay = FindInAssetArray(97, palace);
   MemBlk shapes = FindInAssetArray(98, palace);
   if (floorIdx < 0 || (size_t)(floorIdx + 1) * 25 > lay.size) return false;
   SS_EnsureDmapTiles(palace);
   bool have_map = (link_dungeon_map & (0x8000 >> palace)) != 0;
-  jint *px = (*env)->GetIntArrayElements(env, out, NULL);
   memset(px, 0, 80 * 80 * 4);
   for (int i = 0; i < 25; i++) {
     uint8 v = lay.ptr[floorIdx * 25 + i];
@@ -373,7 +349,6 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderDungeonFloor(J
     SS_DmapDrawTile(px, 80, x0, y0 + 8, SS_DmapQuad(e[2], (visits & 2) != 0, have_map));
     SS_DmapDrawTile(px, 80, x0 + 8, y0 + 8, SS_DmapQuad(e[3], (visits & 1) != 0, have_map));
   }
-  (*env)->ReleaseIntArrayElements(env, out, px, 0);
   return true;
 }
 
@@ -381,12 +356,10 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderDungeonFloor(J
 // (tile 0x34, DungeonMap_DrawBlinkingIndicator) in its three cycling sprite
 // palettes 4/5/6 from asset 91, then the boss skull (tile 0x31,
 // DungeonMap_DrawBossIcon) in live sprite palette 1.
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderMapIcons(JNIEnv *env, jclass clazz, jint palace, jintArray out) {
+bool SS_RenderMapIcons(int palace, uint32 *px) {
   if (palace < 0 || palace >= 14 || !SS_AssetsReady()) return false;
-  if ((*env)->GetArrayLength(env, out) < 32 * 8) return false;
   SS_EnsureDmapTiles(palace);
   const uint8 *dot = g_ss_dmap_tiles + 0x34 * 64, *skull = g_ss_dmap_tiles + 0x31 * 64;
-  jint *px = (*env)->GetIntArrayElements(env, out, NULL);
   memset(px, 0, 32 * 8 * 4);
   for (int y = 0; y < 8; y++)
     for (int x = 0; x < 8; x++) {
@@ -397,9 +370,10 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderMapIcons(JNIEn
       pix = skull[y * 8 + x];
       if (pix) px[y * 32 + 24 + x] = SS_Snes555(main_palette_buffer[144 + pix]);
     }
-  (*env)->ReleaseIntArrayElements(env, out, px, 0);
   return true;
 }
+
+// ============ actions (UI thread -> game thread) ============
 
 // Requested from the UI thread; applied on the game thread at frame start.
 static volatile int g_pending_equip_slot;
@@ -418,42 +392,38 @@ bool g_ss_hide_hud;
 // -1 idle, -2 armed (main.c swallows the next press), >= 0 captured button.
 volatile int g_ss_capture_button = -1;
 
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_equipSlot(JNIEnv *env, jclass clazz, jint slot) {
+void SS_EquipSlot(int slot) {
   if (slot >= 1 && slot <= 20)
     g_pending_equip_slot = slot;
 }
 
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_assignSlotX(JNIEnv *env, jclass clazz, jint slot) {
+void SS_AssignSlotX(int slot) {
   if (slot >= 1 && slot <= 20)
     g_pending_assign_x_slot = slot;
 }
 
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setWidescreen(JNIEnv *env, jclass clazz, jboolean on) {
-  g_pending_widescreen = on ? 1 : 0;
-}
+void SS_SetWidescreen(bool on) { g_pending_widescreen = on ? 1 : 0; }
 
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isWidescreen(JNIEnv *env, jclass clazz) {
+bool SS_IsWidescreen(void) {
   int pending = g_pending_widescreen;
   if (pending >= 0) return pending != 0;
   return g_zenv.ppu && g_zenv.ppu->extraLeftRight != 0;
 }
 
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setHudHidden(JNIEnv *env, jclass clazz, jboolean hide) {
-  g_pending_hide_hud = hide ? 1 : 0;
-}
+void SS_SetHudHidden(bool hide) { g_pending_hide_hud = hide ? 1 : 0; }
 
-JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isHudHidden(JNIEnv *env, jclass clazz) {
+bool SS_IsHudHidden(void) {
   int pending = g_pending_hide_hud;
   if (pending >= 0) return pending != 0;
   return g_ss_hide_hud;
 }
 
 // The kFeatures0_* flags the game is asked to run with (features.h).
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getFeatures(JNIEnv *env, jclass clazz) {
-  return (jint)((g_wanted_zelda_features | g_pending_features_on) & ~g_pending_features_off);
+uint32 SS_GetFeatures(void) {
+  return (g_wanted_zelda_features | g_pending_features_on) & ~g_pending_features_off;
 }
 
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setFeature(JNIEnv *env, jclass clazz, jint mask, jboolean on) {
+void SS_SetFeature(unsigned mask, bool on) {
   if (on) {
     g_pending_features_off &= ~(uint32)mask;
     g_pending_features_on |= (uint32)mask;
@@ -463,12 +433,10 @@ JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setFeature(JNIEnv *env, 
   }
 }
 
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_armButtonCapture(JNIEnv *env, jclass clazz, jboolean arm) {
-  g_ss_capture_button = arm ? -2 : -1;
-}
+void SS_ArmButtonCapture(bool arm) { g_ss_capture_button = arm ? -2 : -1; }
 
 // Returns the captured gamepad button and rearms idle; -2 still waiting, -1 idle.
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getCapturedButton(JNIEnv *env, jclass clazz) {
+int SS_GetCapturedButton(void) {
   int b = g_ss_capture_button;
   if (b >= 0) g_ss_capture_button = -1;
   return b;
@@ -476,22 +444,16 @@ JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getCapturedButton(JNIEnv
 
 // Fills out (12 ints) with the gamepad button bound to each joypad command
 // (Up, Down, Left, Right, Select, Start, A, B, X, Y, L, R); -1 = unbound.
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_getGamepadControls(JNIEnv *env, jclass clazz, jintArray out) {
-  if ((*env)->GetArrayLength(env, out) < 12) return;
+void SS_GetGamepadControls(int *out) {
   uint8 btns[12];
   GamepadMap_GetControls(btns);
-  jint *p = (*env)->GetIntArrayElements(env, out, NULL);
   for (int i = 0; i < 12; i++)
-    p[i] = btns[i] == 0xff ? -1 : btns[i];
-  (*env)->ReleaseIntArrayElements(env, out, p, 0);
+    out[i] = btns[i] == 0xff ? -1 : btns[i];
 }
 
-JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setGamepadControls(JNIEnv *env, jclass clazz, jintArray in) {
-  if ((*env)->GetArrayLength(env, in) < 12) return;
-  jint buf[12];
-  (*env)->GetIntArrayRegion(env, in, 0, 12, buf);
+void SS_SetGamepadControls(const int *in) {
   for (int i = 0; i < 12; i++)
-    g_pending_controls[i] = (buf[i] >= 0 && buf[i] < kGamepadBtn_Count) ? (uint8)buf[i] : 0xff;
+    g_pending_controls[i] = (in[i] >= 0 && in[i] < kGamepadBtn_Count) ? (uint8)in[i] : 0xff;
   g_pending_controls_set = 1;
 }
 

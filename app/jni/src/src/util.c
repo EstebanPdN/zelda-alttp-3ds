@@ -59,6 +59,27 @@ const char *StringStartsWithNoCase(const char *a, const char *b) {
 }*/
 
 //This was added to read from the external data dir. Android/data/com.dishii.zelda3
+#ifndef __ANDROID__
+// Plain filesystem read relative to the working directory.
+uint8_t *ReadWholeFile(const char *name, size_t *length) {
+  FILE *f = fopen(name, "rb");
+  if (f == NULL)
+    return NULL;
+  fseek(f, 0, SEEK_END);
+  size_t size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  uint8_t *buffer = (uint8_t *)malloc(size + 1);
+  if (!buffer) { fclose(f); return NULL; }
+  // Always zero terminate so this function can be used also for strings.
+  buffer[size] = 0;
+  if (fread(buffer, 1, size, f) != size) {
+    free(buffer); fclose(f); return NULL;
+  }
+  fclose(f);
+  if (length) *length = size;
+  return buffer;
+}
+#else
 uint8_t *ReadWholeFile(const char *name, size_t *length) {
   const char* externalDir = SDL_AndroidGetExternalStoragePath();
 
@@ -102,6 +123,8 @@ uint8_t *ReadWholeFile(const char *name, size_t *length) {
   }
 }
 
+
+#endif  // __ANDROID__
 
 char *NextLineStripComments(char **s) {
   char *p = *s;

@@ -10,6 +10,7 @@
 #define CODE(...) #__VA_ARGS__
 
 static SDL_Window *g_window;
+static SDL_GLContext g_context;
 static uint8 *g_screen_buffer;
 static size_t g_screen_buffer_size;
 static int g_draw_width, g_draw_height;
@@ -38,6 +39,7 @@ static void GL_APIENTRY MessageCallback(GLenum source,
 static bool OpenGLRenderer_Init(SDL_Window *window) {
   g_window = window;
   SDL_GLContext context = SDL_GL_CreateContext(window);
+  g_context = context;
   (void)context;
 
   SDL_GL_SetSwapInterval(1);
@@ -179,6 +181,9 @@ static void OpenGLRenderer_Destroy() {
 }
 
 static void OpenGLRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pitch) {
+  // a second window can change the current GL context; re-bind
+  if (SDL_GL_GetCurrentContext() != g_context)
+    SDL_GL_MakeCurrent(g_window, g_context);
   int size = width * height;
 
   if (size > g_screen_buffer_size) {

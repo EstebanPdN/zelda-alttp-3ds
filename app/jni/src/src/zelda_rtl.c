@@ -966,6 +966,12 @@ void ZeldaWriteSram() {
   }
 }*/
 
+#ifndef __ANDROID__
+// Off Android there is no external-storage indirection: files live in cwd.
+SDL_RWops* SDL_RWFromFileInExternal(const char *filename, const char *mode) {
+  return SDL_RWFromFile(filename, mode);
+}
+#else
 SDL_RWops* SDL_RWFromFileInExternal(const char *filename, const char *mode) {
   // Get the external storage path
   const char* externalDir = SDL_AndroidGetExternalStoragePath();
@@ -986,6 +992,7 @@ SDL_RWops* SDL_RWFromFileInExternal(const char *filename, const char *mode) {
     return 0;
   }
 }
+#endif  // __ANDROID__
 
 void ZeldaReadSram() {
   SDL_RWops *stream = SDL_RWFromFileInExternal("saves/sram.dat", "rb");
@@ -1000,22 +1007,21 @@ void ZeldaReadSram() {
 }
 
 void ZeldaWriteSram() {
-  // Rename the existing file
+  // Back up the existing save before overwriting it.
+#ifdef __ANDROID__
   const char* externalPath = SDL_AndroidGetExternalStoragePath();
   if (externalPath) {
     char oldFilePath[256];
     char newFilePath[256];
     snprintf(oldFilePath, sizeof(oldFilePath), "%s/saves/sram.dat", externalPath);
     snprintf(newFilePath, sizeof(newFilePath), "%s/saves/sram.bak", externalPath);
-
-    if (rename(oldFilePath, newFilePath) == 0) {
-      printf("File renamed successfully.\n");
-    } else {
-      fprintf(stderr, "Error renaming file.\n");
-    }
+    rename(oldFilePath, newFilePath);
   } else {
     fprintf(stderr, "External storage path not available.\n");
   }
+#else
+  rename("saves/sram.dat", "saves/sram.bak");
+#endif
 
   SDL_RWops *stream = SDL_RWFromFileInExternal("saves/sram.dat", "wb");
   if (stream) {

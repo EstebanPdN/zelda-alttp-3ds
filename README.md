@@ -8,7 +8,27 @@ The bottom screen shows a live world map, a dungeon map with the rooms you visit
 
 The second screen graphics are made from your zelda3_assets.dat while the game runs, so there is no extra setup and the app contains no game assets. <br>
 
+This branch also builds the second screen for desktop/handheld Linux (SDL2), so the same UI runs on dual-screen Linux handhelds. <br>
+
 ![](showcase.png)
+
+## Building
+
+The native code lives in `app/jni/src` and builds two ways; pick the one for your target. `second_screen.c` is the shared, platform-free core (game-state reads + art generation); each target compiles only its own frontend from `src/platform/`:
+
+- `src/platform/android/` — JNI bridge (`second_screen_jni.c`) + no-op SDL stubs
+- `src/platform/linux/` — the SDL UI (`second_screen_sdl.c`) + its generated tables
+
+**Android:** open the project in Android Studio and build/run, or `./gradlew assembleDebug`. The NDK build (`jni/Android.mk`) compiles `src/*.c` + `src/platform/android/*.c`.
+
+**Linux (desktop / handheld):**
+```
+cd app/jni/src
+make zelda3          # needs SDL2 dev headers (libsdl2-dev / SDL2-devel / sdl2)
+```
+This compiles `src/*.c` + `src/platform/linux/*.c` into the `zelda3` binary. Enable the second screen with `ZELDA3_SECOND_SCREEN=1` (env knobs are documented at the top of `second_screen_sdl.c`).
+
+The generated tables (`src/platform/linux/ss_sheets.h`, `ss_textures.h`) come from `app/src/main/assets/secondscreen/` and are committed, so a normal build doesn't regenerate them. If those assets change, run `python tools/secondscreen/gen_linux_tables.py` from the repo root (needs Pillow).
 
 Use the instructions on the original repository (or below if you don't have access to a computer) to extract the zelda3_assets.dat file from your rom and put it in Android/data/com.dishii.zelda3/files <br>
 Running the app once will create the directory. <br>
