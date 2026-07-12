@@ -65,6 +65,7 @@ public class MinimapView extends View {
     private final Paint parchPaint = new Paint();
     private final Paint stonePaint = new Paint();
     private final Paint aa = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint font = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     // ---------- assets ----------
     private Bitmap mapLight, mapDark, icons, glyphs, letters, linkFace;
@@ -915,21 +916,13 @@ public class MinimapView extends View {
         boolean halfMagic = sram(0x7B) >= 1;
         float my = hy + rows * hs + 6 * u + (halfMagic ? 18 * u : 0);
         if (halfMagic) {
-            // "1/2" from the digit glyphs + a drawn slash (the HUD's own half
-            // tiles carry a black background that clashes with the pattern),
-            // tinted dark so it reads on the light backdrop
-            float ts = 2 * u;
-            float tx = x + (w - 22 * ts) / 2;
-            float ty = my - 20 * u;
-            int ink = Color.rgb(34, 51, 34);
-            bmp.setColorFilter(new android.graphics.PorterDuffColorFilter(
-                    ink, android.graphics.PorterDuff.Mode.SRC_IN));
-            drawText(c, "1", tx, ty, ts);
-            drawText(c, "2", tx + 14 * ts, ty, ts);
-            bmp.setColorFilter(null);
-            aa.setStyle(Paint.Style.STROKE);
-            aa.setStrokeWidth(2.2f * u); aa.setColor(ink);
-            c.drawLine(tx + 13 * ts, ty - ts, tx + 9 * ts, ty + 9 * ts, aa);
+            // a real font "1/2" reads better here than the HUD's own half
+            // tiles (black background) or the blocky digit glyphs
+            font.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            font.setTextSize(26 * u);
+            font.setTextAlign(Paint.Align.CENTER);
+            font.setColor(Color.rgb(34, 51, 34));
+            c.drawText("½", x + w / 2, my - 6 * u, font);
         }
         int magic = Math.min(sram(0x6E), 128);
         dst.set(x + 16 * u, my, x + w - 16 * u, my + barH);
@@ -985,11 +978,9 @@ public class MinimapView extends View {
             float cyY = rcy - ringR - 6 * u, cyX = rcy + ringR + 6 * u;
             yRingR.set(rcx - ringR, cyY - ringR, rcx + ringR, cyY + ringR);
             xRingR.set(rcx - ringR, cyX - ringR, rcx + ringR, cyX + ringR);
-            drawItemRing(c, rcx, cyY, ringR, slot, "Y");
-            drawItemRing(c, rcx, cyX, ringR, nativeBroken ? 0 : GameState.getEquippedSlotX(), "X");
             if (armedRing != 0) {
-                // the armed ring breathes softly while it waits for a tap
-                // on the items grid
+                // the armed ring breathes softly while it waits for a tap on
+                // the items grid; drawn first so the badges stay on top
                 float t = (System.nanoTime() % 2_400_000_000L) / 2_400_000_000f;
                 int a = (int) (30 + 100 * (Math.sin(t * 2 * Math.PI) * 0.5 + 0.5));
                 aa.setStyle(Paint.Style.STROKE);
@@ -997,6 +988,8 @@ public class MinimapView extends View {
                 aa.setColor(Color.argb(a, 232, 194, 96));
                 c.drawCircle(rcx, armedRing == 1 ? cyY : cyX, ringR + 6 * u, aa);
             }
+            drawItemRing(c, rcx, cyY, ringR, slot, "Y");
+            drawItemRing(c, rcx, cyX, ringR, nativeBroken ? 0 : GameState.getEquippedSlotX(), "X");
         } else {
             float ringR = Math.min(66 * u, (cy - vb) / 2 - 8 * u);
             float rcx = x + w / 2;
@@ -1144,6 +1137,11 @@ public class MinimapView extends View {
 
         int equipped = nativeBroken ? 0 : GameState.getEquippedSlot();
         int equippedX = (xRing && !nativeBroken) ? GameState.getEquippedSlotX() : 0;
+        // slow breathing highlight on the cell being assigned: the armed
+        // ring's item, else the Y item
+        int pulseSlot = (xRing && armedRing == 2) ? equippedX : equipped;
+        float pt = (System.nanoTime() % 2_400_000_000L) / 2_400_000_000f;
+        int pulseA = (int) (15 + 65 * (Math.sin(pt * 2 * Math.PI) * 0.5 + 0.5));
         for (int i = 0; i < 20; i++) {
             int col = i % 5, row = i / 5;
             float x = gridX + col * cellW, y = gridY + row * cellW;
@@ -1163,6 +1161,10 @@ public class MinimapView extends View {
                 dst.inset(6 * u, 6 * u);
                 c.drawRoundRect(dst, 8 * u, 8 * u, stroke);
                 dst.inset(-6 * u, -6 * u);
+            }
+            if (i + 1 == pulseSlot) {
+                fill.setColor(Color.argb(pulseA, 255, 235, 160));
+                c.drawRoundRect(dst, 10 * u, 10 * u, fill);
             }
             if (i == tapFlashSlot && System.nanoTime() < tapFlashUntil) {
                 fill.setColor(Color.argb(90, 255, 235, 160));
