@@ -29,6 +29,10 @@ public class GameState {
     /** Blank the game's own HUD strip on the top screen; applied on the game thread. */
     public static native void setHudHidden(boolean hide);
     public static native boolean isHudHidden();
+    /** The kFeatures0_* flag bits (features.h) the game is asked to run with. */
+    public static native int getFeatures();
+    /** Set or clear kFeatures0_* flag bits; applied on the game thread. */
+    public static native void setFeature(int mask, boolean on);
     /** Arm (or cancel) capture of the next gamepad button press; the press is swallowed. */
     public static native void armButtonCapture(boolean arm);
     /** The captured button index, consuming it; -2 = still waiting, -1 = idle. */

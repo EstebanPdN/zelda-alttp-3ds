@@ -407,6 +407,10 @@ static volatile int g_pending_widescreen = -1;
 static volatile int g_pending_hide_hud = -1;
 static volatile int g_pending_controls_set;
 static uint8 g_pending_controls[12];
+// kFeatures0_* bits to set/clear; ZeldaRunFrame latches the result into game ram.
+static volatile uint32 g_pending_features_on, g_pending_features_off;
+// Redraw the top HUD once the changed feature bits have reached game ram.
+static bool g_ss_hud_refresh;
 
 // Read by nmi.c: blanks the HUD strip in VRAM instead of copying it.
 bool g_ss_hide_hud;
@@ -436,6 +440,21 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isHudHidden(JNIEnv *
   int pending = g_pending_hide_hud;
   if (pending >= 0) return pending != 0;
   return g_ss_hide_hud;
+}
+
+// The kFeatures0_* flags the game is asked to run with (features.h).
+JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getFeatures(JNIEnv *env, jclass clazz) {
+  return (jint)((g_wanted_zelda_features | g_pending_features_on) & ~g_pending_features_off);
+}
+
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setFeature(JNIEnv *env, jclass clazz, jint mask, jboolean on) {
+  if (on) {
+    g_pending_features_off &= ~(uint32)mask;
+    g_pending_features_on |= (uint32)mask;
+  } else {
+    g_pending_features_on &= ~(uint32)mask;
+    g_pending_features_off |= (uint32)mask;
+  }
 }
 
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_armButtonCapture(JNIEnv *env, jclass clazz, jboolean arm) {
@@ -492,6 +511,29 @@ void SecondScreen_RunFrameHook(void) {
   if (g_pending_controls_set) {
     g_pending_controls_set = 0;
     GamepadMap_SetControls(g_pending_controls);
+  }
+  uint32 f_on = g_pending_features_on, f_off = g_pending_features_off;
+  if (f_on | f_off) {
+    g_pending_features_on &= ~f_on;
+    g_pending_features_off &= ~f_off;
+    uint32 old = g_wanted_zelda_features;
+    uint32 nf = (old | f_on) & ~f_off;
+    if (nf != old) {
+      g_wanted_zelda_features = nf;  // ZeldaRunFrame latches this into game ram
+      g_config.features0 = nf;
+      if ((nf ^ old) & kFeatures0_DimFlashes) {
+        extern void ZeldaApplyDimFlashesPalette(bool enable);
+        ZeldaApplyDimFlashesPalette((nf & kFeatures0_DimFlashes) != 0);
+      }
+      if ((nf ^ old) & (kFeatures0_SwitchLR | kFeatures0_ShowMaxItemsInYellow | kFeatures0_CarryMoreRupees))
+        g_ss_hud_refresh = true;
+    }
+  }
+  // HUD-affecting bits changed: rebuild once the new flags are in game ram
+  if (g_ss_hud_refresh && enhanced_features0 == g_wanted_zelda_features) {
+    g_ss_hud_refresh = false;
+    if (!g_ss_hide_hud && (main_module_index == 7 || main_module_index == 9 || main_module_index == 14))
+      Hud_Rebuild();
   }
   int slot = g_pending_equip_slot;
   if (!slot) return;

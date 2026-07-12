@@ -101,14 +101,43 @@ public class MinimapView extends View {
     private boolean artReady = false;
     private final byte[] probeBuf = new byte[1];
 
+    // [Features] toggles offered on the settings screen: label, zelda3.ini
+    // section + key, the kFeatures0_* bit (features.h) and whether the shown
+    // ON/OFF is the inverse of the bit (the beep row shows the beep itself).
+    private static final String[] FEAT_LABELS = {
+        "ITEM SWITCH L R", "TURN WHILE DASH", "MIRROR TO DARK", "COLLECT BY SWORD",
+        "SWORD BREAKS POTS", "LOW HP BEEP", "SKIP INTRO", "MAX ITEMS YELLOW",
+        "MORE BOMBS", "CARRY 9999 RUPEES", "CANCEL BIRD RIDE", "DIM FLASHES",
+    };
+    private static final String[] FEAT_KEYS = {
+        "ItemSwitchLR", "TurnWhileDashing", "MirrorToDarkworld", "CollectItemsWithSword",
+        "BreakPotsWithSword", "DisableLowHealthBeep", "SkipIntroOnKeypress", "ShowMaxItemsInYellow",
+        "MoreActiveBombs", "CarryMoreRupees", "CancelBirdTravel", "DimFlashes",
+    };
+    private static final String[] FEAT_SECTIONS = {
+        "[Features]", "[Features]", "[Features]", "[Features]",
+        "[Features]", "[Features]", "[Features]", "[Features]",
+        "[Features]", "[Features]", "[Features]", "[Graphics]",
+    };
+    private static final int[] FEAT_MASKS = {
+        2, 4, 8, 16, 32, 64, 128, 256, 512, 2048, 8192, 65536,
+    };
+    private static final boolean[] FEAT_INVERT = {
+        false, false, false, false, false, true, false, false, false, false, false, false,
+    };
+
     // touch regions (recomputed during draw)
     private final RectF tabItemsR = new RectF(), tabGearR = new RectF();
     private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
-    private final RectF[] settingsRowR = {new RectF(), new RectF(), new RectF(), new RectF()};
+    private final RectF[] settingsRowR = new RectF[4 + FEAT_MASKS.length];
     private final RectF[] remapRowR = new RectF[12];
     private final RectF mapAreaR = new RectF(), yRingR = new RectF();
 
     // settings state
+    private float settingsScroll, settingsMaxScroll;
+    private float settingsListTop, settingsListBot;
+    private boolean settingsTouch, settingsScrolling;
+    private float settingsTouchStartY, settingsTouchLastY;
     private boolean remapMode = false;
     private int remapArm = -1;          // command index waiting for a button press
     private long remapArmAt;
@@ -163,6 +192,7 @@ public class MinimapView extends View {
         stroke.setStyle(Paint.Style.STROKE);
         for (int i = 0; i < plaqueR.length; i++) plaqueR[i] = new RectF();
         for (int i = 0; i < remapRowR.length; i++) remapRowR[i] = new RectF();
+        for (int i = 0; i < settingsRowR.length; i++) settingsRowR[i] = new RectF();
         xRing = readIniBool("[General]", "SecondScreenXItemRing");
         loadAssets(context);
     }
@@ -642,25 +672,43 @@ public class MinimapView extends View {
         drawText(c, "SETTINGS", r.centerX() - textWidth("SETTINGS", 3 * u) / 2, r.top + 18 * u, 3 * u);
 
         boolean ws = false, hudHidden = false;
+        int feats = 0;
         if (!nativeBroken) {
             ws = GameState.isWidescreen();
             hudHidden = GameState.isHudHidden();
+            feats = GameState.getFeatures();
         }
-        String[] labels = {"REMAP BUTTONS", "WIDESCREEN", "TOP SCREEN HUD", "X ITEM RING"};
-        String[] values = {"", ws ? "ON" : "OFF", hudHidden ? "OFF" : "ON", xRing ? "ON" : "OFF"};
+        int n = settingsRowR.length;
         float rowH = 76 * u, gap = 18 * u;
-        float y0 = r.top + 60 * u;
-        for (int i = 0; i < labels.length; i++) {
+        settingsListTop = r.top + 56 * u;
+        settingsListBot = r.bottom - 16 * u;
+        settingsMaxScroll = Math.max(0, n * (rowH + gap) - gap - (settingsListBot - settingsListTop));
+        settingsScroll = clamp(settingsScroll, 0, settingsMaxScroll);
+
+        c.save();
+        c.clipRect(r.left + 12 * u, settingsListTop, r.right - 12 * u, settingsListBot);
+        float y0 = settingsListTop - settingsScroll;
+        for (int i = 0; i < n; i++) {
             RectF row = settingsRowR[i];
             row.set(r.left + 28 * u, y0 + i * (rowH + gap), r.right - 28 * u, y0 + i * (rowH + gap) + rowH);
+            if (row.bottom < settingsListTop || row.top > settingsListBot) continue;
             fill.setColor(Color.rgb(28, 28, 28));
             c.drawRoundRect(row, 8 * u, 8 * u, fill);
             stroke.setStrokeWidth(3 * u); stroke.setColor(COL_GOLD_DARK);
             c.drawRoundRect(row, 8 * u, 8 * u, stroke);
             float ty = row.centerY() - 12 * u;
-            drawText(c, labels[i], row.left + 22 * u, ty, 3 * u);
-            String v = values[i];
-            if (v.isEmpty()) {
+            String label, v;
+            if (i == 0) { label = "REMAP BUTTONS"; v = null; }
+            else if (i == 1) { label = "WIDESCREEN"; v = ws ? "ON" : "OFF"; }
+            else if (i == 2) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
+            else if (i == 3) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
+            else {
+                int f = i - 4;
+                label = FEAT_LABELS[f];
+                v = (((feats & FEAT_MASKS[f]) != 0) ^ FEAT_INVERT[f]) ? "ON" : "OFF";
+            }
+            drawText(c, label, row.left + 22 * u, ty, 3 * u);
+            if (v == null) {
                 // chevron for the remap sub-screen
                 aa.setStyle(Paint.Style.STROKE); aa.setStrokeWidth(5 * u); aa.setColor(COL_GOLD);
                 float ax = row.right - 40 * u, ay = row.centerY();
@@ -669,6 +717,50 @@ public class MinimapView extends View {
             } else {
                 drawText(c, v, row.right - 22 * u - textWidth(v, 3 * u), ty, 3 * u);
             }
+        }
+        c.restore();
+
+        // scrollbar hint
+        if (settingsMaxScroll > 0) {
+            float span = settingsListBot - settingsListTop;
+            float thumbH = Math.max(40 * u, span * span / (span + settingsMaxScroll));
+            float thumbY = settingsListTop + (span - thumbH) * (settingsScroll / settingsMaxScroll);
+            fill.setColor(Color.rgb(28, 28, 28));
+            dst.set(r.right - 20 * u, settingsListTop, r.right - 14 * u, settingsListBot);
+            c.drawRoundRect(dst, 3 * u, 3 * u, fill);
+            fill.setColor(COL_GOLD_DARK);
+            dst.set(r.right - 20 * u, thumbY, r.right - 14 * u, thumbY + thumbH);
+            c.drawRoundRect(dst, 3 * u, 3 * u, fill);
+        }
+    }
+
+    // A tap on the settings list (from onTouchEvent, once it's known not to be a drag).
+    private void settingsTap(float x, float y) {
+        if (nativeBroken || y < settingsListTop || y > settingsListBot) return;
+        for (int i = 0; i < settingsRowR.length; i++) {
+            if (!settingsRowR[i].contains(x, y)) continue;
+            if (i == 0) {
+                GameState.getGamepadControls(padControls);
+                remapMode = true;
+            } else if (i == 1) {
+                boolean on = !GameState.isWidescreen();
+                GameState.setWidescreen(on);
+                updateIni("[General]", "ExtendedAspectRatio", on ? "16:9" : "4:3");
+            } else if (i == 2) {
+                boolean hide = !GameState.isHudHidden();
+                GameState.setHudHidden(hide);
+                getContext().getSharedPreferences("secondscreen", 0)
+                        .edit().putBoolean("hideTopHud", hide).apply();
+            } else if (i == 3) {
+                xRing = !xRing;
+                updateIni("[General]", "SecondScreenXItemRing", xRing ? "1" : "0");
+            } else {
+                int f = i - 4;
+                boolean on = (GameState.getFeatures() & FEAT_MASKS[f]) == 0;
+                GameState.setFeature(FEAT_MASKS[f], on);
+                updateIni(FEAT_SECTIONS[f], FEAT_KEYS[f], on ? "1" : "0");
+            }
+            return;
         }
     }
 
@@ -1190,9 +1282,29 @@ public class MinimapView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
-        if (ev.getAction() != MotionEvent.ACTION_DOWN) return true;
         if (uiMode != MODE_GAME) return true;   // no touch UI on title/cutscene screens
         float x = ev.getX(), y = ev.getY();
+        int action = ev.getActionMasked();
+
+        // the settings list scrolls, so its taps resolve on UP (a drag is not a tap)
+        if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_UP
+                || action == MotionEvent.ACTION_CANCEL) {
+            if (settingsTouch) {
+                if (action == MotionEvent.ACTION_MOVE) {
+                    if (Math.abs(y - settingsTouchStartY) > 18 * u) settingsScrolling = true;
+                    if (settingsScrolling)
+                        settingsScroll = clamp(settingsScroll + (settingsTouchLastY - y), 0, settingsMaxScroll);
+                    settingsTouchLastY = y;
+                } else {
+                    if (action == MotionEvent.ACTION_UP && !settingsScrolling
+                            && tab == TAB_SETTINGS && !remapMode)
+                        settingsTap(x, y);
+                    settingsTouch = false;
+                }
+            }
+            return true;
+        }
+        if (action != MotionEvent.ACTION_DOWN) return true;
 
         if (tabItemsR.contains(x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leaveRemap(); return true; }
         if (tabGearR.contains(x, y)) { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leaveRemap(); return true; }
@@ -1218,23 +1330,11 @@ public class MinimapView extends View {
                         return true;
                     }
                 }
-            } else if (!nativeBroken) {
-                if (settingsRowR[0].contains(x, y)) {
-                    GameState.getGamepadControls(padControls);
-                    remapMode = true;
-                } else if (settingsRowR[1].contains(x, y)) {
-                    boolean on = !GameState.isWidescreen();
-                    GameState.setWidescreen(on);
-                    updateIni("[General]", "ExtendedAspectRatio", on ? "16:9" : "4:3");
-                } else if (settingsRowR[2].contains(x, y)) {
-                    boolean hide = !GameState.isHudHidden();
-                    GameState.setHudHidden(hide);
-                    getContext().getSharedPreferences("secondscreen", 0)
-                            .edit().putBoolean("hideTopHud", hide).apply();
-                } else if (settingsRowR[3].contains(x, y)) {
-                    xRing = !xRing;
-                    updateIni("[General]", "SecondScreenXItemRing", xRing ? "1" : "0");
-                }
+            } else if (mapAreaR.contains(x, y)) {
+                // taps and drag-scrolling in the list are resolved on MOVE/UP
+                settingsTouch = true;
+                settingsScrolling = false;
+                settingsTouchStartY = settingsTouchLastY = y;
             }
             return true;
         }

@@ -837,6 +837,23 @@ static void LoadLinkGraphics() {
 const uint8 *g_asset_ptrs[kNumberOfAssets];
 uint32 g_asset_sizes[kNumberOfAssets];
 
+// Patch (or unpatch) the dungeon floor palettes for the DimFlashes feature.
+// Also called from the second screen when the toggle changes at runtime;
+// a change shows the next time a dungeon loads its palette.
+void ZeldaApplyDimFlashesPalette(bool enable) {
+  static uint16 orig[3];
+  static bool saved;
+  if (!saved) {
+    saved = true;
+    orig[0] = kPalette_DungBgMain[0x484];
+    orig[1] = kPalette_DungBgMain[0x485];
+    orig[2] = kPalette_DungBgMain[0x486];
+  }
+  kPalette_DungBgMain[0x484] = enable ? 0x70 : orig[0];
+  kPalette_DungBgMain[0x485] = enable ? 0x95 : orig[1];
+  kPalette_DungBgMain[0x486] = enable ? 0x57 : orig[2];
+}
+
 static void LoadAssets() {
   size_t length = 0;
   uint8 *data = ReadWholeFile("zelda3_assets.dat", &length);
@@ -873,11 +890,7 @@ static void LoadAssets() {
     offset += size;
   }
 
-  if (g_config.features0 & kFeatures0_DimFlashes) { // patch dungeon floor palettes
-    kPalette_DungBgMain[0x484] = 0x70;
-    kPalette_DungBgMain[0x485] = 0x95;
-    kPalette_DungBgMain[0x486] = 0x57;
-  }
+  ZeldaApplyDimFlashesPalette((g_config.features0 & kFeatures0_DimFlashes) != 0);
 }
 
 // Go some steps up and find zelda3.ini
