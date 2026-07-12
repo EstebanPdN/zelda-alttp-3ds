@@ -251,7 +251,7 @@ static int ParseGamepadButtonName(const char **value) {
 
 static const uint8 kDefaultGamepadCmds[] = {
   kGamepadBtn_DpadUp, kGamepadBtn_DpadDown, kGamepadBtn_DpadLeft, kGamepadBtn_DpadRight, kGamepadBtn_Back, kGamepadBtn_Start,
-  kGamepadBtn_B, kGamepadBtn_A, kGamepadBtn_Y, kGamepadBtn_X, kGamepadBtn_L1, kGamepadBtn_R1,
+  kGamepadBtn_A, kGamepadBtn_B, kGamepadBtn_X, kGamepadBtn_Y, kGamepadBtn_L1, kGamepadBtn_R1,
 };
 
 static void ParseGamepadArray(char *value, int cmd, int size) {
