@@ -104,7 +104,7 @@ public class MinimapView extends View {
     // touch regions (recomputed during draw)
     private final RectF tabItemsR = new RectF(), tabGearR = new RectF();
     private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
-    private final RectF[] settingsRowR = {new RectF(), new RectF(), new RectF()};
+    private final RectF[] settingsRowR = {new RectF(), new RectF(), new RectF(), new RectF()};
     private final RectF[] remapRowR = new RectF[12];
     private final RectF mapAreaR = new RectF(), yRingR = new RectF();
 
@@ -114,6 +114,7 @@ public class MinimapView extends View {
     private long remapArmAt;
     private final int[] padControls = new int[12];
     private boolean hudPrefApplied = false;
+    private boolean xRing = false;      // second ring with the X-assigned item (ItemSwitchLR)
     private static final String[] PAD_CMD_NAMES = {
         "UP", "DOWN", "LEFT", "RIGHT", "SELECT", "START", "A", "B", "X", "Y", "L", "R",
     };
@@ -162,6 +163,7 @@ public class MinimapView extends View {
         stroke.setStyle(Paint.Style.STROKE);
         for (int i = 0; i < plaqueR.length; i++) plaqueR[i] = new RectF();
         for (int i = 0; i < remapRowR.length; i++) remapRowR[i] = new RectF();
+        xRing = readIniBool("[General]", "SecondScreenXItemRing");
         loadAssets(context);
     }
 
@@ -644,11 +646,11 @@ public class MinimapView extends View {
             ws = GameState.isWidescreen();
             hudHidden = GameState.isHudHidden();
         }
-        String[] labels = {"REMAP BUTTONS", "WIDESCREEN", "TOP SCREEN HUD"};
-        String[] values = {"", ws ? "ON" : "OFF", hudHidden ? "OFF" : "ON"};
+        String[] labels = {"REMAP BUTTONS", "WIDESCREEN", "TOP SCREEN HUD", "X ITEM RING"};
+        String[] values = {"", ws ? "ON" : "OFF", hudHidden ? "OFF" : "ON", xRing ? "ON" : "OFF"};
         float rowH = 76 * u, gap = 18 * u;
         float y0 = r.top + 60 * u;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < labels.length; i++) {
             RectF row = settingsRowR[i];
             row.set(r.left + 28 * u, y0 + i * (rowH + gap), r.right - 28 * u, y0 + i * (rowH + gap) + rowH);
             fill.setColor(Color.rgb(28, 28, 28));
@@ -751,6 +753,32 @@ public class MinimapView extends View {
         }
     }
 
+    // Read one boolean `key = value` from a section of the user's zelda3.ini.
+    private boolean readIniBool(String section, String key) {
+        try {
+            java.io.File f = new java.io.File(getContext().getExternalFilesDir(null), "zelda3.ini");
+            java.io.BufferedReader in = new java.io.BufferedReader(new java.io.FileReader(f));
+            String line, cur = "";
+            boolean v = false;
+            while ((line = in.readLine()) != null) {
+                String t = line.trim();
+                if (t.startsWith("["))
+                    cur = t;
+                else if (cur.equalsIgnoreCase(section)
+                        && t.toLowerCase().startsWith(key.toLowerCase())
+                        && t.substring(key.length()).trim().startsWith("=")) {
+                    String s = t.substring(t.indexOf('=') + 1).trim();
+                    v = s.equals("1") || s.equalsIgnoreCase("on")
+                            || s.equalsIgnoreCase("true") || s.equalsIgnoreCase("yes");
+                }
+            }
+            in.close();
+            return v;
+        } catch (java.io.IOException e) {
+            return false;
+        }
+    }
+
     private void writeIniGamepadControls() {
         StringBuilder v = new StringBuilder();
         for (int i = 0; i < 12; i++) {
@@ -830,21 +858,40 @@ public class MinimapView extends View {
             drawNumber(c, sram(0x6F), 1, ne - 8 * s, ry, s, false);
         }
 
-        // equipped item ring: tap cycles to the next owned item
+        // equipped item ring, centered between the vitals and the chip: tap
+        // cycles to the next owned item; with the X ITEM RING setting on, a
+        // second ring shows the X-assigned item
         float vb = my + barH;   // bottom of the vitals cluster
-        float ringR = Math.min(66 * u, (cy - vb) / 2 - 8 * u);
-        float rcx = x + w / 2, rcy = (vb + cy) / 2;
-        yRingR.set(rcx - ringR, rcy - ringR, rcx + ringR, rcy + ringR);
-        drawRing(c, rcx, rcy, ringR);
+        float rcy = (vb + cy) / 2;
         int slot = nativeBroken ? 0 : GameState.getEquippedSlot();
+        if (xRing) {
+            // two smaller rings side by side, capped so they stay inside the
+            // column and clear of the counters chip and the vitals
+            float ringR = Math.min(Math.min(44 * u, w / 4 - 4 * u), (cy - vb) / 2 - 8 * u);
+            float cxY = x + w / 4, cxX = x + 3 * w / 4;
+            yRingR.set(cxY - ringR, rcy - ringR, cxY + ringR, rcy + ringR);
+            drawItemRing(c, cxY, rcy, ringR, slot, "Y");
+            drawItemRing(c, cxX, rcy, ringR, nativeBroken ? 0 : GameState.getEquippedSlotX(), "X");
+        } else {
+            float ringR = Math.min(66 * u, (cy - vb) / 2 - 8 * u);
+            float rcx = x + w / 2;
+            yRingR.set(rcx - ringR, rcy - ringR, rcx + ringR, rcy + ringR);
+            drawItemRing(c, rcx, rcy, ringR, slot, "Y");
+        }
+    }
+
+    /** One item ring: the ring itself, the item in the given grid slot
+     *  (icon sized to the ring), and a button letter at the top right. */
+    private void drawItemRing(Canvas c, float cx, float cy, float r, int slot, String label) {
+        drawRing(c, cx, cy, r);
         if (slot >= 1 && slot <= 20) {
             int i = slot - 1;
             int lv = "bottle".equals(ITEM_NAMES[i]) ? bottleLevel() : sram(0x40 + i);
             lv = Math.min(Math.max(lv, 0), ITEM_MAX_LEVEL[i]);
-            float is = Math.min(5 * u, ringR / 13);
-            if (lv > 0) drawIcon(c, ITEM_NAMES[i] + "_" + lv, rcx - 8 * is, rcy - 8 * is, is);
+            float is = r / 13.2f;   // 5*u at the classic 66*u ring
+            if (lv > 0) drawIcon(c, ITEM_NAMES[i] + "_" + lv, cx - 8 * is, cy - 8 * is, is);
         }
-        drawText(c, "Y", rcx + ringR - 20 * u, rcy - ringR + 4 * u, 2 * u);
+        drawText(c, label, cx + r - 20 * u, cy - r + 4 * u, 2 * u);
     }
 
     private void drawRing(Canvas c, float cx, float cy, float r) {
@@ -1184,6 +1231,9 @@ public class MinimapView extends View {
                     GameState.setHudHidden(hide);
                     getContext().getSharedPreferences("secondscreen", 0)
                             .edit().putBoolean("hideTopHud", hide).apply();
+                } else if (settingsRowR[3].contains(x, y)) {
+                    xRing = !xRing;
+                    updateIni("[General]", "SecondScreenXItemRing", xRing ? "1" : "0");
                 }
             }
             return true;

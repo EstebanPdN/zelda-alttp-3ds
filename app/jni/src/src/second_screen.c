@@ -47,9 +47,8 @@ JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_readSram(JNIEnv *env, jc
   (*env)->SetByteArrayRegion(env, out, 0, n, (const jbyte *)(g_ram + 0xF300));
 }
 
-// The equipped Y-item as an inventory grid slot (1..20, 0 = none).
-JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getEquippedSlot(JNIEnv *env, jclass clazz) {
-  uint8 item = hud_cur_item;
+// Maps a hud item id to an inventory grid slot (1..20, 0 = none).
+static jint SS_ItemToSlot(uint8 item) {
   if (item >= 21) return 16;  // Bottle1..4 -> the bottle cell
   if (item == 0 || item > 20) return 0;
   if (hud_inventory_order[0] != 0) {
@@ -57,6 +56,19 @@ JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getEquippedSlot(JNIEnv *
       if (hud_inventory_order[i] == item) return i + 1;
   }
   return item;
+}
+
+// The equipped Y-item as an inventory grid slot (1..20, 0 = none).
+JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getEquippedSlot(JNIEnv *env, jclass clazz) {
+  return SS_ItemToSlot(hud_cur_item);
+}
+
+// The item assigned to the X button (hud_cur_item_x, set on the item screen
+// when the ItemSwitchLR feature is on) as a grid slot; 0 when nothing is
+// assigned or the feature is disabled.
+JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getEquippedSlotX(JNIEnv *env, jclass clazz) {
+  if (!(enhanced_features0 & kFeatures0_SwitchLR)) return 0;
+  return SS_ItemToSlot(hud_cur_item_x);
 }
 
 // Palace index (0..13, 0xFF when not in a palace) in the low byte,
