@@ -641,9 +641,20 @@ public class MinimapView extends View {
             }
 
             if (isCur) {
+                // corner brackets rather than a full box: door pips sit
+                // mid-edge on the room border, a full outline covers them (#7)
                 stroke.setStrokeWidth(3 * u);
                 stroke.setColor(COL_GOLD);
-                c.drawRect(x + 1.5f * u, y + 1.5f * u, x + cell - 1.5f * u, y + cell - 1.5f * u, stroke);
+                float in = 1.5f * u, len = cell * 0.28f;
+                float bx0 = x + in, by0 = y + in, bx1 = x + cell - in, by1 = y + cell - in;
+                c.drawLine(bx0 - in, by0, bx0 + len, by0, stroke);
+                c.drawLine(bx0, by0 - in, bx0, by0 + len, stroke);
+                c.drawLine(bx1 + in, by0, bx1 - len, by0, stroke);
+                c.drawLine(bx1, by0 - in, bx1, by0 + len, stroke);
+                c.drawLine(bx0 - in, by1, bx0 + len, by1, stroke);
+                c.drawLine(bx0, by1 + in, bx0, by1 - len, stroke);
+                c.drawLine(bx1 + in, by1, bx1 - len, by1, stroke);
+                c.drawLine(bx1, by1 + in, bx1, by1 - len, stroke);
                 if (icons) {
                     int p = DOT_PALETTE[(int) (frame >> 2) & 3];
                     float sx = x + (((linkX & 0x1E0) >> 5) - 3) * ms;
