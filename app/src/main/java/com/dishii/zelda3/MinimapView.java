@@ -65,7 +65,6 @@ public class MinimapView extends View {
     private final Paint parchPaint = new Paint();
     private final Paint stonePaint = new Paint();
     private final Paint aa = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint font = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     // ---------- assets ----------
     private Bitmap mapLight, mapDark, icons, glyphs, letters, linkFace;
@@ -916,13 +915,30 @@ public class MinimapView extends View {
         boolean halfMagic = sram(0x7B) >= 1;
         float my = hy + rows * hs + 6 * u + (halfMagic ? 18 * u : 0);
         if (halfMagic) {
-            // a real font "1/2" reads better here than the HUD's own half
-            // tiles (black background) or the blocky digit glyphs
-            font.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            font.setTextSize(26 * u);
-            font.setTextAlign(Paint.Align.CENTER);
-            font.setColor(Color.rgb(34, 51, 34));
-            c.drawText("½", x + w / 2, my - 6 * u, font);
+            // pixel-style "1/2": digit glyphs plus a stair-stepped slash,
+            // white with a one-pixel black border so it reads on any backdrop
+            float ts = 2 * u;
+            float tx = x + (w - 22 * ts) / 2;
+            float ty = my - 20 * u;
+            bmp.setColorFilter(new android.graphics.PorterDuffColorFilter(
+                    Color.BLACK, android.graphics.PorterDuff.Mode.SRC_IN));
+            for (int k = 0; k < 9; k++) {
+                if (k == 4) continue;   // the 8 outline directions
+                float ox = (k % 3 - 1) * ts, oy = (k / 3 - 1) * ts;
+                drawText(c, "1", tx + ox, ty + oy, ts);
+                drawText(c, "2", tx + 14 * ts + ox, ty + oy, ts);
+            }
+            bmp.setColorFilter(null);
+            fill.setColor(Color.BLACK);
+            for (int k = 0; k < 5; k++)
+                c.drawRect(tx + (8 + k) * ts, ty + (5 - 2 * k) * ts,
+                           tx + (11 + k) * ts, ty + (9 - 2 * k) * ts, fill);
+            drawText(c, "1", tx, ty, ts);
+            drawText(c, "2", tx + 14 * ts, ty, ts);
+            fill.setColor(Color.WHITE);
+            for (int k = 0; k < 5; k++)
+                c.drawRect(tx + (9 + k) * ts, ty + (6 - 2 * k) * ts,
+                           tx + (10 + k) * ts, ty + (8 - 2 * k) * ts, fill);
         }
         int magic = Math.min(sram(0x6E), 128);
         dst.set(x + 16 * u, my, x + w - 16 * u, my + barH);
