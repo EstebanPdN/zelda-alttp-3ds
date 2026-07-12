@@ -32,8 +32,8 @@ import java.util.Map;
  *    stone theme with real floor layouts in dungeons.
  *  - ITEMS / GEAR: full-width bottom buttons open menu-style black panels
  *    (like the game's own menu boxes) with big icons; tapping an item equips.
- *  - Sidebar: rupees/keys, the equipped item in a ring (tap = cycle to the
- *    next item), hearts and magic.
+ *  - Sidebar: hearts and magic on top, the equipped item in a ring (tap =
+ *    cycle to the next item), rupees/keys at the bottom.
  */
 public class MinimapView extends View {
 
@@ -764,14 +764,54 @@ public class MinimapView extends View {
     // ---------- sidebar ----------
 
     private void drawSidebar(Canvas c, float x, float y, float w, float h, boolean dungeonMode) {
-        // counters chip (rupees + bombs + arrows, keys in dungeons)
+        // hearts + magic at the top (the most-glanced info, especially with the
+        // top-screen HUD turned off), counters at the bottom, and the equip
+        // ring centered in the space between — fills any aspect
+
+        // hearts (live health): big, 5 per row, wrapping up to 4 rows
+        int cap = Math.min(sram(0x6C) >> 3, 20);
+        int cur = sram(0x6D);
+        float hs = Math.min(36 * u, (w - 6 * u) / 5);   // per-heart cell
+        float hy = y + 6 * u;
+        float hx0 = x + (w - Math.min(cap, 5) * hs) / 2;
+        for (int i = 0; i < cap; i++) {
+            String k = i < (cur >> 3) ? "heart_full"
+                    : (i == (cur >> 3) && (cur & 7) >= 4 ? "heart_half" : "heart_empty");
+            drawGlyph(c, k, hx0 + (i % 5) * hs, hy + (i / 5) * hs, (hs - 2 * u) / 8);
+        }
+        int rows = Math.max((cap + 4) / 5, 1);
+
+        // magic bar right under the hearts (with the HUD's 1/2 marker when the
+        // upgrade is owned)
+        float barH = 18 * u;
+        boolean halfMagic = sram(0x7B) >= 1;
+        float my = hy + rows * hs + 6 * u + (halfMagic ? 18 * u : 0);
+        if (halfMagic) {
+            float gx = x + (w - 48 * u) / 2;
+            for (int i = 0; i < 3; i++) drawGlyph(c, "half" + i, gx + i * 16 * u, my - 20 * u, 2 * u);
+        }
+        int magic = Math.min(sram(0x6E), 128);
+        dst.set(x + 16 * u, my, x + w - 16 * u, my + barH);
+        fill.setColor(COL_BOX);
+        c.drawRoundRect(dst, 5 * u, 5 * u, fill);
+        float frac = magic / 128f;
+        fill.setColor(Color.rgb(72, 208, 72));
+        dst.set(x + 19 * u, my + 3 * u, x + 19 * u + (w - 38 * u) * frac, my + barH - 3 * u);
+        if (frac > 0) c.drawRoundRect(dst, 3 * u, 3 * u, fill);
+        stroke.setStrokeWidth(2.5f * u); stroke.setColor(COL_GOLD_DARK);
+        dst.set(x + 16 * u, my, x + w - 16 * u, my + barH);
+        c.drawRoundRect(dst, 5 * u, 5 * u, stroke);
+
+        // counters chip (rupees + bombs + arrows, keys in dungeons) anchored
+        // to the bottom of the column, above the tab bar
         float s = 3 * u;
         boolean showKeys = dungeonMode && sram(0x6F) != 0xFF;
         float chipH = (showKeys ? 40 : 30) * s + 20 * u;
-        dst.set(x, y, x + w, y + chipH);
+        float cy = y + h - chipH;
+        dst.set(x, cy, x + w, y + h);
         menuBox(c, dst, COL_BOX_BORDER);
         // icons centered in a 16px column on the left, numbers right-aligned
-        float ry = y + 12 * u;
+        float ry = cy + 12 * u;
         float ix = x + 10 * u;
         float ne = x + w - 10 * u;
         drawGlyph(c, "rupee", ix + 4 * s, ry, s);
@@ -790,17 +830,10 @@ public class MinimapView extends View {
             drawNumber(c, sram(0x6F), 1, ne - 8 * s, ry, s, false);
         }
 
-        // anchor the magic bar and hearts to the bottom of the column, then
-        // center the equip ring in the space that remains — fills any aspect
-        float hs = 19 * u;
-        float barH = 18 * u;
-        boolean halfMagic = sram(0x7B) >= 1;
-        float my = y + h - barH - 6 * u;
-        float hy = my - 2 * hs - 16 * u - (halfMagic ? 18 * u : 0);
-
         // equipped item ring: tap cycles to the next owned item
-        float ringR = 66 * u;
-        float rcx = x + w / 2, rcy = ((y + chipH) + hy) / 2;
+        float vb = my + barH;   // bottom of the vitals cluster
+        float ringR = Math.min(66 * u, (cy - vb) / 2 - 8 * u);
+        float rcx = x + w / 2, rcy = (vb + cy) / 2;
         yRingR.set(rcx - ringR, rcy - ringR, rcx + ringR, rcy + ringR);
         drawRing(c, rcx, rcy, ringR);
         int slot = nativeBroken ? 0 : GameState.getEquippedSlot();
@@ -808,36 +841,10 @@ public class MinimapView extends View {
             int i = slot - 1;
             int lv = "bottle".equals(ITEM_NAMES[i]) ? bottleLevel() : sram(0x40 + i);
             lv = Math.min(Math.max(lv, 0), ITEM_MAX_LEVEL[i]);
-            if (lv > 0) drawIcon(c, ITEM_NAMES[i] + "_" + lv, rcx - 40 * u, rcy - 40 * u, 5 * u);
+            float is = Math.min(5 * u, ringR / 13);
+            if (lv > 0) drawIcon(c, ITEM_NAMES[i] + "_" + lv, rcx - 8 * is, rcy - 8 * is, is);
         }
         drawText(c, "Y", rcx + ringR - 20 * u, rcy - ringR + 4 * u, 2 * u);
-
-        // hearts (live health)
-        int cap = Math.min(sram(0x6C) >> 3, 20);
-        int cur = sram(0x6D);
-        float hx0 = x + (w - Math.min(cap, 10) * hs) / 2;
-        for (int i = 0; i < cap; i++) {
-            String k = i < (cur >> 3) ? "heart_full"
-                    : (i == (cur >> 3) && (cur & 7) >= 4 ? "heart_half" : "heart_empty");
-            drawGlyph(c, k, hx0 + (i % 10) * hs, hy + (i / 10) * hs, 2.2f * u);
-        }
-
-        // magic bar (with the HUD's 1/2 marker when the upgrade is owned)
-        if (halfMagic) {
-            float gx = x + (w - 48 * u) / 2;
-            for (int i = 0; i < 3; i++) drawGlyph(c, "half" + i, gx + i * 16 * u, my - 20 * u, 2 * u);
-        }
-        int magic = Math.min(sram(0x6E), 128);
-        dst.set(x + 16 * u, my, x + w - 16 * u, my + barH);
-        fill.setColor(COL_BOX);
-        c.drawRoundRect(dst, 5 * u, 5 * u, fill);
-        float frac = magic / 128f;
-        fill.setColor(Color.rgb(72, 208, 72));
-        dst.set(x + 19 * u, my + 3 * u, x + 19 * u + (w - 38 * u) * frac, my + barH - 3 * u);
-        if (frac > 0) c.drawRoundRect(dst, 3 * u, 3 * u, fill);
-        stroke.setStrokeWidth(2.5f * u); stroke.setColor(COL_GOLD_DARK);
-        dst.set(x + 16 * u, my, x + w - 16 * u, my + barH);
-        c.drawRoundRect(dst, 5 * u, 5 * u, stroke);
     }
 
     private void drawRing(Canvas c, float cx, float cy, float r) {
