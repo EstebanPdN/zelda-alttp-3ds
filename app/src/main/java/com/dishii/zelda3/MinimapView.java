@@ -916,15 +916,20 @@ public class MinimapView extends View {
         float my = hy + rows * hs + 6 * u + (halfMagic ? 18 * u : 0);
         if (halfMagic) {
             // "1/2" from the digit glyphs + a drawn slash (the HUD's own half
-            // tiles carry a black background that clashes with the pattern)
+            // tiles carry a black background that clashes with the pattern),
+            // tinted dark so it reads on the light backdrop
             float ts = 2 * u;
             float tx = x + (w - 22 * ts) / 2;
             float ty = my - 20 * u;
+            int ink = Color.rgb(34, 51, 34);
+            bmp.setColorFilter(new android.graphics.PorterDuffColorFilter(
+                    ink, android.graphics.PorterDuff.Mode.SRC_IN));
             drawText(c, "1", tx, ty, ts);
-            aa.setStyle(Paint.Style.STROKE);
-            aa.setStrokeWidth(2.2f * u); aa.setColor(Color.WHITE);
-            c.drawLine(tx + 13 * ts, ty - ts, tx + 9 * ts, ty + 9 * ts, aa);
             drawText(c, "2", tx + 14 * ts, ty, ts);
+            bmp.setColorFilter(null);
+            aa.setStyle(Paint.Style.STROKE);
+            aa.setStrokeWidth(2.2f * u); aa.setColor(ink);
+            c.drawLine(tx + 13 * ts, ty - ts, tx + 9 * ts, ty + 9 * ts, aa);
         }
         int magic = Math.min(sram(0x6E), 128);
         dst.set(x + 16 * u, my, x + w - 16 * u, my + barH);
@@ -982,11 +987,15 @@ public class MinimapView extends View {
             xRingR.set(rcx - ringR, cyX - ringR, rcx + ringR, cyX + ringR);
             drawItemRing(c, rcx, cyY, ringR, slot, "Y");
             drawItemRing(c, rcx, cyX, ringR, nativeBroken ? 0 : GameState.getEquippedSlotX(), "X");
-            if (armedRing != 0 && (System.nanoTime() / 16_666_667L & 15) < 8) {
-                // armed ring blinks while it waits for an items-grid tap
+            if (armedRing != 0) {
+                // the armed ring breathes softly while it waits for a tap
+                // on the items grid
+                float t = (System.nanoTime() % 2_400_000_000L) / 2_400_000_000f;
+                int a = (int) (30 + 100 * (Math.sin(t * 2 * Math.PI) * 0.5 + 0.5));
                 aa.setStyle(Paint.Style.STROKE);
-                aa.setStrokeWidth(4 * u); aa.setColor(COL_GOLD);
-                c.drawCircle(rcx, armedRing == 1 ? cyY : cyX, ringR + 5 * u, aa);
+                aa.setStrokeWidth(5 * u);
+                aa.setColor(Color.argb(a, 232, 194, 96));
+                c.drawCircle(rcx, armedRing == 1 ? cyY : cyX, ringR + 6 * u, aa);
             }
         } else {
             float ringR = Math.min(66 * u, (cy - vb) / 2 - 8 * u);
@@ -1135,9 +1144,6 @@ public class MinimapView extends View {
 
         int equipped = nativeBroken ? 0 : GameState.getEquippedSlot();
         int equippedX = (xRing && !nativeBroken) ? GameState.getEquippedSlotX() : 0;
-        // the button being assigned blinks: the armed ring's item, else Y
-        int blinkSlot = (xRing && armedRing == 2) ? equippedX : equipped;
-        boolean blinkOn = (System.nanoTime() / 16_666_667L & 15) < 8;
         for (int i = 0; i < 20; i++) {
             int col = i % 5, row = i / 5;
             float x = gridX + col * cellW, y = gridY + row * cellW;
@@ -1157,10 +1163,6 @@ public class MinimapView extends View {
                 dst.inset(6 * u, 6 * u);
                 c.drawRoundRect(dst, 8 * u, 8 * u, stroke);
                 dst.inset(-6 * u, -6 * u);
-            }
-            if (i + 1 == blinkSlot && blinkOn) {
-                fill.setColor(Color.argb(70, 255, 235, 160));
-                c.drawRoundRect(dst, 10 * u, 10 * u, fill);
             }
             if (i == tapFlashSlot && System.nanoTime() < tapFlashUntil) {
                 fill.setColor(Color.argb(90, 255, 235, 160));
@@ -1395,8 +1397,8 @@ public class MinimapView extends View {
 
         if (yRingR.contains(x, y)) {
             if (xRing) {
-                // arm: the next items-grid tap assigns this button
-                armedRing = (armedRing == 1) ? 0 : 1;
+                // arm (items screen only): the next grid tap assigns this button
+                if (tab == TAB_ITEMS) armedRing = (armedRing == 1) ? 0 : 1;
             } else if (!nativeBroken) {
                 // cycle to the next owned item
                 int cur = GameState.getEquippedSlot();
@@ -1411,7 +1413,7 @@ public class MinimapView extends View {
             return true;
         }
         if (xRing && xRingR.contains(x, y)) {
-            armedRing = (armedRing == 2) ? 0 : 2;
+            if (tab == TAB_ITEMS) armedRing = (armedRing == 2) ? 0 : 2;
             return true;
         }
 
@@ -1460,6 +1462,7 @@ public class MinimapView extends View {
         if (remapArm >= 0 && !nativeBroken) GameState.armButtonCapture(false);
         remapArm = -1;
         remapMode = false;
+        armedRing = 0;   // leaving/changing tabs cancels a pending assignment
     }
 
     @Override
