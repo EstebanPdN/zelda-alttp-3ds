@@ -25,6 +25,10 @@ public class MainActivity extends SDLActivity {
 
     private SecondScreenPresentation secondScreen;
     private DisplayManager displayManager;
+    // True while we've deliberately dismissed the presentation because the
+    // activity left the foreground; tells the dismiss-recovery logic not to
+    // re-show it until onStart.
+    private boolean secondScreenHidden;
 
     private final DisplayManager.DisplayListener displayListener =
             new DisplayManager.DisplayListener() {
@@ -129,7 +133,7 @@ public class MainActivity extends SDLActivity {
     // Show the companion Presentation on the first non-default display
     // (the Ayn Thor's bottom screen, or an emulator's simulated display).
     private void showSecondScreenIfPresent() {
-        if (secondScreen != null) {
+        if (secondScreen != null || secondScreenHidden) {
             return;
         }
         for (Display display : displayManager.getDisplays()) {
@@ -146,7 +150,7 @@ public class MainActivity extends SDLActivity {
                     public void onDismiss(android.content.DialogInterface dialog) {
                         if (secondScreen == dialog) {
                             secondScreen = null;
-                            if (!isFinishing()) {
+                            if (!isFinishing() && !secondScreenHidden) {
                                 getWindow().getDecorView().post(new Runnable() {
                                     @Override
                                     public void run() {
@@ -174,6 +178,26 @@ public class MainActivity extends SDLActivity {
             secondScreen.dismiss();
             secondScreen = null;
         }
+    }
+
+    // Use onStop/onStart rather than onPause/onResume: onPause also fires for
+    // transient interruptions (permission dialogs, display config changes) where
+    // tearing down the bottom screen would just cause flicker, and SDLActivity
+    // itself only pauses the native thread in onStop on API 24+. onStop means
+    // the user actually left the app, so the bottom screen should go back to
+    // whatever the system shows there instead of keeping the mod UI up.
+    @Override
+    protected void onStop() {
+        secondScreenHidden = true;
+        dismissSecondScreen();
+        super.onStop();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        secondScreenHidden = false;
+        showSecondScreenIfPresent();
     }
 
     @Override
