@@ -7,6 +7,9 @@
 #include "third_party/opus-1.3.1-stripped/opus.h"
 #include "config.h"
 #include "assets.h"
+#ifdef __ANDROID__
+#include <SDL.h>
+#endif
 
 // This needs to hold a lot more things than with just PCM
 typedef struct MsuPlayerResumeInfo {
@@ -192,8 +195,15 @@ static void MsuPlayer_Open(MsuPlayer *mp, int orig_track, bool resume_from_snaps
   MsuPlayer_CloseFile(mp);
   if (actual_track == 0)
     return;
-  char fname[256], buf[8];
-  snprintf(fname, sizeof(fname), "%s%d.%s", g_config.msu_path ? g_config.msu_path : "", actual_track, mp->enabled & kMsuEnabled_Opuz ? "opuz" : "pcm");
+  char fname[512], buf[8];
+  const char *msu_path = g_config.msu_path ? g_config.msu_path : "";
+  const char *base = "";
+#ifdef __ANDROID__
+  // Resolve relative paths against the app's external files dir, where zelda3.ini lives.
+  if (msu_path[0] != '/' && SDL_AndroidGetExternalStoragePath())
+    base = SDL_AndroidGetExternalStoragePath();
+#endif
+  snprintf(fname, sizeof(fname), "%s%s%s%d.%s", base, *base ? "/" : "", msu_path, actual_track, mp->enabled & kMsuEnabled_Opuz ? "opuz" : "pcm");
   printf("Loading MSU %s\n", fname);
   mp->f = fopen(fname, "rb");
   if (mp->f == NULL)
