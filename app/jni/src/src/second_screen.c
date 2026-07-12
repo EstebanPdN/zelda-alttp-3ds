@@ -403,6 +403,7 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_renderMapIcons(JNIEn
 
 // Requested from the UI thread; applied on the game thread at frame start.
 static volatile int g_pending_equip_slot;
+static volatile int g_pending_assign_x_slot;
 static volatile int g_pending_widescreen = -1;
 static volatile int g_pending_hide_hud = -1;
 static volatile int g_pending_controls_set;
@@ -420,6 +421,11 @@ volatile int g_ss_capture_button = -1;
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_equipSlot(JNIEnv *env, jclass clazz, jint slot) {
   if (slot >= 1 && slot <= 20)
     g_pending_equip_slot = slot;
+}
+
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_assignSlotX(JNIEnv *env, jclass clazz, jint slot) {
+  if (slot >= 1 && slot <= 20)
+    g_pending_assign_x_slot = slot;
 }
 
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setWidescreen(JNIEnv *env, jclass clazz, jboolean on) {
@@ -535,12 +541,22 @@ void SecondScreen_RunFrameHook(void) {
     if (!g_ss_hide_hud && (main_module_index == 7 || main_module_index == 9 || main_module_index == 14))
       Hud_Rebuild();
   }
-  int slot = g_pending_equip_slot;
-  if (!slot) return;
-  g_pending_equip_slot = 0;
   // Only during normal overworld/dungeon gameplay, not in menus or cutscenes.
-  if ((main_module_index != 7 && main_module_index != 9) || submodule_index != 0)
-    return;
-  hud_cur_item = hud_inventory_order[0] ? hud_inventory_order[slot - 1] : (uint8)slot;
-  Hud_RefreshIcon();
+  bool in_gameplay = (main_module_index == 7 || main_module_index == 9) && submodule_index == 0;
+  int slot = g_pending_equip_slot;
+  if (slot) {
+    g_pending_equip_slot = 0;
+    if (in_gameplay) {
+      hud_cur_item = hud_inventory_order[0] ? hud_inventory_order[slot - 1] : (uint8)slot;
+      Hud_RefreshIcon();
+    }
+  }
+  slot = g_pending_assign_x_slot;
+  if (slot) {
+    g_pending_assign_x_slot = 0;
+    if (in_gameplay && (enhanced_features0 & kFeatures0_SwitchLR)) {
+      hud_cur_item_x = hud_inventory_order[0] ? hud_inventory_order[slot - 1] : (uint8)slot;
+      Hud_RefreshIcon();
+    }
+  }
 }

@@ -23,6 +23,7 @@ public class GameState {
     public static native void readDungFlags(byte[] out);
     /** Request equipping the item in grid slot 1..20; applied on the game thread. */
     public static native void equipSlot(int slot);
+    public static native void assignSlotX(int slot);
     /** Toggle the extended aspect ratio at runtime; applied on the game thread. */
     public static native void setWidescreen(boolean on);
     public static native boolean isWidescreen();
