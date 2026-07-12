@@ -984,12 +984,15 @@ public class MinimapView extends View {
         // cycles to the next owned item; with the X ITEM RING setting on, two
         // stacked rings (Y above X) that arm tap-to-assign on the items grid
         float vb = my + barH;   // bottom of the vitals cluster
-        float rcy = (vb + cy) / 2;
+        // lay the rings out against the tallest chip (dungeon, with keys) so
+        // they don't jump when the keys row appears and disappears
+        float cyS = y + h - 140 * u;
+        float rcy = (vb + cyS) / 2;
         int slot = nativeBroken ? 0 : GameState.getEquippedSlot();
         if (xRing) {
             // two smaller rings stacked, capped so they stay inside the
             // column and clear of the counters chip and the vitals
-            float ringR = Math.min(Math.min(44 * u, w / 2 - 12 * u), (cy - vb) / 4 - 8 * u);
+            float ringR = Math.min(Math.min(44 * u, w / 2 - 12 * u), (cyS - vb) / 4 - 8 * u);
             float rcx = x + w / 2;
             float cyY = rcy - ringR - 6 * u, cyX = rcy + ringR + 6 * u;
             yRingR.set(rcx - ringR, cyY - ringR, rcx + ringR, cyY + ringR);
@@ -1007,7 +1010,7 @@ public class MinimapView extends View {
             drawItemRing(c, rcx, cyY, ringR, slot, "Y");
             drawItemRing(c, rcx, cyX, ringR, nativeBroken ? 0 : GameState.getEquippedSlotX(), "X");
         } else {
-            float ringR = Math.min(66 * u, (cy - vb) / 2 - 8 * u);
+            float ringR = Math.min(66 * u, (cyS - vb) / 2 - 8 * u);
             float rcx = x + w / 2;
             yRingR.set(rcx - ringR, rcy - ringR, rcx + ringR, rcy + ringR);
             drawItemRing(c, rcx, rcy, ringR, slot, "Y");
