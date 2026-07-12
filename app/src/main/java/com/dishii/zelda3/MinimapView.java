@@ -90,8 +90,12 @@ public class MinimapView extends View {
     private Bitmap mapIconBmp;
     private int tab = TAB_MAP;
     private boolean wholeMap = false;
-    private int viewFloorOffset = 0;
-    private long viewFloorTouchedAt = 0;
+    // sticky floor preview: stays until Link changes floors/dungeons or the
+    // current floor's plaque is tapped
+    private static final int NO_FLOOR_SEL = Integer.MIN_VALUE;
+    private int viewFloorSel = NO_FLOOR_SEL;
+    private int viewFloorPalace = -1;   // dungeon the selection was made in
+    private int viewFloorFrom = 0;      // Link's floor when the selection was made
 
     private boolean nativeBroken = false, assetsBroken = false, logged = false;
     private boolean artReady = false;
@@ -303,6 +307,7 @@ public class MinimapView extends View {
             }
         }
         boolean dungeonMode = indoors && !assetsBroken;
+        if (!dungeonMode) viewFloorSel = NO_FLOOR_SEL;   // left the dungeon: forget the floor preview
 
         if (assetsBroken) { fill.setColor(Color.BLACK); canvas.drawRect(0, 0, w, h, fill); return; }
 
@@ -518,11 +523,10 @@ public class MinimapView extends View {
 
         if (d == null) return;
 
-        if (viewFloorTouchedAt != 0 && System.nanoTime() - viewFloorTouchedAt > 6_000_000_000L) {
-            viewFloorOffset = 0;
-            viewFloorTouchedAt = 0;
-        }
-        int li = floor + viewFloorOffset + d.basements;
+        // drop the preview once Link changes floors or dungeons: follow him again
+        if (viewFloorSel != NO_FLOOR_SEL && (viewFloorPalace != palace || viewFloorFrom != floor))
+            viewFloorSel = NO_FLOOR_SEL;
+        int li = (viewFloorSel != NO_FLOOR_SEL ? viewFloorSel : floor) + d.basements;
         li = Math.max(0, Math.min(li, d.floors - 1));
         int viewFloor = li - d.basements;
 
@@ -541,7 +545,8 @@ public class MinimapView extends View {
             fill.setColor(sel ? COL_PLAQUE_SEL : COL_PLAQUE);
             c.drawRoundRect(pr, 6 * u, 6 * u, fill);
             stroke.setStrokeWidth(2 * u);
-            stroke.setColor(sel ? Color.rgb(160, 200, 255) : COL_STONE_EDGE_L);
+            // gold edge keeps Link's floor recognizable while another one is previewed
+            stroke.setColor(sel ? Color.rgb(160, 200, 255) : fl == floor ? COL_GOLD : COL_STONE_EDGE_L);
             c.drawRoundRect(pr, 6 * u, 6 * u, stroke);
             String label = fl >= 0 ? (fl + 1) + "F" : "B" + (-fl);
             drawText(c, label, pr.centerX() - textWidth(label, 2 * u) / 2 + 8 * u, pr.centerY() - 8 * u, 2 * u);
@@ -1209,9 +1214,15 @@ public class MinimapView extends View {
         if (tab == TAB_MAP) {
             for (int i = 0; i < plaqueCount; i++) {
                 if (plaqueR[i].contains(x, y)) {
-                    int floor = (byte) (nativeBroken ? 0 : GameState.getDungeon() >> 8);
-                    viewFloorOffset = plaqueFloor[i] - floor;
-                    viewFloorTouchedAt = System.nanoTime();
+                    int dinfo = nativeBroken ? 0 : GameState.getDungeon();
+                    int floor = (byte) (dinfo >> 8);
+                    if (plaqueFloor[i] == floor) {
+                        viewFloorSel = NO_FLOOR_SEL;   // tap Link's floor: back to live
+                    } else {
+                        viewFloorSel = plaqueFloor[i];
+                        viewFloorPalace = dinfo & 0xFF;
+                        viewFloorFrom = floor;
+                    }
                     return true;
                 }
             }
