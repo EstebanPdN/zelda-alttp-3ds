@@ -41,6 +41,8 @@ public class MainActivity extends SDLActivity {
         public void onDisplayRemoved(int displayId) {
             if (secondScreen != null && secondScreen.getDisplay().getDisplayId() == displayId) {
                 dismissSecondScreen();
+                // fall over to any remaining external display
+                showSecondScreenIfPresent();
             }
         }
 
