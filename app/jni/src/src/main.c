@@ -30,6 +30,12 @@
 
 static bool g_run_without_emu = 0;
 
+// Dual-screen UI (second_screen_sdl.c); stubbed on Android
+bool SecondScreenSDL_Init(SDL_Window *main_window);
+bool SecondScreenSDL_HandleEvent(const SDL_Event *e);
+void SecondScreenSDL_Update(void);
+void SecondScreenSDL_Shutdown(void);
+
 // Forwards
 static bool LoadRom(const char *filename);
 static void LoadLinkGraphics();
@@ -375,6 +381,8 @@ int main(int argc, char** argv) {
   if (!g_renderer_funcs.Initialize(window))
     return 1;
 
+  SecondScreenSDL_Init(window);
+
   SDL_AudioDeviceID device = 0;
   SDL_AudioSpec want = { 0 }, have;
   g_audio_mutex = SDL_CreateMutex();
@@ -422,6 +430,8 @@ int main(int argc, char** argv) {
 
   while(running) {
     while(SDL_PollEvent(&event)) {
+      if (SecondScreenSDL_HandleEvent(&event))
+        continue;
       switch(event.type) {
       case SDL_CONTROLLERDEVICEADDED:
         OpenOneGamepad(event.cdevice.which);
@@ -491,6 +501,7 @@ int main(int argc, char** argv) {
     }
 
     DrawPpuFrameWithPerf();
+    SecondScreenSDL_Update();
 
     if (g_config.display_perf_title) {
       char title[60];
@@ -532,6 +543,7 @@ int main(int argc, char** argv) {
 
   g_renderer_funcs.Destroy();
 
+  SecondScreenSDL_Shutdown();
   SDL_DestroyWindow(window);
   SDL_Quit();
   //SaveConfigFile();

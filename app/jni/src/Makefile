@@ -1,6 +1,6 @@
 TARGET_EXEC:=zelda3
 ROM:=tables/zelda3.sfc
-SRCS:=$(wildcard src/*.c snes/*.c) third_party/gl_core/gl_core_3_1.c third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c
+SRCS:=$(wildcard src/*.c src/platform/linux/*.c snes/*.c) third_party/gl_core/gl_core_3_1.c third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c
 OBJS:=$(SRCS:%.c=%.o)
 PYTHON:=/usr/bin/env python3
 CFLAGS:=$(if $(CFLAGS),$(CFLAGS),-O2 -Werror) -I .
