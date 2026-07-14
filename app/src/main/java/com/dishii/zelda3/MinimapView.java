@@ -129,7 +129,7 @@ public class MinimapView extends View {
     // touch regions (recomputed during draw)
     private final RectF tabItemsR = new RectF(), tabGearR = new RectF();
     private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
-    private final RectF[] settingsRowR = new RectF[4 + FEAT_MASKS.length];
+    private final RectF[] settingsRowR = new RectF[5 + FEAT_MASKS.length];
     private final RectF[] remapRowR = new RectF[12];
     private final RectF mapAreaR = new RectF(), yRingR = new RectF(), xRingR = new RectF();
 
@@ -144,6 +144,8 @@ public class MinimapView extends View {
     private final int[] padControls = new int[12];
     private boolean hudPrefApplied = false;
     private boolean xRing = false;      // second ring with the X-assigned item (ItemSwitchLR)
+    // which screen hosts the game; toggling takes effect on the next app start
+    private boolean swapScreens, swapScreensApplied;
     private int armedRing = 0;          // 1/2 = next items-grid tap assigns Y/X
     private static final String[] PAD_CMD_NAMES = {
         "UP", "DOWN", "LEFT", "RIGHT", "SELECT", "START", "A", "B", "X", "Y", "L", "R",
@@ -196,6 +198,7 @@ public class MinimapView extends View {
         for (int i = 0; i < remapRowR.length; i++) remapRowR[i] = new RectF();
         for (int i = 0; i < settingsRowR.length; i++) settingsRowR[i] = new RectF();
         xRing = readIniBool("[General]", "SecondScreenXItemRing");
+        swapScreens = swapScreensApplied = readIniBool("[General]", "SecondScreenSwap");
         loadAssets(context);
     }
 
@@ -731,8 +734,12 @@ public class MinimapView extends View {
             else if (i == 1) { label = "WIDESCREEN"; v = ws ? "ON" : "OFF"; }
             else if (i == 2) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
             else if (i == 3) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
+            else if (i == 4) {
+                label = "SWAP SCREENS";
+                v = swapScreens != swapScreensApplied ? "RESTART" : (swapScreens ? "ON" : "OFF");
+            }
             else {
-                int f = i - 4;
+                int f = i - 5;
                 label = FEAT_LABELS[f];
                 v = (((feats & FEAT_MASKS[f]) != 0) ^ FEAT_INVERT[f]) ? "ON" : "OFF";
             }
@@ -790,8 +797,13 @@ public class MinimapView extends View {
                     GameState.setFeature(FEAT_MASKS[0], true);
                     updateIni(FEAT_SECTIONS[0], FEAT_KEYS[0], "1");
                 }
+            } else if (i == 4) {
+                // needs the game window rebuilt on the other display, which only
+                // happens at activity launch - the row shows RESTART until then
+                swapScreens = !swapScreens;
+                updateIni("[General]", "SecondScreenSwap", swapScreens ? "1" : "0");
             } else {
-                int f = i - 4;
+                int f = i - 5;
                 boolean on = (GameState.getFeatures() & FEAT_MASKS[f]) == 0;
                 GameState.setFeature(FEAT_MASKS[f], on);
                 updateIni(FEAT_SECTIONS[f], FEAT_KEYS[f], on ? "1" : "0");

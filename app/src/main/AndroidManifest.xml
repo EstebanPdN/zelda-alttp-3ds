@@ -87,6 +87,14 @@
             </intent-filter>
         </activity>
 
+        <activity android:name="CompanionActivity"
+            android:label="@string/app_name"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            >
+        </activity>
+
         <activity android:name="MainActivity"
             android:label="@string/app_name"
             android:alwaysRetainTaskState="true"

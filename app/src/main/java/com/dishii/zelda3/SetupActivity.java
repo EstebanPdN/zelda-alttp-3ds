@@ -73,8 +73,57 @@ public class SetupActivity extends Activity {
     }
 
     private void launchGame() {
-        startActivity(new Intent(this, MainActivity.class));
+        Intent intent = new Intent(this, MainActivity.class);
+        int display = swapDisplayId();
+        if (display != -1 && Build.VERSION.SDK_INT >= 26) {
+            android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic();
+            options.setLaunchDisplayId(display);
+            startActivity(intent, options.toBundle());
+        } else {
+            startActivity(intent);
+        }
         finish();
+    }
+
+    /**
+     * With SecondScreenSwap = 1 in zelda3.ini the game runs on the secondary
+     * display (e.g. the Thor's bottom screen) and the companion map takes the
+     * main one. Returns the display to launch the game on, or -1 for the
+     * default launch (flag off, no ini yet, or no second display attached).
+     */
+    private int swapDisplayId() {
+        File dir = getExternalFilesDir(null);
+        if (dir == null || !readIniBool(new File(dir, "zelda3.ini"), "[General]", "SecondScreenSwap")) {
+            return -1;
+        }
+        android.hardware.display.DisplayManager dm =
+                (android.hardware.display.DisplayManager) getSystemService(DISPLAY_SERVICE);
+        for (android.view.Display d : dm.getDisplays()) {
+            if (d.getDisplayId() != android.view.Display.DEFAULT_DISPLAY) {
+                return d.getDisplayId();
+            }
+        }
+        return -1;
+    }
+
+    /** Minimal `key = value` lookup inside one [section] of an ini file. */
+    private static boolean readIniBool(File ini, String section, String key) {
+        try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.FileReader(ini))) {
+            String line, cur = "";
+            while ((line = in.readLine()) != null) {
+                String t = line.trim();
+                if (t.startsWith("[")) {
+                    cur = t;
+                } else if (cur.equalsIgnoreCase(section)
+                        && t.toLowerCase().startsWith(key.toLowerCase())
+                        && t.substring(key.length()).trim().startsWith("=")) {
+                    String v = t.substring(t.indexOf('=') + 1).trim();
+                    return v.equals("1") || v.equalsIgnoreCase("true");
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return false;
     }
 
     // ---- UI (built in code to avoid pulling in layout/androidx deps) ----

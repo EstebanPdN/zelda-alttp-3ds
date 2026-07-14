@@ -57,6 +57,8 @@ public class MainActivity extends SDLActivity {
         public void onReceive(Context context, Intent intent) {
             if (secondScreen != null) {
                 secondScreen.dumpToFile(new File(getExternalFilesDir(null), "second_screen.png"));
+            } else if (CompanionActivity.instance != null) {
+                CompanionActivity.instance.dumpToFile(new File(getExternalFilesDir(null), "second_screen.png"));
             }
             byte[] b = new byte[256];
             try {
@@ -129,15 +131,25 @@ public class MainActivity extends SDLActivity {
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
     }
 
-    // Show the companion Presentation on the first non-default display
-    // (the Ayn Thor's bottom screen, or an emulator's simulated display).
+    // Show the companion Presentation on the first display the game itself is
+    // not running on. When the activity lives on the default display (normal
+    // case) that's the Thor's bottom screen; when the game is launched onto a
+    // secondary display, the companion falls back to the main panel instead.
     private void showSecondScreenIfPresent() {
         if (secondScreen != null || secondScreenHidden) {
             return;
         }
+        int gameDisplayId = getWindowManager().getDefaultDisplay().getDisplayId();
         for (Display display : displayManager.getDisplays()) {
-            if (display.getDisplayId() == Display.DEFAULT_DISPLAY) {
+            if (display.getDisplayId() == gameDisplayId) {
                 continue;
+            }
+            // The framework refuses Presentation windows on the default display,
+            // so when the game itself runs on a secondary display (SecondScreenSwap)
+            // the companion UI is hosted by a plain activity there instead.
+            if (display.getDisplayId() == Display.DEFAULT_DISPLAY) {
+                startCompanionActivity(display.getDisplayId());
+                return;
             }
             try {
                 secondScreen = new SecondScreenPresentation(this, display);
@@ -177,6 +189,26 @@ public class MainActivity extends SDLActivity {
             secondScreen.dismiss();
             secondScreen = null;
         }
+        CompanionActivity companion = CompanionActivity.instance;
+        if (companion != null) {
+            companion.finish();
+        }
+    }
+
+    // Companion UI on the main display for the swapped-screens layout. Launched
+    // in its own task (required to target another display); the window is
+    // non-focusable so gamepad input stays with the game, mirroring the
+    // Presentation's behavior on the bottom screen.
+    private void startCompanionActivity(int displayId) {
+        if (CompanionActivity.instance != null || Build.VERSION.SDK_INT < 26) {
+            return;
+        }
+        Intent intent = new Intent(this, CompanionActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic();
+        options.setLaunchDisplayId(displayId);
+        startActivity(intent, options.toBundle());
+        Log.i(TAG, "Launching companion activity on display " + displayId);
     }
 
     // Use onStop/onStart rather than onPause/onResume: onPause also fires for
