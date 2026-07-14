@@ -127,7 +127,7 @@ public class MinimapView extends View {
     };
 
     // touch regions (recomputed during draw)
-    private final RectF tabItemsR = new RectF(), tabGearR = new RectF();
+    private final RectF tabItemsR = new RectF(), tabGearR = new RectF(), tabMapR = new RectF();
     private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
     private final RectF[] settingsRowR = new RectF[5 + FEAT_MASKS.length];
     private final RectF[] remapRowR = new RectF[12];
@@ -1097,10 +1097,13 @@ public class MinimapView extends View {
         float bh = tabH - 34 * u;   // keep clear of the bottom gesture inset
         float sq = bh;              // square settings button on the right
         tabSettingsR.set(w - 8 * u - sq, y, w - 8 * u, y + bh);
-        float half = (w - sq - 10 * u) / 2f;
-        tabGearR.set(8 * u, y, half - 5 * u, y + bh);
-        tabItemsR.set(half + 5 * u, y, w - 18 * u - sq, y + bh);
+        float x0 = 8 * u, xr = tabSettingsR.left - 8 * u, tgap = 8 * u;
+        float bw = (xr - x0 - 2 * tgap) / 3f;
+        tabGearR.set(x0, y, x0 + bw, y + bh);
+        tabMapR.set(x0 + bw + tgap, y, x0 + 2 * bw + tgap, y + bh);
+        tabItemsR.set(x0 + 2 * (bw + tgap), y, x0 + 3 * bw + 2 * tgap, y + bh);
         drawTabButton(c, tabGearR, "GEAR", tab == TAB_GEAR);
+        drawTabButton(c, tabMapR, "MAP", tab == TAB_MAP);
         drawTabButton(c, tabItemsR, "ITEMS", tab == TAB_ITEMS);
         drawTabButton(c, tabSettingsR, null, tab == TAB_SETTINGS);
         drawCog(c, tabSettingsR.centerX(), tabSettingsR.centerY(), bh * 0.28f);
@@ -1424,6 +1427,7 @@ public class MinimapView extends View {
         if (action != MotionEvent.ACTION_DOWN) return true;
 
         if (tabItemsR.contains(x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leaveRemap(); return true; }
+        if (tabMapR.contains(x, y)) { tab = TAB_MAP; leaveRemap(); return true; }
         if (tabGearR.contains(x, y)) { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leaveRemap(); return true; }
         if (tabSettingsR.contains(x, y)) {
             tab = (tab == TAB_SETTINGS) ? TAB_MAP : TAB_SETTINGS;

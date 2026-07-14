@@ -157,7 +157,7 @@ static void rebuild_renderer(int w2, int h2);
 static bool ss_needs_rebuild;
 
 // touch rects recomputed every draw, used by the tap handler
-static RectFS map_area_r, tab_items_r, tab_gear_r, tab_settings_r, y_ring_r;
+static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_ring_r;
 static RectFS settings_row_r[3], remap_row_r[12], remap_back_r;
 
 // settings / remap state
@@ -940,10 +940,14 @@ static void draw_tab_bar(float tab_h) {
   float bh = tab_h - 16 * u;
   float sq = bh;   // square settings button on the right
   tab_settings_r = (RectFS){W - 8 * u - sq, y, sq, bh};
-  float half = (W - sq - 10 * u) / 2.0f;
-  tab_gear_r  = (RectFS){8 * u, y, half - 13 * u, bh};
-  tab_items_r = (RectFS){half + 5 * u, y, W - 18 * u - sq - (half + 5 * u), bh};
+  // three equal buttons: GEAR | MAP | ITEMS, left of the settings cog
+  float x0 = 8 * u, xr = tab_settings_r.x - 8 * u, tgap = 8 * u;
+  float bw = (xr - x0 - 2 * tgap) / 3.0f;
+  tab_gear_r  = (RectFS){x0, y, bw, bh};
+  tab_map_r   = (RectFS){x0 + bw + tgap, y, bw, bh};
+  tab_items_r = (RectFS){x0 + 2 * (bw + tgap), y, bw, bh};
   draw_tab_button(tab_gear_r, "GEAR", tab == TAB_GEAR);
+  draw_tab_button(tab_map_r, "MAP", tab == TAB_MAP);
   draw_tab_button(tab_items_r, "ITEMS", tab == TAB_ITEMS);
   draw_tab_button(tab_settings_r, NULL, tab == TAB_SETTINGS);
   draw_cog(tab_settings_r.x + tab_settings_r.w / 2, tab_settings_r.y + tab_settings_r.h / 2,
@@ -1015,6 +1019,7 @@ static void handle_tap(float x, float y) {
   if (mode_for_module(module) != MODE_GAME || !art_ready) return;
 
   if (in_rect(&tab_items_r, x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leave_remap(); return; }
+  if (in_rect(&tab_map_r, x, y))   { tab = TAB_MAP; leave_remap(); return; }
   if (in_rect(&tab_gear_r, x, y))  { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leave_remap(); return; }
   if (in_rect(&tab_settings_r, x, y)) { tab = (tab == TAB_SETTINGS) ? TAB_MAP : TAB_SETTINGS; leave_remap(); return; }
 
