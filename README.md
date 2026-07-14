@@ -30,8 +30,16 @@ This compiles `src/*.c` + `src/platform/linux/*.c` into the `zelda3` binary. Ena
 
 The generated tables (`src/platform/linux/ss_sheets.h`, `ss_textures.h`) come from `app/src/main/assets/secondscreen/` and are committed, so a normal build doesn't regenerate them. If those assets change, run `python tools/secondscreen/gen_linux_tables.py` from the repo root (needs Pillow).
 
-Use the instructions on the original repository (or below if you don't have access to a computer) to extract the zelda3_assets.dat file from your rom and put it in Android/data/com.dishii.zelda3/files <br>
-Running the app once will create the directory. <br>
+First launch: the app asks for your Zelda 3 ROM. Tap "Select ROM", pick your
+"Legend of Zelda, The - A Link to the Past (USA)" file, and it extracts the
+assets (zelda3_assets.dat) once, then boots straight into the game. Every launch
+after that skips the prompt. The ROM is only read to build the assets — it is
+never copied or kept, and the app still ships no game assets of its own. <br>
+
+If you'd rather supply the extracted zelda3_assets.dat yourself, drop it in
+Android/data/com.dishii.zelda3/files and the app will use it and skip the
+prompt. You can create it with the manual instructions on the original
+repository (or below if you don't have access to a computer). <br>
 
 Android 13 users: check the releases tab for the Android 13 version of the app. 
 

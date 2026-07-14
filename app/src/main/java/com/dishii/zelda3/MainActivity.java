@@ -91,8 +91,6 @@ public class MainActivity extends SDLActivity {
                 // Create a file object for the config file
                 File configFile = new File(externalDir, "zelda3.ini");
 
-                File datNotice = new File(externalDir, "PLACE zelda3_assets.dat HERE");
-
                 File saves_folder = new File(externalDir+ File.separator + "saves");
 
                 File saves_ref_folder = new File(saves_folder + File.separator + "ref");
@@ -107,7 +105,6 @@ public class MainActivity extends SDLActivity {
 
                 try {
                     AssetCopyUtil.copyAssetsToExternal(this, "saves/ref", getExternalFilesDir(null).getAbsolutePath() + "/saves/ref");
-                    datNotice.createNewFile();
                     if (configFile.createNewFile()) {
                         InputStream inputStream;
                         try {
