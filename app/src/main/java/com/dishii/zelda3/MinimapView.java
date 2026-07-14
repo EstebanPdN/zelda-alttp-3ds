@@ -161,6 +161,7 @@ public class MinimapView extends View {
     private int uiMode = MODE_GAME;
     private int lastOutX, lastOutY, lastOutArea;
     private boolean hasLastOutdoor = false;
+    private final int[] exitBuf = new int[3];   // exit-table {x, y, screen} for the current room
 
     private static final String[] ITEM_NAMES = {
         "bow", "boomerang", "hookshot", "bombs", "mushroom",
@@ -364,7 +365,19 @@ public class MinimapView extends View {
         // houses and caves have no dungeon map (same test the game uses for X); keep the
         // overworld map with the marker frozen at the doorway Link came in through
         boolean inHouse = uiMode == MODE_GAME && indoors && (dungeonInfo & 0xFF) == 0xFF;
-        if (inHouse && !hasLastOutdoor)
+        // When the live "last outdoor" spot is unknown (fresh save-load, or the view
+        // was rebuilt when the app regained focus) recover the doorway from the
+        // engine's exit table so the overworld map still shows, HUD/tabs and all,
+        // instead of getting stuck on the cinema card (#9).
+        boolean haveExit = false;
+        if (inHouse && !hasLastOutdoor && !nativeBroken) {
+            try {
+                haveExit = GameState.getIndoorExit(exitBuf);
+            } catch (UnsatisfiedLinkError e) {
+                nativeBroken = true;
+            }
+        }
+        if (inHouse && !hasLastOutdoor && !haveExit)
             uiMode = MODE_CINEMA;
         if (uiMode != MODE_GAME || !artReady) {
             drawCinemaScreen(canvas, w, h);
@@ -376,7 +389,11 @@ public class MinimapView extends View {
             hasLastOutdoor = true;
         } else if (inHouse) {
             dungeonMode = false;
-            linkX = lastOutX; linkY = lastOutY; area = lastOutArea;
+            if (hasLastOutdoor) {
+                linkX = lastOutX; linkY = lastOutY; area = lastOutArea;
+            } else {
+                linkX = exitBuf[0]; linkY = exitBuf[1]; area = exitBuf[2];
+            }
         }
 
         canvas.drawRect(0, 0, w, h, dungeonMode ? stonePaint : menuPaint);

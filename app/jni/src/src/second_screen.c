@@ -74,6 +74,29 @@ void SS_ReadDungFlags(uint8 *out, int n) {
   memcpy(out, g_ram + 0xF000, n);
 }
 
+// Where the current indoor room (dungeon_room_index) comes out onto the
+// overworld, from the engine's static exit table (the same data
+// LoadOverworldFromDungeon walks). Fills out[0..2] with the exit's
+// {link x, link y, overworld screen index} and returns true when the room has
+// an entry; false for interior rooms with no direct exit, or before the assets
+// are loaded. This needs no live state, so the doorway marker is available even
+// right after a save-load or when the view is rebuilt on refocus (issue #9).
+bool SS_GetIndoorExit(int *out) {
+  if (!g_asset_ptrs[130] || !g_asset_ptrs[131] || !g_asset_ptrs[135] || !g_asset_ptrs[136])
+    return false;
+  int room = dungeon_room_index;
+  int n = (int)(kExitDataRooms_SIZE / sizeof(uint16));
+  for (int k = 0; k < n; k++) {
+    if (kExitDataRooms[k] == room) {
+      out[0] = kExitData_XCoord[k];
+      out[1] = kExitData_YCoord[k];
+      out[2] = kExitData_ScreenIndex[k];
+      return true;
+    }
+  }
+  return false;
+}
+
 // ============ runtime asset generation ============
 
 // decoded HUD 2bpp sheets 0x6a,0x6b,0x69 -> 384 tiles of 64 pixel values (0..3),

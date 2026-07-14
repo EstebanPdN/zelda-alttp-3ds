@@ -16,6 +16,7 @@ void SS_SetHudHidden(bool hide); bool SS_IsHudHidden(void); void SS_ArmButtonCap
 int SS_GetCapturedButton(void); void SS_GetGamepadControls(int *out); void SS_SetGamepadControls(const int *in);
 int SS_GetEquippedSlotX(void); void SS_AssignSlotX(int slot);
 uint32 SS_GetFeatures(void); void SS_SetFeature(unsigned mask, bool on);
+bool SS_GetIndoorExit(int *out);
 
 #include <jni.h>
 
@@ -29,6 +30,14 @@ JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isIndoors(JNIEnv *en
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getEquippedSlot(JNIEnv *env, jclass clazz) { return SS_GetEquippedSlot(); }
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getEquippedSlotX(JNIEnv *env, jclass clazz) { return SS_GetEquippedSlotX(); }
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getDungeon(JNIEnv *env, jclass clazz) { return SS_GetDungeon(); }
+
+JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_getIndoorExit(JNIEnv *env, jclass clazz, jintArray out) {
+  if ((*env)->GetArrayLength(env, out) < 3) return false;
+  int tmp[3];
+  if (!SS_GetIndoorExit(tmp)) return false;
+  (*env)->SetIntArrayRegion(env, out, 0, 3, (const jint *)tmp);
+  return true;
+}
 
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_readSram(JNIEnv *env, jclass clazz, jbyteArray out) {
   uint8 tmp[0x100];

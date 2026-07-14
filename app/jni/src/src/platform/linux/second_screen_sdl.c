@@ -31,6 +31,7 @@ bool SS_IsIndoors(void);
 void SS_ReadSram(uint8_t *out, int n);
 int  SS_GetEquippedSlot(void);
 int  SS_GetDungeon(void);
+bool SS_GetIndoorExit(int *out);
 void SS_ReadDungFlags(uint8_t *out, int n);
 bool SS_RenderIconSheet(uint32_t *px);
 bool SS_RenderGlyphSheet(uint32_t *px);
@@ -1161,9 +1162,14 @@ void SecondScreenSDL_Update(void) {
   bool dungeon_mode = indoors;
   int ui_mode = mode_for_module(module);
   if (module == 0x12 || module <= 0x05) has_last_outdoor = false;
-  // houses/caves have no dungeon map: keep the overworld view frozen at the door
+  // houses/caves have no dungeon map: keep the overworld view frozen at the door.
+  // When the live "last outdoor" spot is unknown (fresh save-load, or the view was
+  // rebuilt on refocus) recover the doorway from the engine's exit table so the map
+  // still shows instead of getting stuck on the cinema card (#9).
   bool in_house = ui_mode == MODE_GAME && indoors && (dungeon_info & 0xFF) == 0xFF;
-  if (in_house && !has_last_outdoor) ui_mode = MODE_CINEMA;
+  int exit_pos[3];
+  bool have_exit = in_house && !has_last_outdoor && SS_GetIndoorExit(exit_pos);
+  if (in_house && !has_last_outdoor && !have_exit) ui_mode = MODE_CINEMA;
   if (ui_mode != MODE_GAME) {
     draw_cinema();
     SDL_RenderPresent(ss_r);
@@ -1174,7 +1180,11 @@ void SecondScreenSDL_Update(void) {
     has_last_outdoor = true;
   } else if (in_house) {
     dungeon_mode = false;
-    link_x = last_out_x; link_y = last_out_y; area = last_out_area;
+    if (has_last_outdoor) {
+      link_x = last_out_x; link_y = last_out_y; area = last_out_area;
+    } else {
+      link_x = exit_pos[0]; link_y = exit_pos[1]; area = exit_pos[2];
+    }
   }
 
   draw_tiled(dungeon_mode ? tex_bg_stone : tex_bg_menu,

@@ -19,6 +19,10 @@ public class GameState {
     public static native int getEquippedSlotX();
     /** Low byte: palace index 0..13 (0xFF in houses/caves); high byte: current floor as int8 (0=1F, -1=B1). */
     public static native int getDungeon();
+    /** Where the current indoor room exits to on the overworld, from the engine's exit table.
+     *  Fills out[0..2] = {link x, link y, overworld screen index}; false if the room has no
+     *  exit entry or assets aren't loaded. Needs no live state (works after a save-load/refocus). */
+    public static native boolean getIndoorExit(int[] out);
     /** Fills out (up to 0x500 bytes) with save_dung_info: uint16/room, low nibble = visited quadrants. */
     public static native void readDungFlags(byte[] out);
     /** Request equipping the item in grid slot 1..20; applied on the game thread. */
