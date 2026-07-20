@@ -4,6 +4,8 @@ A port of Zelda3 to Android with a second screen mod for dual screen devices lik
 Original Repository: https://github.com/snesrev/zelda3 <br>
 Based on: https://github.com/Waterdish/zelda3-android
 
+The dual-screen mod was made with the help of Claude Code and opencode.
+
 The bottom screen shows a live world map, a dungeon map with the rooms you visited, and a touch inventory where you can tap an item to equip it. On the title screen and during cutscenes it just shows a triforce.
 
 The second screen graphics are made from your ROM while the game runs, so there is no extra setup and the app contains no game assets.
