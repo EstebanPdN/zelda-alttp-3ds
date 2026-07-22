@@ -51,6 +51,10 @@ public class SetupActivity extends Activity {
     private ProgressBar spinner;
     private boolean working;
 
+    // Text/font data pulled from a translated ROM the user picked, waiting for
+    // the US ROM so the assets can be built with the translation on top.
+    private TranslationExtractor.Language pendingTranslation;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -186,7 +190,9 @@ public class SetupActivity extends Activity {
         blurb.setText("This game needs assets from your own copy of "
                 + "“The Legend of Zelda: A Link to the Past”.\n\n"
                 + "Select your ROM file below. It's read once to build the game "
-                + "assets — the ROM itself is never copied or kept.");
+                + "assets — the ROM itself is never copied or kept.\n\n"
+                + "Playing a fan translation? Select the translated ROM first; "
+                + "you'll be asked for the original US ROM afterwards.");
         blurb.setTextColor(Color.parseColor("#C8C8D0"));
         blurb.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         blurb.setGravity(Gravity.CENTER);
@@ -271,10 +277,12 @@ public class SetupActivity extends Activity {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                String error = null;
+                String error = null, prompt = null;
                 try {
-                    extract(romUri);
+                    prompt = extract(romUri);
                 } catch (BpsPatcher.BpsException e) {
+                    error = e.getMessage();
+                } catch (TranslationExtractor.RomException e) {
                     error = e.getMessage();
                 } catch (IOException e) {
                     Log.e(TAG, "ROM extraction failed", e);
@@ -283,17 +291,19 @@ public class SetupActivity extends Activity {
                     Log.e(TAG, "ROM extraction failed", e);
                     error = "Something went wrong: " + e.getMessage();
                 }
-                final String result = error;
+                final String resultError = error, resultPrompt = prompt;
                 main.post(new Runnable() {
                     @Override
                     public void run() {
                         working = false;
                         spinner.setVisibility(View.GONE);
                         selectButton.setEnabled(true);
-                        if (result == null) {
-                            launchGame();
+                        if (resultError != null) {
+                            setStatus(resultError);
+                        } else if (resultPrompt != null) {
+                            setPrompt(resultPrompt);
                         } else {
-                            setStatus(result);
+                            launchGame();
                         }
                     }
                 });
@@ -301,8 +311,14 @@ public class SetupActivity extends Activity {
         }, "rom-extract").start();
     }
 
-    /** Read the ROM, apply the bundled patch, and write out the assets file. */
-    private void extract(Uri romUri) throws IOException, BpsPatcher.BpsException {
+    /**
+     * Read the ROM, apply the bundled patch, and write out the assets file.
+     * A ROM that isn't the US one is treated as a translation romhack: its
+     * text is stashed and a prompt (the return value, null when the assets
+     * were written) asks for the US ROM, which everything else is built from.
+     */
+    private String extract(Uri romUri)
+            throws IOException, BpsPatcher.BpsException, TranslationExtractor.RomException {
         File dir = getExternalFilesDir(null);
         if (dir == null) {
             throw new IOException("external storage unavailable");
@@ -313,7 +329,16 @@ public class SetupActivity extends Activity {
         rom = stripCopierHeader(rom);
 
         byte[] bps = readAsset(BUNDLED_BPS);
+        if (!BpsPatcher.matchesSource(rom, bps)) {
+            pendingTranslation = TranslationExtractor.extract(rom);
+            return "Found " + pendingTranslation.displayName + ".\n\n"
+                    + "Now select your original (unpatched) US ROM so the rest "
+                    + "of the game data can be built.";
+        }
         byte[] dat = BpsPatcher.apply(rom, bps);
+        if (pendingTranslation != null) {
+            dat = TranslationExtractor.addLanguage(dat, pendingTranslation);
+        }
 
         // Write to a temp file first so a crash mid-write can't leave a
         // truncated assets file that would look "ready" next launch.
@@ -335,6 +360,71 @@ public class SetupActivity extends Activity {
             }
         }
         Log.i(TAG, "Wrote " + out + " (" + dat.length + " bytes)");
+
+        if (pendingTranslation != null) {
+            setIniLanguage(dir, pendingTranslation.code);
+            pendingTranslation = null;
+        }
+        return null;
+    }
+
+    /**
+     * Point the game's `Language =` ini setting at the language that was just
+     * added to the assets file. The ini normally gets created on first game
+     * launch (see MainActivity), so seed it from the bundled default here.
+     */
+    private void setIniLanguage(File dir, String code) throws IOException {
+        File ini = new File(dir, "zelda3.ini");
+        String text;
+        if (ini.isFile()) {
+            byte[] raw = new byte[(int) ini.length()];
+            java.io.FileInputStream fis = new java.io.FileInputStream(ini);
+            try {
+                new java.io.DataInputStream(fis).readFully(raw);
+            } finally {
+                fis.close();
+            }
+            text = new String(raw, "UTF-8");
+        } else {
+            text = new String(readAsset("zelda3.ini"), "UTF-8");
+        }
+
+        String line = "Language = " + code;
+        String[] lines = text.split("\n", -1);
+        boolean hasKey = false;
+        for (String l : lines) {
+            String t = l.trim();
+            if (t.toLowerCase().startsWith("language")
+                    && t.substring("language".length()).trim().startsWith("=")) {
+                hasKey = true;
+            }
+        }
+        StringBuilder sb = new StringBuilder(text.length() + 32);
+        boolean done = false;
+        for (String l : lines) {
+            String t = l.trim();
+            if (!done && hasKey && t.toLowerCase().startsWith("language")
+                    && t.substring("language".length()).trim().startsWith("=")) {
+                l = line;
+                done = true;
+            } else if (!done && !hasKey && t.equalsIgnoreCase("[General]")) {
+                // No Language key yet: put one right below the section header.
+                l = l + "\n" + line;
+                done = true;
+            }
+            sb.append(l).append("\n");
+        }
+        sb.setLength(sb.length() - 1);  // undo the extra newline from the last split part
+        if (!done) {
+            sb.append("\n[General]\n").append(line).append("\n");
+        }
+        FileOutputStream fos = new FileOutputStream(ini);
+        try {
+            fos.write(sb.toString().getBytes("UTF-8"));
+        } finally {
+            fos.close();
+        }
+        Log.i(TAG, "Set " + line + " in " + ini);
     }
 
     // Drop a 512-byte SNES copier header if the file carries one.
@@ -379,6 +469,13 @@ public class SetupActivity extends Activity {
     }
 
     private void setStatus(String text) {
+        statusView.setTextColor(Color.parseColor("#FF8A80"));
+        statusView.setText(text);
+    }
+
+    /** Like setStatus but for the next-step prompt, so it doesn't read as an error. */
+    private void setPrompt(String text) {
+        statusView.setTextColor(Color.parseColor("#B9F6CA"));
         statusView.setText(text);
     }
 
