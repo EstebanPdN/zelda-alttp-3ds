@@ -381,29 +381,35 @@ public class MinimapView extends View {
         // houses and caves have no dungeon map (same test the game uses for X); keep the
         // overworld map with the marker frozen at the doorway Link came in through
         boolean inHouse = uiMode == MODE_GAME && indoors && (dungeonInfo & 0xFF) == 0xFF;
+        // The special overworld screens (>= 0x80: Master Sword glade, Zora's Domain,
+        // under the bridge) run in their own small coordinate space near the map
+        // origin, which would park the marker in the Lost Woods (#23); freeze it at
+        // the spot Link entered from, same as in houses.
+        boolean special = uiMode == MODE_GAME && !indoors && area >= 0x80;
         // When the live "last outdoor" spot is unknown (fresh save-load, or the view
         // was rebuilt when the app regained focus) recover the doorway from the
-        // engine's exit table so the overworld map still shows, HUD/tabs and all,
-        // instead of getting stuck on the cinema card (#9).
+        // engine (last tracked outdoor position, else its exit table) so the
+        // overworld map still shows, HUD/tabs and all, instead of getting stuck on
+        // the cinema card (#9).
         boolean haveExit = false;
-        if (inHouse && !hasLastOutdoor && !nativeBroken) {
+        if ((inHouse || special) && !hasLastOutdoor && !nativeBroken) {
             try {
                 haveExit = GameState.getIndoorExit(exitBuf);
             } catch (UnsatisfiedLinkError e) {
                 nativeBroken = true;
             }
         }
-        if (inHouse && !hasLastOutdoor && !haveExit)
+        if ((inHouse || special) && !hasLastOutdoor && !haveExit)
             uiMode = MODE_CINEMA;
         if (uiMode != MODE_GAME || !artReady) {
             drawCinemaScreen(canvas, w, h);
             if (isAttachedToWindow()) postInvalidateOnAnimation();
             return;
         }
-        if (!indoors && (module == 0x09 || module == 0x0B)) {
+        if (!indoors && area < 0x80 && (module == 0x09 || module == 0x0B)) {
             lastOutX = linkX; lastOutY = linkY; lastOutArea = area;
             hasLastOutdoor = true;
-        } else if (inHouse) {
+        } else if (inHouse || special) {
             dungeonMode = false;
             if (hasLastOutdoor) {
                 linkX = lastOutX; linkY = lastOutY; area = lastOutArea;

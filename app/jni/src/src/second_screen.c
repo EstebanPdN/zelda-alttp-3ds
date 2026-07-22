@@ -74,17 +74,35 @@ void SS_ReadDungFlags(uint8 *out, int n) {
   memcpy(out, g_ram + 0xF000, n);
 }
 
-// Where the current indoor room (dungeon_room_index) comes out onto the
-// overworld, from the engine's static exit table (the same data
-// LoadOverworldFromDungeon walks). Fills out[0..2] with the exit's
-// {link x, link y, overworld screen index} and returns true when the room has
-// an entry; false for interior rooms with no direct exit, or before the assets
-// are loaded. This needs no live state, so the doorway marker is available even
-// right after a save-load or when the view is rebuilt on refocus (issue #9).
+// Link's most recent position on the real overworld, latched on the game
+// thread each frame (SecondScreen_RunFrameHook). Outlives the Android view, so
+// a rebuild on refocus can restore the exact doorway Link came in through.
+// Cleared on death/file select, when the entrance is no longer meaningful.
+static int g_ss_outdoor_pos[3] = { -1, -1, -1 };
+static bool g_ss_has_outdoor;
+
+// Where the current indoor room comes out onto the overworld: {link x, link y,
+// overworld screen index} in out[0..2], false when unknown. Prefers the live
+// doorway tracked above; without it (fresh save-load straight into a room)
+// falls back to the engine's static exit table (the same data
+// LoadOverworldFromDungeon walks) keyed on dungeon_room_index, so the marker
+// survives view rebuilds with no persisted state (issue #9). The table walk
+// copies the engine's own room test: caves 0x100..0x17F (except Link's house
+// 0x104) exit via cached entrance data instead, and matching the table's
+// special-screen pseudo-rooms (0x180+) would return coordinates in the special
+// areas' own tiny space, parking the marker in the Lost Woods (issue #23).
 bool SS_GetIndoorExit(int *out) {
+  if (g_ss_has_outdoor) {
+    out[0] = g_ss_outdoor_pos[0];
+    out[1] = g_ss_outdoor_pos[1];
+    out[2] = g_ss_outdoor_pos[2];
+    return true;
+  }
   if (!g_asset_ptrs[130] || !g_asset_ptrs[131] || !g_asset_ptrs[135] || !g_asset_ptrs[136])
     return false;
   int room = dungeon_room_index;
+  if (room != 0x104 && room >= 0x100)
+    return false;
   int n = (int)(kExitDataRooms_SIZE / sizeof(uint16));
   for (int k = 0; k < n; k++) {
     if (kExitDataRooms[k] == room) {
@@ -482,6 +500,18 @@ void SS_SetGamepadControls(const int *in) {
 
 // Called from the main loop right before ZeldaRunFrame (game thread).
 void SecondScreen_RunFrameHook(void) {
+  // Track where Link last stood on the real overworld (for SS_GetIndoorExit).
+  // Screens >= 0x80 are the special areas (Master Sword glade, Zora's Domain,
+  // under the bridge); they run in their own small coordinate space near the
+  // map origin, so latching them would drag the marker into the Lost Woods.
+  if (main_module_index == 0x12 || main_module_index <= 0x05) {
+    g_ss_has_outdoor = false;  // death/file select: entrance unknown
+  } else if (!player_is_indoors && main_module_index == 9 && overworld_screen_index < 0x80) {
+    g_ss_outdoor_pos[0] = link_x_coord;
+    g_ss_outdoor_pos[1] = link_y_coord;
+    g_ss_outdoor_pos[2] = overworld_screen_index;
+    g_ss_has_outdoor = true;
+  }
   int ws = g_pending_widescreen;
   if (ws >= 0) {
     g_pending_widescreen = -1;

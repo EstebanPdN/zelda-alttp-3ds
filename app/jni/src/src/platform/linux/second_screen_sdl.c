@@ -1168,22 +1168,27 @@ void SecondScreenSDL_Update(void) {
   int ui_mode = mode_for_module(module);
   if (module == 0x12 || module <= 0x05) has_last_outdoor = false;
   // houses/caves have no dungeon map: keep the overworld view frozen at the door.
+  // The special overworld screens (>= 0x80: Master Sword glade, Zora's Domain,
+  // under the bridge) run in their own small coordinate space near the map origin,
+  // which would park the marker in the Lost Woods (#23); freeze it there too.
   // When the live "last outdoor" spot is unknown (fresh save-load, or the view was
-  // rebuilt on refocus) recover the doorway from the engine's exit table so the map
-  // still shows instead of getting stuck on the cinema card (#9).
+  // rebuilt on refocus) recover the doorway from the engine (last tracked outdoor
+  // position, else its exit table) so the map still shows instead of getting stuck
+  // on the cinema card (#9).
   bool in_house = ui_mode == MODE_GAME && indoors && (dungeon_info & 0xFF) == 0xFF;
+  bool special = ui_mode == MODE_GAME && !indoors && area >= 0x80;
   int exit_pos[3];
-  bool have_exit = in_house && !has_last_outdoor && SS_GetIndoorExit(exit_pos);
-  if (in_house && !has_last_outdoor && !have_exit) ui_mode = MODE_CINEMA;
+  bool have_exit = (in_house || special) && !has_last_outdoor && SS_GetIndoorExit(exit_pos);
+  if ((in_house || special) && !has_last_outdoor && !have_exit) ui_mode = MODE_CINEMA;
   if (ui_mode != MODE_GAME) {
     draw_cinema();
     SDL_RenderPresent(ss_r);
     return;
   }
-  if (!indoors && (module == 0x09 || module == 0x0B)) {
+  if (!indoors && area < 0x80 && (module == 0x09 || module == 0x0B)) {
     last_out_x = link_x; last_out_y = link_y; last_out_area = area;
     has_last_outdoor = true;
-  } else if (in_house) {
+  } else if (in_house || special) {
     dungeon_mode = false;
     if (has_last_outdoor) {
       link_x = last_out_x; link_y = last_out_y; area = last_out_area;
