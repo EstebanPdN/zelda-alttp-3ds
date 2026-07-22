@@ -11,7 +11,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.view.Display;
-import android.view.WindowManager;
+import android.widget.Toast;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -71,16 +71,26 @@ public class MainActivity extends SDLActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        CrashLog.install(this);
 
-        displayManager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
-        displayManager.registerDisplayListener(displayListener, null);
-        showSecondScreenIfPresent();
+        // None of the second-screen setup is worth dying for: if any of it
+        // throws on unfamiliar hardware (issue #19: instant close at launch on
+        // the Thor Max), run the game single-screen instead of crashing.
+        try {
+            displayManager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
+            displayManager.registerDisplayListener(displayListener, null);
+            showSecondScreenIfPresent();
 
-        IntentFilter dumpFilter = new IntentFilter("com.dishii.zelda3.DUMP");
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(dumpReceiver, dumpFilter, 2 /* Context.RECEIVER_EXPORTED */);
-        } else {
-            registerReceiver(dumpReceiver, dumpFilter);
+            IntentFilter dumpFilter = new IntentFilter("com.dishii.zelda3.DUMP");
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(dumpReceiver, dumpFilter, 2 /* Context.RECEIVER_EXPORTED */);
+            } else {
+                registerReceiver(dumpReceiver, dumpFilter);
+            }
+        } catch (Throwable e) {
+            Log.e(TAG, "Second screen setup failed", e);
+            CrashLog.report(this, "second screen setup", e);
+            Toast.makeText(this, "Second screen disabled: " + e, Toast.LENGTH_LONG).show();
         }
 
         // Check if external storage is available
@@ -118,8 +128,10 @@ public class MainActivity extends SDLActivity {
                         // Write configuration data to configFile
                         writeDataToFile(configFile,inputStream);
                     }
-                } catch (IOException e) {
-                    e.printStackTrace();
+                } catch (Exception e) {
+                    // missing defaults are recoverable; the game creates its
+                    // own ini and saves, so don't let this kill the launch
+                    Log.e(TAG, "Copying default config/saves failed", e);
                 }
 
             }
@@ -175,7 +187,10 @@ public class MainActivity extends SDLActivity {
                 secondScreen.show();
                 Log.i(TAG, "Showing second screen on display " + display.getDisplayId()
                         + " (" + display.getName() + ")");
-            } catch (WindowManager.InvalidDisplayException e) {
+            } catch (RuntimeException e) {
+                // InvalidDisplayException, or whatever else this firmware's
+                // WindowManager throws for a display it won't hand out
+                // (SecurityException on some builds); try the next display
                 Log.w(TAG, "Display " + display.getDisplayId() + " rejected Presentation", e);
                 secondScreen = null;
                 continue;
@@ -207,7 +222,14 @@ public class MainActivity extends SDLActivity {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic();
         options.setLaunchDisplayId(displayId);
-        startActivity(intent, options.toBundle());
+        try {
+            startActivity(intent, options.toBundle());
+        } catch (RuntimeException e) {
+            // launching on another display can be refused outright; the game
+            // itself is already up, so just go without the companion screen
+            Log.w(TAG, "Companion launch on display " + displayId + " refused", e);
+            return;
+        }
         Log.i(TAG, "Launching companion activity on display " + displayId);
     }
 

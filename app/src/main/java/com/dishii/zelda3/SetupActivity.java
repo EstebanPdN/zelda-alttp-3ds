@@ -54,12 +54,43 @@ public class SetupActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        CrashLog.install(this);
 
-        if (assetsReady()) {
-            launchGame();
-            return;
+        try {
+            if (assetsReady()) {
+                launchGame();
+                return;
+            }
+            buildUi();
+        } catch (Throwable e) {
+            // issue #19: an exception here used to be an instant silent close.
+            // Show the trace instead so it can end up in a bug report.
+            Log.e(TAG, "Startup failed", e);
+            CrashLog.report(this, "setup", e);
+            showStartupError(e);
         }
-        buildUi();
+    }
+
+    /** Bare-bones error screen for a startup failure; kept free of anything
+     *  that could itself fail (no custom assets, no second display). */
+    private void showStartupError(Throwable e) {
+        java.io.StringWriter trace = new java.io.StringWriter();
+        e.printStackTrace(new java.io.PrintWriter(trace));
+
+        TextView text = new TextView(this);
+        text.setText("The app failed to start. Please report this at "
+                + "github.com/samyost1/zelda3-android — a copy of the error was "
+                + "saved to Android/data/com.dishii.zelda3/files/crash.txt\n\n" + trace);
+        text.setTextColor(Color.WHITE);
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        text.setTypeface(android.graphics.Typeface.MONOSPACE);
+        int pad = dp(24);
+        text.setPadding(pad, pad, pad, pad);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(Color.parseColor("#101018"));
+        scroll.addView(text);
+        setContentView(scroll);
     }
 
     /** The game can boot once a non-empty assets file exists in the files dir. */
@@ -78,10 +109,17 @@ public class SetupActivity extends Activity {
         if (display != -1 && Build.VERSION.SDK_INT >= 26) {
             android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic();
             options.setLaunchDisplayId(display);
-            startActivity(intent, options.toBundle());
-        } else {
-            startActivity(intent);
+            try {
+                startActivity(intent, options.toBundle());
+                finish();
+                return;
+            } catch (RuntimeException e) {
+                // some firmwares refuse app launches on the secondary display;
+                // fall through to a normal launch rather than dying at startup
+                Log.w(TAG, "Launch on display " + display + " refused", e);
+            }
         }
+        startActivity(intent);
         finish();
     }
 

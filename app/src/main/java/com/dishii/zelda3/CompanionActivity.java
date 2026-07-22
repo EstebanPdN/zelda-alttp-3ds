@@ -33,22 +33,31 @@ public class CompanionActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // Unlike the bottom-screen Presentation, this activity is focusable: it
-        // owns the default display, and leaving that display with no focusable
-        // window makes any input routed there ANR ("no focused window"). The
-        // game runs on a separate display and keeps its own per-display focus,
-        // so touching this screen doesn't steal the gamepad from the game.
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().getDecorView().setBackgroundColor(Color.BLACK);
-        getWindow().getDecorView().setSystemUiVisibility(
-                android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
-                | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
-        minimap = new MinimapView(this);
-        setContentView(minimap);
+        try {
+            // Unlike the bottom-screen Presentation, this activity is focusable: it
+            // owns the default display, and leaving that display with no focusable
+            // window makes any input routed there ANR ("no focused window"). The
+            // game runs on a separate display and keeps its own per-display focus,
+            // so touching this screen doesn't steal the gamepad from the game.
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            getWindow().getDecorView().setBackgroundColor(Color.BLACK);
+            getWindow().getDecorView().setSystemUiVisibility(
+                    android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+            minimap = new MinimapView(this);
+            setContentView(minimap);
+        } catch (Throwable e) {
+            // shares the game's process, so dying here would take the game
+            // down with it; drop the companion screen instead (issue #19)
+            Log.e(TAG, "Companion screen failed", e);
+            CrashLog.report(this, "companion screen", e);
+            finish();
+            return;
+        }
         instance = this;
         Log.i(TAG, "Companion activity up on display "
                 + getWindowManager().getDefaultDisplay().getDisplayId());
