@@ -129,7 +129,7 @@ public class MinimapView extends View {
     // touch regions (recomputed during draw)
     private final RectF tabItemsR = new RectF(), tabGearR = new RectF(), tabMapR = new RectF();
     private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
-    private final RectF[] settingsRowR = new RectF[5 + FEAT_MASKS.length];
+    private final RectF[] settingsRowR = new RectF[8 + FEAT_MASKS.length];
     private final RectF[] remapRowR = new RectF[12];
     private final RectF mapAreaR = new RectF(), yRingR = new RectF(), xRingR = new RectF();
 
@@ -147,6 +147,11 @@ public class MinimapView extends View {
     private boolean xRing = false;      // second ring with the X-assigned item (ItemSwitchLR)
     // which screen hosts the game; toggling takes effect on the next app start
     private boolean swapScreens, swapScreensApplied;
+    private boolean autosave;
+    // transient feedback on an action row ("SAVED"/"LOADED"/"EMPTY")
+    private int settingsFlashRow = -1;
+    private long settingsFlashUntil;
+    private String settingsFlash = "";
     private int armedRing = 0;          // 1/2 = next items-grid tap assigns Y/X
     private static final String[] PAD_CMD_NAMES = {
         "UP", "DOWN", "LEFT", "RIGHT", "SELECT", "START", "A", "B", "X", "Y", "L", "R",
@@ -200,6 +205,7 @@ public class MinimapView extends View {
         for (int i = 0; i < settingsRowR.length; i++) settingsRowR[i] = new RectF();
         xRing = readIniBool("[General]", "SecondScreenXItemRing");
         swapScreens = swapScreensApplied = readIniBool("[General]", "SecondScreenSwap");
+        autosave = readIniBool("[General]", "Autosave");
         loadAssets(context);
     }
 
@@ -750,15 +756,18 @@ public class MinimapView extends View {
             float ty = row.centerY() - 12 * u;
             String label, v;
             if (i == 0) { label = "REMAP BUTTONS"; v = null; }
-            else if (i == 1) { label = "WIDESCREEN"; v = ws ? "ON" : "OFF"; }
-            else if (i == 2) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
-            else if (i == 3) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
-            else if (i == 4) {
+            else if (i == 1) { label = "SAVE STATE"; v = rowFlash(i, ""); }
+            else if (i == 2) { label = "LOAD STATE"; v = rowFlash(i, stateFile().exists() ? "" : "EMPTY"); }
+            else if (i == 3) { label = "AUTOSAVE"; v = autosave ? "ON" : "OFF"; }
+            else if (i == 4) { label = "WIDESCREEN"; v = ws ? "ON" : "OFF"; }
+            else if (i == 5) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
+            else if (i == 6) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
+            else if (i == 7) {
                 label = "SWAP SCREENS";
                 v = swapScreens != swapScreensApplied ? "RESTART" : (swapScreens ? "ON" : "OFF");
             }
             else {
-                int f = i - 5;
+                int f = i - 8;
                 label = FEAT_LABELS[f];
                 v = (((feats & FEAT_MASKS[f]) != 0) ^ FEAT_INVERT[f]) ? "ON" : "OFF";
             }
@@ -798,15 +807,30 @@ public class MinimapView extends View {
                 GameState.getGamepadControls(padControls);
                 remapMode = true;
             } else if (i == 1) {
+                stateFile().getParentFile().mkdirs();
+                GameState.saveState();
+                rowFlashSet(i, "SAVED");
+            } else if (i == 2) {
+                if (stateFile().exists()) {
+                    GameState.loadState();
+                    rowFlashSet(i, "LOADED");
+                } else {
+                    rowFlashSet(i, "EMPTY");
+                }
+            } else if (i == 3) {
+                autosave = !autosave;
+                GameState.setAutosave(autosave);
+                updateIni("[General]", "Autosave", autosave ? "1" : "0");
+            } else if (i == 4) {
                 boolean on = !GameState.isWidescreen();
                 GameState.setWidescreen(on);
                 updateIni("[General]", "ExtendedAspectRatio", on ? "16:9" : "4:3");
-            } else if (i == 2) {
+            } else if (i == 5) {
                 boolean hide = !GameState.isHudHidden();
                 GameState.setHudHidden(hide);
                 getContext().getSharedPreferences("secondscreen", 0)
                         .edit().putBoolean("hideTopHud", hide).apply();
-            } else if (i == 3) {
+            } else if (i == 6) {
                 xRing = !xRing;
                 armedRing = 0;
                 updateIni("[General]", "SecondScreenXItemRing", xRing ? "1" : "0");
@@ -816,13 +840,13 @@ public class MinimapView extends View {
                     GameState.setFeature(FEAT_MASKS[0], true);
                     updateIni(FEAT_SECTIONS[0], FEAT_KEYS[0], "1");
                 }
-            } else if (i == 4) {
+            } else if (i == 7) {
                 // needs the game window rebuilt on the other display, which only
                 // happens at activity launch - the row shows RESTART until then
                 swapScreens = !swapScreens;
                 updateIni("[General]", "SecondScreenSwap", swapScreens ? "1" : "0");
             } else {
-                int f = i - 5;
+                int f = i - 8;
                 boolean on = (GameState.getFeatures() & FEAT_MASKS[f]) == 0;
                 GameState.setFeature(FEAT_MASKS[f], on);
                 updateIni(FEAT_SECTIONS[f], FEAT_KEYS[f], on ? "1" : "0");
@@ -883,6 +907,22 @@ public class MinimapView extends View {
                        ? GameState.PAD_BUTTON_LABEL[padControls[i]] : "----");
             drawText(c, v, row.right - 14 * u - textWidth(v, 2.2f * u), ty, 2.2f * u);
         }
+    }
+
+    // The settings-screen save state; slot 0 is reserved for the Autosave option.
+    private java.io.File stateFile() {
+        return new java.io.File(getContext().getExternalFilesDir(null), "saves/save1.sav");
+    }
+
+    private void rowFlashSet(int row, String text) {
+        settingsFlashRow = row;
+        settingsFlash = text;
+        settingsFlashUntil = System.nanoTime() + 1_200_000_000L;
+    }
+
+    private String rowFlash(int row, String dflt) {
+        return settingsFlashRow == row && System.nanoTime() < settingsFlashUntil
+                ? settingsFlash : dflt;
     }
 
     // Rewrite one `key = value` line inside a section of the user's zelda3.ini.

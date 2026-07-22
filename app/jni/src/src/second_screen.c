@@ -423,6 +423,7 @@ static volatile int g_pending_widescreen = -1;
 static volatile int g_pending_hide_hud = -1;
 static volatile int g_pending_controls_set;
 static uint8 g_pending_controls[12];
+static volatile int g_pending_saveload;  // 0 idle, 1 save, 2 load
 // kFeatures0_* bits to set/clear; ZeldaRunFrame latches the result into game ram.
 static volatile uint32 g_pending_features_on, g_pending_features_off;
 // Redraw the top HUD once the changed feature bits have reached game ram.
@@ -473,6 +474,12 @@ void SS_SetFeature(unsigned mask, bool on) {
     g_pending_features_off |= (uint32)mask;
   }
 }
+
+// Settings-screen save state. Slot 1: slot 0 belongs to the Autosave option,
+// which would overwrite it on exit.
+void SS_SaveLoadState(bool save) { g_pending_saveload = save ? 1 : 2; }
+
+void SS_SetAutosave(bool on) { g_config.autosave = on; }
 
 void SS_ArmButtonCapture(bool arm) { g_ss_capture_button = arm ? -2 : -1; }
 
@@ -555,6 +562,14 @@ void SecondScreen_RunFrameHook(void) {
     g_ss_hud_refresh = false;
     if (!g_ss_hide_hud && (main_module_index == 7 || main_module_index == 9 || main_module_index == 14))
       Hud_Rebuild();
+  }
+  int sl = g_pending_saveload;
+  if (sl) {
+    g_pending_saveload = 0;
+    // SaveLoadSlot touches the APU; the audio callback must not run meanwhile.
+    ZeldaApuLock();
+    SaveLoadSlot(sl == 1 ? kSaveLoad_Save : kSaveLoad_Load, 1);
+    ZeldaApuUnlock();
   }
   // Only during normal overworld/dungeon gameplay, not in menus or cutscenes.
   bool in_gameplay = (main_module_index == 7 || main_module_index == 9) && submodule_index == 0;

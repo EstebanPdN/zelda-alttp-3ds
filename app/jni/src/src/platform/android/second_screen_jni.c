@@ -17,6 +17,7 @@ int SS_GetCapturedButton(void); void SS_GetGamepadControls(int *out); void SS_Se
 int SS_GetEquippedSlotX(void); void SS_AssignSlotX(int slot);
 uint32 SS_GetFeatures(void); void SS_SetFeature(unsigned mask, bool on);
 bool SS_GetIndoorExit(int *out);
+void SS_SaveLoadState(bool save); void SS_SetAutosave(bool on);
 
 #include <jni.h>
 
@@ -110,6 +111,9 @@ JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setHudHidden(JNIEnv *env
 JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isHudHidden(JNIEnv *env, jclass clazz) { return SS_IsHudHidden(); }
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getFeatures(JNIEnv *env, jclass clazz) { return (jint)SS_GetFeatures(); }
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setFeature(JNIEnv *env, jclass clazz, jint mask, jboolean on) { SS_SetFeature((unsigned)mask, on); }
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_saveState(JNIEnv *env, jclass clazz) { SS_SaveLoadState(true); }
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_loadState(JNIEnv *env, jclass clazz) { SS_SaveLoadState(false); }
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setAutosave(JNIEnv *env, jclass clazz, jboolean on) { SS_SetAutosave(on); }
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_armButtonCapture(JNIEnv *env, jclass clazz, jboolean arm) { SS_ArmButtonCapture(arm); }
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getCapturedButton(JNIEnv *env, jclass clazz) { return SS_GetCapturedButton(); }
 

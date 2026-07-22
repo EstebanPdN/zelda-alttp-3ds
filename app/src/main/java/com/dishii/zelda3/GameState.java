@@ -38,6 +38,13 @@ public class GameState {
     public static native int getFeatures();
     /** Set or clear kFeatures0_* flag bits; applied on the game thread. */
     public static native void setFeature(int mask, boolean on);
+    /** Write a save state to saves/save1.sav; applied on the game thread.
+     *  (Slot 0 is the Autosave slot, which gets overwritten on every exit.) */
+    public static native void saveState();
+    /** Restore the save state from saves/save1.sav; applied on the game thread. */
+    public static native void loadState();
+    /** Save state to slot 0 on exit and reload it on launch (the ini Autosave option). */
+    public static native void setAutosave(boolean on);
     /** Arm (or cancel) capture of the next gamepad button press; the press is swallowed. */
     public static native void armButtonCapture(boolean arm);
     /** The captured button index, consuming it; -2 = still waiting, -1 = idle. */
