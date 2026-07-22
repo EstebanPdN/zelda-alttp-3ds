@@ -143,6 +143,7 @@ public class MinimapView extends View {
     private long remapArmAt;
     private final int[] padControls = new int[12];
     private boolean hudPrefApplied = false;
+    private boolean xRingFeatChecked = false;
     private boolean xRing = false;      // second ring with the X-assigned item (ItemSwitchLR)
     // which screen hosts the game; toggling takes effect on the next app start
     private boolean swapScreens, swapScreensApplied;
@@ -358,6 +359,18 @@ public class MinimapView extends View {
             hudPrefApplied = true;
             if (getContext().getSharedPreferences("secondscreen", 0).getBoolean("hideTopHud", false))
                 GameState.setHudHidden(true);
+        }
+
+        // the X ring only works with the ItemSwitchLR feature; if the ini has the
+        // ring on but the feature off (stale/edited config) the ring would show
+        // but assignments would be dropped silently, so re-assert it once the
+        // engine is up (artReady = config parsed and assets loaded)
+        if (!xRingFeatChecked && xRing && artReady && !nativeBroken) {
+            xRingFeatChecked = true;
+            if ((GameState.getFeatures() & FEAT_MASKS[0]) == 0) {
+                GameState.setFeature(FEAT_MASKS[0], true);
+                updateIni(FEAT_SECTIONS[0], FEAT_KEYS[0], "1");
+            }
         }
 
         // outside gameplay the minimap makes no sense: show a title card on the
@@ -807,6 +820,13 @@ public class MinimapView extends View {
                 boolean on = (GameState.getFeatures() & FEAT_MASKS[f]) == 0;
                 GameState.setFeature(FEAT_MASKS[f], on);
                 updateIni(FEAT_SECTIONS[f], FEAT_KEYS[f], on ? "1" : "0");
+                // the X ring depends on ItemSwitchLR: turning the feature off
+                // would leave a ring that arms but assigns nothing
+                if (f == 0 && !on && xRing) {
+                    xRing = false;
+                    armedRing = 0;
+                    updateIni("[General]", "SecondScreenXItemRing", "0");
+                }
             }
             return;
         }
