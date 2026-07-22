@@ -50,6 +50,11 @@ final class BpsPatcher {
         return data;
     }
 
+    /** True if {@code src} is the exact ROM this patch was built against. */
+    static boolean matchesSource(byte[] src, byte[] bps) {
+        return bps.length >= 16 && crc32(src, 0, src.length) == readU32(bps, bps.length - 12);
+    }
+
     /**
      * Apply {@code bps} to {@code src} and return the patched output.
      *
