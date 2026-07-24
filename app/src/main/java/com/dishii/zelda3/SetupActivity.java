@@ -362,7 +362,14 @@ public class SetupActivity extends Activity {
         Log.i(TAG, "Wrote " + out + " (" + dat.length + " bytes)");
 
         if (pendingTranslation != null) {
-            setIniLanguage(dir, pendingTranslation.code);
+            // The assets are already on disk at this point, so a failure to
+            // write the ini must not fail the whole setup - the game still
+            // runs, just in English until Language is set by hand.
+            try {
+                setIniLanguage(dir, pendingTranslation.code);
+            } catch (IOException e) {
+                Log.e(TAG, "extracted the translation but couldn't set Language in zelda3.ini", e);
+            }
             pendingTranslation = null;
         }
         return null;
