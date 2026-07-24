@@ -287,18 +287,33 @@ static void CrtFilter_Build(int w, int h, float line_h) {
 static void CrtFilter_Draw() {
   SDL_Rect vp;
   float sx, sy;
+  int lw, lh;
   SDL_RenderGetViewport(g_renderer, &vp);
   SDL_RenderGetScale(g_renderer, &sx, &sy);
+  SDL_RenderGetLogicalSize(g_renderer, &lw, &lh);
   // the viewport is in logical units, which are snes pixels once the logical
   // size is set; without it they're real pixels and the scale is 1
   int w = (int)(vp.w * sx + 0.5f), h = (int)(vp.h * sy + 0.5f);
   float line_h = (float)h / g_snes_height;
   if (w != g_crt_w || h != g_crt_h || line_h != g_crt_line_h)
     CrtFilter_Build(w, h, line_h);
+  if (!g_crt_scan_tex && !g_crt_mask_tex)
+    return;
+  // Both overlays hold one texel per real screen row/column, so they have to be
+  // blitted 1:1. Under a logical size they'd first be squeezed into snes rows
+  // and stretched back out, which turns the scanline profile into wide dark
+  // bands, so this pass runs with logical scaling off.
+  int outw, outh;
+  SDL_GetRendererOutputSize(g_renderer, &outw, &outh);
+  if (lw > 0 && lh > 0)
+    SDL_RenderSetLogicalSize(g_renderer, 0, 0);
+  SDL_Rect dst = { (outw - w) / 2, (outh - h) / 2, w, h };
   if (g_crt_scan_tex)
-    SDL_RenderCopy(g_renderer, g_crt_scan_tex, NULL, NULL);
+    SDL_RenderCopy(g_renderer, g_crt_scan_tex, NULL, &dst);
   if (g_crt_mask_tex)
-    SDL_RenderCopy(g_renderer, g_crt_mask_tex, NULL, NULL);
+    SDL_RenderCopy(g_renderer, g_crt_mask_tex, NULL, &dst);
+  if (lw > 0 && lh > 0)
+    SDL_RenderSetLogicalSize(g_renderer, lw, lh);
 }
 
 static bool SdlRenderer_Init(SDL_Window *window) {
