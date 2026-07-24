@@ -13,8 +13,10 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.util.Log;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -28,8 +30,9 @@ import java.util.Map;
  * lower screen using authentic ALttP pixel art extracted from the game:
  *
  *  - MAP: the real mode-7 world map with a 2.6x follow-cam (tap to toggle the
- *    whole-world view) on the game's own menu-pattern background; engraved
- *    stone theme with real floor layouts in dungeons.
+ *    whole-world view, long press to drop/remove a personal pin) on the game's
+ *    own menu-pattern background; engraved stone theme with real floor layouts
+ *    in dungeons.
  *  - ITEMS / GEAR: full-width bottom buttons open menu-style black panels
  *    (like the game's own menu boxes) with big icons; tapping an item equips.
  *  - Sidebar: hearts and magic on top, the equipped item in a ring (tap =
@@ -96,6 +99,18 @@ public class MinimapView extends View {
     private int viewFloorSel = NO_FLOOR_SEL;
     private int viewFloorPalace = -1;   // dungeon the selection was made in
     private int viewFloorFrom = 0;      // Link's floor when the selection was made
+
+    // player-dropped map pins ("come back for that heart piece"): world
+    // coordinates plus the world they belong to, kept in map_pins.txt
+    private static final int MAX_PINS = 20;
+    private final int[] pinDark = new int[MAX_PINS];   // 0 = light world, 1 = dark
+    private final int[] pinX = new int[MAX_PINS], pinY = new int[MAX_PINS];
+    private int pinCount;
+    // where the overworld map landed in the last draw, so a touch can be turned
+    // back into world coordinates
+    private final RectF mapViewR = new RectF(), mapZoomR = new RectF();
+    private float mapOx, mapOy, mapScale;
+    private boolean mapDarkWorld, mapLive;
 
     private boolean nativeBroken = false, assetsBroken = false, logged = false;
     private boolean artReady = false;
@@ -167,6 +182,18 @@ public class MinimapView extends View {
     private int gridX, gridY, gridCellW;
     private long tapFlashUntil; private int tapFlashSlot = -1;
 
+    // map touch: the zoom toggle resolves on release so that holding the finger
+    // down can drop a pin instead
+    private boolean mapTouch, mapTouchMoved, mapLongFired;
+    private float mapTouchX, mapTouchY;
+    private final Runnable mapLongPress = new Runnable() {
+        @Override
+        public void run() {
+            mapLongFired = togglePin(mapTouchX, mapTouchY);
+            if (mapLongFired) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        }
+    };
+
     private final Rect src = new Rect();
     private final RectF dst = new RectF();
     private final Rect faceSrc = new Rect(0, 0, 32, 32);
@@ -215,6 +242,7 @@ public class MinimapView extends View {
         msuOn = msuOnApplied = iniEnabled(msu);
         if (msuOn) msuOnValue = msu.trim();
         msuPack = msuPackPresent();
+        loadPins();
         loadAssets(context);
     }
 
@@ -365,6 +393,7 @@ public class MinimapView extends View {
         if (assetsBroken) { fill.setColor(Color.BLACK); canvas.drawRect(0, 0, w, h, fill); return; }
 
         u = Math.min(w, h) / 720f;
+        mapLive = false;   // set again by drawOverworld; gates the pin long press
 
         // generate the art from zelda3_assets.dat once the engine has loaded it
         if (!artReady && !nativeBroken) artReady = tryLoadNativeArt();
@@ -547,6 +576,10 @@ public class MinimapView extends View {
             ox = m.centerX() - cxm * scale;
             oy = m.centerY() - cym * scale;
         }
+        mapViewR.set(m);
+        mapOx = ox; mapOy = oy; mapScale = scale;
+        mapDarkWorld = dark;
+        mapLive = true;
         src.set(0, 0, 512, 512);
         dst.set(ox, oy, ox + 512 * scale, oy + 512 * scale);
         c.drawBitmap(map, src, dst, bmp);
@@ -567,6 +600,14 @@ public class MinimapView extends View {
             c.drawLine(mx - rr, my + rr, mx + rr, my - rr, aa);
         }
 
+        // the player's own pins, this world only, under Link's marker
+        for (int i = 0; i < pinCount; i++) {
+            if ((pinDark[i] != 0) != dark) continue;
+            drawPin(c, ox + (128f + pinX[i] / 4096f * 256f) * scale,
+                    oy + (128f + pinY[i] / 4096f * 256f) * scale,
+                    (wholeMap ? 0.8f : 1.1f) * u);
+        }
+
         float fx = ox + px * scale, fy = oy + py * scale;
         float bob = (float) Math.sin(System.nanoTime() / 3.0e8) * 2f * u;
         float fs = (wholeMap ? 1.2f : 1.6f) * u;
@@ -576,6 +617,7 @@ public class MinimapView extends View {
         // pixel-style zoom button (menu-box look)
         float bs2 = 56 * u;
         dst.set(r.left + 14 * u, r.top + 14 * u, r.left + 14 * u + bs2, r.top + 14 * u + bs2);
+        mapZoomR.set(dst);   // a long press here is the zoom, not a pin
         fill.setColor(COL_BOX);
         c.drawRoundRect(dst, 8 * u, 8 * u, fill);
         stroke.setStrokeWidth(3 * u); stroke.setColor(COL_BOX_BORDER2);
@@ -584,6 +626,116 @@ public class MinimapView extends View {
         float cxb = dst.centerX(), cyb = dst.centerY(), arm = 14 * u, th = 5 * u;
         c.drawRect(cxb - arm, cyb - th / 2, cxb + arm, cyb + th / 2, fill);
         if (wholeMap) c.drawRect(cxb - th / 2, cyb - arm, cxb + th / 2, cyb + arm, fill);
+
+        // a hold-to-pin nudge along the bottom edge, since nothing else would
+        // hint at it; it goes away as soon as the player has a pin anywhere
+        if (pinCount == 0) {
+            String hint = "HOLD TO PIN";
+            float hs = 1.8f * u, hw = textWidth(hint, hs);
+            dst.set(r.centerX() - hw / 2 - 12 * u, r.bottom - 44 * u,
+                    r.centerX() + hw / 2 + 12 * u, r.bottom - 14 * u);
+            fill.setColor(COL_BOX);
+            c.drawRoundRect(dst, 6 * u, 6 * u, fill);
+            stroke.setStrokeWidth(2 * u); stroke.setColor(COL_GOLD_DARK);
+            c.drawRoundRect(dst, 6 * u, 6 * u, stroke);
+            drawText(c, hint, dst.centerX() - hw / 2, dst.centerY() - 4 * hs, hs);
+        }
+    }
+
+    /** A player-dropped pin: gold head on a dark stem, tip at the marked spot. */
+    private void drawPin(Canvas c, float x, float y, float s) {
+        float hy = y - 13 * s;   // the head sits above the spot it marks
+        aa.setStyle(Paint.Style.STROKE);
+        aa.setStrokeWidth(7 * s); aa.setColor(COL_OUTLINE);
+        c.drawLine(x, y, x, hy, aa);
+        aa.setStyle(Paint.Style.FILL);
+        aa.setColor(COL_OUTLINE);
+        c.drawCircle(x, hy, 8.5f * s, aa);
+        aa.setStyle(Paint.Style.STROKE);
+        aa.setStrokeWidth(3 * s); aa.setColor(COL_GOLD_DARK);
+        c.drawLine(x, y, x, hy, aa);
+        aa.setStyle(Paint.Style.FILL);
+        aa.setColor(COL_GOLD);
+        c.drawCircle(x, hy, 6.5f * s, aa);
+        aa.setColor(COL_OUTLINE);
+        c.drawCircle(x, hy, 2.5f * s, aa);
+    }
+
+    /**
+     * Long press on the overworld map: remove the pin under the finger, else
+     * drop a new one there. Screen pixels in, world coordinates out - the map
+     * bitmap is 512x512 with the 4096x4096 world filling its middle 256x256.
+     * Returns false when nothing happened (off the map, on the zoom button, or
+     * the list is full).
+     */
+    private boolean togglePin(float x, float y) {
+        if (!mapLive || !mapViewR.contains(x, y) || mapZoomR.contains(x, y)) return false;
+        int dark = mapDarkWorld ? 1 : 0;
+        float hit = 26 * u;
+        for (int i = 0; i < pinCount; i++) {
+            if (pinDark[i] != dark) continue;
+            float sx = mapOx + (128f + pinX[i] / 4096f * 256f) * mapScale;
+            float sy = mapOy + (128f + pinY[i] / 4096f * 256f) * mapScale;
+            if (Math.abs(sx - x) > hit || Math.abs(sy - y) > hit) continue;
+            for (int k = i; k < pinCount - 1; k++) {
+                pinDark[k] = pinDark[k + 1];
+                pinX[k] = pinX[k + 1];
+                pinY[k] = pinY[k + 1];
+            }
+            pinCount--;
+            savePins();
+            return true;
+        }
+        if (pinCount >= MAX_PINS) return false;
+        int wx = (int) (((x - mapOx) / mapScale - 128f) * 16f);
+        int wy = (int) (((y - mapOy) / mapScale - 128f) * 16f);
+        if (wx < 0 || wx > 4095 || wy < 0 || wy > 4095) return false;   // the map's blank border
+        pinDark[pinCount] = dark;
+        pinX[pinCount] = wx;
+        pinY[pinCount] = wy;
+        pinCount++;
+        savePins();
+        return true;
+    }
+
+    // Pins live in map_pins.txt next to zelda3.ini, one "world,x,y" per line.
+    private void loadPins() {
+        try {
+            java.io.File f = new java.io.File(getContext().getExternalFilesDir(null), "map_pins.txt");
+            java.io.BufferedReader in = new java.io.BufferedReader(new java.io.FileReader(f));
+            String line;
+            while ((line = in.readLine()) != null && pinCount < MAX_PINS) {
+                String[] p = line.split(",");
+                if (p.length != 3) continue;
+                try {
+                    int d = Integer.parseInt(p[0].trim());
+                    int x = Integer.parseInt(p[1].trim());
+                    int y = Integer.parseInt(p[2].trim());
+                    if (d < 0 || d > 1 || x < 0 || x > 4095 || y < 0 || y > 4095) continue;
+                    pinDark[pinCount] = d;
+                    pinX[pinCount] = x;
+                    pinY[pinCount] = y;
+                    pinCount++;
+                } catch (NumberFormatException e) {
+                    // garbled line: skip it and keep the rest
+                }
+            }
+            in.close();
+        } catch (java.io.IOException e) {
+            // no pins yet
+        }
+    }
+
+    private void savePins() {
+        try {
+            java.io.File f = new java.io.File(getContext().getExternalFilesDir(null), "map_pins.txt");
+            java.io.FileWriter out = new java.io.FileWriter(f);
+            for (int i = 0; i < pinCount; i++)
+                out.write(pinDark[i] + "," + pinX[i] + "," + pinY[i] + "\n");
+            out.close();
+        } catch (java.io.IOException e) {
+            Log.w(TAG, "failed to save map pins", e);
+        }
     }
 
     private static float clamp(float v, float lo, float hi) {
@@ -1549,6 +1701,20 @@ public class MinimapView extends View {
                     settingsTouch = false;
                 }
             }
+            if (mapTouch) {
+                if (action == MotionEvent.ACTION_MOVE) {
+                    // a drag is neither a tap nor a long press
+                    if (Math.abs(x - mapTouchX) > 18 * u || Math.abs(y - mapTouchY) > 18 * u) {
+                        mapTouchMoved = true;
+                        removeCallbacks(mapLongPress);
+                    }
+                } else {
+                    removeCallbacks(mapLongPress);
+                    if (action == MotionEvent.ACTION_UP && !mapTouchMoved && !mapLongFired)
+                        wholeMap = !wholeMap;
+                    mapTouch = false;
+                }
+            }
             return true;
         }
         if (action != MotionEvent.ACTION_DOWN) return true;
@@ -1645,7 +1811,12 @@ public class MinimapView extends View {
                 }
             }
             if (mapAreaR.contains(x, y)) {
-                wholeMap = !wholeMap;
+                // the zoom toggle waits for the release: holding still drops or
+                // removes a pin instead
+                mapTouch = true;
+                mapTouchMoved = mapLongFired = false;
+                mapTouchX = x; mapTouchY = y;
+                if (mapLive) postDelayed(mapLongPress, ViewConfiguration.getLongPressTimeout());
                 return true;
             }
         }
