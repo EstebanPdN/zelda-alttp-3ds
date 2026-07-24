@@ -16,6 +16,11 @@
 #include "snes/ppu.h"
 #include "second_screen_tables.h"
 
+// Save-state thumbnail size, in the 8:7 shape of the 256x224 SNES picture.
+// The JNI/Java sides hardcode the same numbers (as the other render_* do).
+#define kSsThumbW 128
+#define kSsThumbH 112
+
 int SS_GetLinkX(void) { return link_x_coord; }
 int SS_GetLinkY(void) { return link_y_coord; }
 
@@ -425,6 +430,9 @@ static volatile int g_pending_hide_hud = -1;
 static volatile int g_pending_controls_set;
 static uint8 g_pending_controls[12];
 static volatile int g_pending_saveload;  // 0 idle, 1 save, 2 load
+// Save-state slot picker: kSaveLoad_Save/kSaveLoad_Load, -1 when idle.
+static volatile int g_pending_state_cmd = -1;
+static volatile int g_pending_state_slot;
 // kFeatures0_* bits to set/clear; ZeldaRunFrame latches the result into game ram.
 static volatile uint32 g_pending_features_on, g_pending_features_off;
 // Redraw the top HUD once the changed feature bits have reached game ram.
@@ -489,6 +497,54 @@ void SS_SetFeature(unsigned mask, bool on) {
 void SS_SaveLoadState(bool save) { g_pending_saveload = save ? 1 : 2; }
 
 void SS_SetAutosave(bool on) { g_config.autosave = on; }
+// ---- save states ----
+// The picker drives SaveLoadSlot, which touches audio state, so the request is
+// queued here and applied under the audio lock on the game thread.
+
+void SS_RequestSaveState(int slot) {
+  if (slot < 0 || slot >= 256) return;
+  g_pending_state_slot = slot;
+  g_pending_state_cmd = kSaveLoad_Save;
+}
+
+void SS_RequestLoadState(int slot) {
+  if (slot < 0 || slot >= 256) return;
+  g_pending_state_slot = slot;
+  g_pending_state_cmd = kSaveLoad_Load;
+}
+
+// 0 idle, 1 waiting on the renderer, 2 a grabbed frame is sitting in g_ss_thumb.
+static volatile int g_ss_thumb_state;
+static uint32 g_ss_thumb[kSsThumbW * kSsThumbH];
+
+// Called from the renderer with the frame just drawn (ARGB8888, game thread).
+// Only copies when a save asked for a thumbnail, so the read-back off the
+// renderer's buffer costs nothing on a normal frame.
+void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch, int width, int height) {
+  if (g_ss_thumb_state != 1 || !px || width <= 0 || height <= 0) return;
+  // Widescreen frames carry extra side space; take the centered 8:7 window so
+  // the thumbnail always has the shape of the normal 256x224 picture.
+  int cw = height * kSsThumbW / kSsThumbH;
+  if (cw > width) cw = width;
+  int x0 = (width - cw) / 2;
+  for (int y = 0; y < kSsThumbH; y++) {
+    const uint32 *row = (const uint32 *)(px + (size_t)(y * height / kSsThumbH) * pitch);
+    uint32 *out = g_ss_thumb + y * kSsThumbW;
+    for (int x = 0; x < kSsThumbW; x++)
+      out[x] = row[x0 + x * cw / kSsThumbW] | 0xff000000u;
+  }
+  g_ss_thumb_state = 2;
+}
+
+// Fills out (kSsThumbW*kSsThumbH ARGB) with the frame grabbed for the last save
+// and clears it; false while none is waiting (same consume pattern as
+// SS_GetCapturedButton).
+bool SS_TakeThumbnail(uint32 *out) {
+  if (g_ss_thumb_state != 2) return false;
+  memcpy(out, g_ss_thumb, sizeof(g_ss_thumb));
+  g_ss_thumb_state = 0;
+  return true;
+}
 
 void SS_ArmButtonCapture(bool arm) { g_ss_capture_button = arm ? -2 : -1; }
 
@@ -553,6 +609,17 @@ void SecondScreen_RunFrameHook(void) {
   if (g_pending_controls_set) {
     g_pending_controls_set = 0;
     GamepadMap_SetControls(g_pending_controls);
+  }
+  int state_cmd = g_pending_state_cmd;
+  if (state_cmd >= 0) {
+    int which = g_pending_state_slot;
+    g_pending_state_cmd = -1;
+    ZeldaApuLock();   // SaveLoadSlot touches audio state (same as HandleCommand)
+    SaveLoadSlot(state_cmd, which);
+    ZeldaApuUnlock();
+    // grab the frame drawn just after the save for the slot's thumbnail
+    if (state_cmd == kSaveLoad_Save)
+      g_ss_thumb_state = 1;
   }
   uint32 f_on = g_pending_features_on, f_off = g_pending_features_off;
   if (f_on | f_off) {

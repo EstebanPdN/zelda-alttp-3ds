@@ -52,6 +52,16 @@ public class GameState {
     public static native void armButtonCapture(boolean arm);
     /** The captured button index, consuming it; -2 = still waiting, -1 = idle. */
     public static native int getCapturedButton();
+    /** Write the emulator state to saves/save&lt;slot&gt;.sav; applied on the game thread. */
+    public static native void requestSaveState(int slot);
+    /** Restore the emulator state from saves/save&lt;slot&gt;.sav; applied on the game thread. */
+    public static native void requestLoadState(int slot);
+    /** Fills out (THUMB_W*THUMB_H ARGB) with the top-screen frame grabbed for the last
+     *  requestSaveState, consuming it; false while none is waiting. */
+    public static native boolean takeStateThumbnail(int[] out);
+    /** Size of the frame grab takeStateThumbnail returns (matches second_screen.c). */
+    public static final int THUMB_W = 128, THUMB_H = 112;
+
     /** Fills out (12 ints) with the button bound to each joypad command, -1 = unbound.
      *  Command order: Up, Down, Left, Right, Select, Start, A, B, X, Y, L, R. */
     public static native void getGamepadControls(int[] out);

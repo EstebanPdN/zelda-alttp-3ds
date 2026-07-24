@@ -176,6 +176,10 @@ static void DrawPpuFrameWithPerf() {
   }
   if (g_display_perf)
     RenderNumber(pixel_buffer + pitch * render_scale, pitch, g_curr_fps, render_scale == 4);
+  // the second screen's save-state picker grabs a thumbnail off this frame
+  extern void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch, int width, int height);
+  SecondScreen_CaptureFrameHook(pixel_buffer, pitch,
+                                g_snes_width * render_scale, g_snes_height * render_scale);
   g_renderer_funcs.EndDraw();
 }
 

@@ -144,7 +144,7 @@ public class MinimapView extends View {
     // touch regions (recomputed during draw)
     private final RectF tabItemsR = new RectF(), tabGearR = new RectF(), tabMapR = new RectF();
     private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
-    private final RectF[] settingsRowR = new RectF[10 + FEAT_MASKS.length];
+    private final RectF[] settingsRowR = new RectF[11 + FEAT_MASKS.length];
     private final RectF[] remapRowR = new RectF[12];
     private final RectF mapAreaR = new RectF(), yRingR = new RectF(), xRingR = new RectF();
 
@@ -175,6 +175,24 @@ public class MinimapView extends View {
     private int armedRing = 0;          // 1/2 = next items-grid tap assigns Y/X
     private static final String[] PAD_CMD_NAMES = {
         "UP", "DOWN", "LEFT", "RIGHT", "SELECT", "START", "A", "B", "X", "Y", "L", "R",
+    };
+
+    // save-state picker (SAVE STATES sub-screen): four slots of its own, from
+    // saves/save2.sav up - slot 0 is the autosave and slot 1 the quick save.
+    private static final int STATE_SLOT0 = 2, STATE_SLOTS = 4;
+    private boolean statesMode = false;
+    private final RectF statesBackR = new RectF();
+    private final RectF[] stateSaveR = new RectF[STATE_SLOTS], stateLoadR = new RectF[STATE_SLOTS];
+    private final Bitmap[] stateThumb = new Bitmap[STATE_SLOTS];
+    private final long[] stateStamp = new long[STATE_SLOTS];   // .sav mtime, 0 = empty slot
+    private final int[] thumbBuf = new int[GameState.THUMB_W * GameState.THUMB_H];
+    private int thumbWantSlot = -1;      // a save waiting for its frame grab
+    private long thumbWantAt;
+    private int stateFlashSlot = -1;     // brief SAVED / LOADED banner on one card
+    private String stateFlashMsg;
+    private long stateFlashUntil;
+    private static final String[] MONTHS = {
+        "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
     };
     private final RectF[] plaqueR = new RectF[10];
     private int plaqueCount = 0;
@@ -235,6 +253,10 @@ public class MinimapView extends View {
         for (int i = 0; i < plaqueR.length; i++) plaqueR[i] = new RectF();
         for (int i = 0; i < remapRowR.length; i++) remapRowR[i] = new RectF();
         for (int i = 0; i < settingsRowR.length; i++) settingsRowR[i] = new RectF();
+        for (int i = 0; i < STATE_SLOTS; i++) {
+            stateSaveR[i] = new RectF();
+            stateLoadR[i] = new RectF();
+        }
         xRing = readIniBool("[General]", "SecondScreenXItemRing");
         swapScreens = swapScreensApplied = readIniBool("[General]", "SecondScreenSwap");
         autosave = readIniBool("[General]", "Autosave");
@@ -397,6 +419,8 @@ public class MinimapView extends View {
 
         // generate the art from zelda3_assets.dat once the engine has loaded it
         if (!artReady && !nativeBroken) artReady = tryLoadNativeArt();
+
+        if (!nativeBroken) pollStateThumbnail();
 
         // re-apply the persisted top-screen HUD choice once per app start
         if (!hudPrefApplied && !nativeBroken) {
@@ -887,6 +911,10 @@ public class MinimapView extends View {
             drawRemapPanel(c, r);
             return;
         }
+        if (statesMode) {
+            drawStatesPanel(c, r);
+            return;
+        }
         drawText(c, "SETTINGS", r.centerX() - textWidth("SETTINGS", 3 * u) / 2, r.top + 18 * u, 3 * u);
 
         boolean ws = false, crt = false, hudHidden = false;
@@ -917,25 +945,26 @@ public class MinimapView extends View {
             c.drawRoundRect(row, 8 * u, 8 * u, stroke);
             float ty = row.centerY() - 12 * u;
             String label, v;
-            if (i == 0) { label = "REMAP BUTTONS"; v = null; }
-            else if (i == 1) { label = "SAVE STATE"; v = rowFlash(i, ""); }
-            else if (i == 2) { label = "LOAD STATE"; v = rowFlash(i, stateFile().exists() ? "" : "EMPTY"); }
-            else if (i == 3) { label = "AUTOSAVE"; v = autosave ? "ON" : "OFF"; }
-            else if (i == 4) { label = "WIDESCREEN"; v = ws ? "ON" : "OFF"; }
-            else if (i == 5) { label = "CRT FILTER"; v = crt ? "ON" : "OFF"; }
-            else if (i == 6) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
-            else if (i == 7) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
-            else if (i == 8) {
+            if (i == 0) { label = "SAVE STATES"; v = null; }
+            else if (i == 1) { label = "REMAP BUTTONS"; v = null; }
+            else if (i == 2) { label = "SAVE STATE"; v = rowFlash(i, ""); }
+            else if (i == 3) { label = "LOAD STATE"; v = rowFlash(i, stateFile().exists() ? "" : "EMPTY"); }
+            else if (i == 4) { label = "AUTOSAVE"; v = autosave ? "ON" : "OFF"; }
+            else if (i == 5) { label = "WIDESCREEN"; v = ws ? "ON" : "OFF"; }
+            else if (i == 6) { label = "CRT FILTER"; v = crt ? "ON" : "OFF"; }
+            else if (i == 7) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
+            else if (i == 8) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
+            else if (i == 9) {
                 label = "SWAP SCREENS";
                 v = swapScreens != swapScreensApplied ? "RESTART" : (swapScreens ? "ON" : "OFF");
             }
-            else if (i == 9) {
+            else if (i == 10) {
                 label = "MSU-1 MUSIC";
                 v = !msuPack ? "NO PACK"
                         : msuOn != msuOnApplied ? "RESTART" : (msuOn ? "ON" : "OFF");
             }
             else {
-                int f = i - 10;
+                int f = i - 11;
                 label = FEAT_LABELS[f];
                 v = (((feats & FEAT_MASKS[f]) != 0) ^ FEAT_INVERT[f]) ? "ON" : "OFF";
             }
@@ -972,37 +1001,40 @@ public class MinimapView extends View {
         for (int i = 0; i < settingsRowR.length; i++) {
             if (!settingsRowR[i].contains(x, y)) continue;
             if (i == 0) {
+                scanStateSlots();
+                statesMode = true;
+            } else if (i == 1) {
                 GameState.getGamepadControls(padControls);
                 remapMode = true;
-            } else if (i == 1) {
+            } else if (i == 2) {
                 stateFile().getParentFile().mkdirs();
                 GameState.saveState();
                 rowFlashSet(i, "SAVED");
-            } else if (i == 2) {
+            } else if (i == 3) {
                 if (stateFile().exists()) {
                     GameState.loadState();
                     rowFlashSet(i, "LOADED");
                 } else {
                     rowFlashSet(i, "EMPTY");
                 }
-            } else if (i == 3) {
+            } else if (i == 4) {
                 autosave = !autosave;
                 GameState.setAutosave(autosave);
                 updateIni("[General]", "Autosave", autosave ? "1" : "0");
-            } else if (i == 4) {
+            } else if (i == 5) {
                 boolean on = !GameState.isWidescreen();
                 GameState.setWidescreen(on);
                 updateIni("[General]", "ExtendedAspectRatio", on ? "16:9" : "4:3");
-            } else if (i == 5) {
+            } else if (i == 6) {
                 boolean on = !GameState.isCrtFilter();
                 GameState.setCrtFilter(on);
                 updateIni("[Graphics]", "CrtFilter", on ? "1" : "0");
-            } else if (i == 6) {
+            } else if (i == 7) {
                 boolean hide = !GameState.isHudHidden();
                 GameState.setHudHidden(hide);
                 getContext().getSharedPreferences("secondscreen", 0)
                         .edit().putBoolean("hideTopHud", hide).apply();
-            } else if (i == 7) {
+            } else if (i == 8) {
                 xRing = !xRing;
                 armedRing = 0;
                 updateIni("[General]", "SecondScreenXItemRing", xRing ? "1" : "0");
@@ -1012,12 +1044,12 @@ public class MinimapView extends View {
                     GameState.setFeature(FEAT_MASKS[0], true);
                     updateIni(FEAT_SECTIONS[0], FEAT_KEYS[0], "1");
                 }
-            } else if (i == 8) {
+            } else if (i == 9) {
                 // needs the game window rebuilt on the other display, which only
                 // happens at activity launch - the row shows RESTART until then
                 swapScreens = !swapScreens;
                 updateIni("[General]", "SecondScreenSwap", swapScreens ? "1" : "0");
-            } else if (i == 9) {
+            } else if (i == 10) {
                 // with no pack installed there is nothing to switch on, so the
                 // row just reads NO PACK and does nothing
                 if (!msuPack) return;
@@ -1027,7 +1059,7 @@ public class MinimapView extends View {
                 msuOn = !msuOn;
                 updateIni("[Sound]", "EnableMSU", msuOn ? msuOnValue : "false");
             } else {
-                int f = i - 10;
+                int f = i - 11;
                 boolean on = (GameState.getFeatures() & FEAT_MASKS[f]) == 0;
                 GameState.setFeature(FEAT_MASKS[f], on);
                 updateIni(FEAT_SECTIONS[f], FEAT_KEYS[f], on ? "1" : "0");
@@ -1104,6 +1136,142 @@ public class MinimapView extends View {
     private String rowFlash(int row, String dflt) {
         return settingsFlashRow == row && System.nanoTime() < settingsFlashUntil
                 ? settingsFlash : dflt;
+    }
+
+    // ---------- save states ----------
+
+    // The SAVE STATES sub-screen: four slots, each showing the frame it was
+    // saved on with its own SAVE and LOAD button.
+    private void drawStatesPanel(Canvas c, RectF r) {
+        drawText(c, "SAVE STATES", r.centerX() - textWidth("SAVE STATES", 3 * u) / 2, r.top + 18 * u, 3 * u);
+        statesBackR.set(r.left + 20 * u, r.top + 12 * u, r.left + 110 * u, r.top + 50 * u);
+        fill.setColor(Color.rgb(28, 28, 28));
+        c.drawRoundRect(statesBackR, 8 * u, 8 * u, fill);
+        stroke.setStrokeWidth(3 * u); stroke.setColor(COL_GOLD_DARK);
+        c.drawRoundRect(statesBackR, 8 * u, 8 * u, stroke);
+        drawText(c, "BACK", statesBackR.centerX() - textWidth("BACK", 2.2f * u) / 2,
+                statesBackR.centerY() - 9 * u, 2.2f * u);
+
+        float pad = 14 * u, gap = 20 * u;
+        float y0 = r.top + 66 * u;
+        float colW = (r.width() - 3 * gap) / 2;
+        float rowH = (r.bottom - 20 * u - y0 - gap) / 2;
+        boolean flashing = System.nanoTime() < stateFlashUntil;
+        for (int i = 0; i < STATE_SLOTS; i++) {
+            float cx = r.left + gap + (i % 2) * (colW + gap);
+            float cy = y0 + (i / 2) * (rowH + gap);
+            boolean lit = flashing && stateFlashSlot == i;
+            dst.set(cx, cy, cx + colW, cy + rowH);
+            fill.setColor(Color.rgb(28, 28, 28));
+            c.drawRoundRect(dst, 8 * u, 8 * u, fill);
+            stroke.setStrokeWidth(3 * u); stroke.setColor(lit ? COL_GOLD : COL_GOLD_DARK);
+            c.drawRoundRect(dst, 8 * u, 8 * u, stroke);
+
+            drawText(c, "SLOT " + (i + 1), cx + pad, cy + pad, 2.4f * u);
+            String note = lit ? stateFlashMsg : (stateStamp[i] == 0 ? "" : stamp(stateStamp[i]));
+            drawText(c, note, cx + colW - pad - textWidth(note, 2 * u), cy + pad + 2 * u, 2 * u);
+
+            // the moment the slot was written, in the game's own 8:7 shape;
+            // narrow panels shrink it so the buttons keep a usable width
+            float th = rowH - 2 * pad - 34 * u;
+            float tw = th * GameState.THUMB_W / GameState.THUMB_H;
+            float twMax = (colW - 3 * pad) * 0.55f;
+            if (tw > twMax) { tw = twMax; th = tw * GameState.THUMB_H / GameState.THUMB_W; }
+            float tx = cx + pad, ty = cy + pad + 34 * u;
+            dst.set(tx, ty, tx + tw, ty + th);
+            fill.setColor(Color.rgb(10, 10, 10));
+            c.drawRect(dst, fill);
+            if (stateThumb[i] != null) {
+                src.set(0, 0, stateThumb[i].getWidth(), stateThumb[i].getHeight());
+                c.drawBitmap(stateThumb[i], src, dst, bmp);
+            } else {
+                String e = stateStamp[i] == 0 ? "EMPTY" : "NO IMAGE";
+                drawText(c, e, dst.centerX() - textWidth(e, 2 * u) / 2, dst.centerY() - 8 * u, 2 * u);
+            }
+            stroke.setStrokeWidth(2 * u); stroke.setColor(COL_GOLD_DARK);
+            c.drawRect(dst, stroke);
+
+            // SAVE is always live; LOAD only once the slot holds a state
+            float bx = tx + tw + pad, bw = cx + colW - pad - bx, bh = (th - pad) / 2;
+            stateSaveR[i].set(bx, ty, bx + bw, ty + bh);
+            stateLoadR[i].set(bx, ty + bh + pad, bx + bw, ty + th);
+            drawStateButton(c, stateSaveR[i], "SAVE", true);
+            drawStateButton(c, stateLoadR[i], "LOAD", stateStamp[i] != 0);
+        }
+    }
+
+    private void drawStateButton(Canvas c, RectF b, String label, boolean enabled) {
+        fill.setColor(enabled ? Color.rgb(40, 40, 40) : Color.rgb(20, 20, 20));
+        c.drawRoundRect(b, 8 * u, 8 * u, fill);
+        stroke.setStrokeWidth(3 * u); stroke.setColor(enabled ? COL_GOLD_DARK : Color.rgb(52, 46, 30));
+        c.drawRoundRect(b, 8 * u, 8 * u, stroke);
+        bmp.setAlpha(enabled ? 255 : 90);
+        drawText(c, label, b.centerX() - textWidth(label, 2.4f * u) / 2, b.centerY() - 10 * u, 2.4f * u);
+        bmp.setAlpha(255);
+    }
+
+    // The pixel font only has A-Z and digits, so a stamp reads "JUL 24 14 32".
+    private static String stamp(long ms) {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.setTimeInMillis(ms);
+        return String.format(java.util.Locale.US, "%s %02d %02d %02d",
+                MONTHS[cal.get(java.util.Calendar.MONTH)], cal.get(java.util.Calendar.DAY_OF_MONTH),
+                cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE));
+    }
+
+    private java.io.File savesDir() {
+        return new java.io.File(getContext().getExternalFilesDir(null), "saves");
+    }
+
+    /** Re-read which of the picker's slots hold a state, plus their thumbnails. */
+    private void scanStateSlots() {
+        java.io.File dir = savesDir();
+        for (int i = 0; i < STATE_SLOTS; i++) {
+            java.io.File sav = new java.io.File(dir, "save" + (STATE_SLOT0 + i) + ".sav");
+            stateStamp[i] = sav.isFile() && sav.length() > 0 ? sav.lastModified() : 0;
+            java.io.File png = new java.io.File(dir, "save" + (STATE_SLOT0 + i) + ".png");
+            stateThumb[i] = stateStamp[i] != 0 && png.isFile()
+                    ? BitmapFactory.decodeFile(png.getPath()) : null;
+        }
+    }
+
+    private void requestState(int i, boolean save) {
+        if (save) {
+            GameState.requestSaveState(STATE_SLOT0 + i);
+            thumbWantSlot = i;
+            thumbWantAt = System.nanoTime();
+        } else {
+            GameState.requestLoadState(STATE_SLOT0 + i);
+        }
+        stateFlashSlot = i;
+        stateFlashMsg = save ? "SAVED" : "LOADED";
+        stateFlashUntil = System.nanoTime() + 1_200_000_000L;
+    }
+
+    // A save asks the game thread for a grab of the frame it was taken on; that
+    // lands a frame or two later, so it is picked up here (from onDraw, so it
+    // still completes if the panel is left right after tapping SAVE) and written
+    // next to the .sav as saveN.png.
+    private void pollStateThumbnail() {
+        if (thumbWantSlot < 0) return;
+        if (GameState.takeStateThumbnail(thumbBuf)) {
+            int i = thumbWantSlot;
+            thumbWantSlot = -1;
+            java.io.File dir = savesDir();
+            Bitmap b = Bitmap.createBitmap(thumbBuf, GameState.THUMB_W, GameState.THUMB_H,
+                    Bitmap.Config.ARGB_8888);
+            java.io.File png = new java.io.File(dir, "save" + (STATE_SLOT0 + i) + ".png");
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(png)) {
+                b.compress(Bitmap.CompressFormat.PNG, 100, out);
+            } catch (java.io.IOException e) {
+                Log.w(TAG, "failed to write " + png, e);
+            }
+            stateThumb[i] = b;
+            stateStamp[i] = new java.io.File(dir, "save" + (STATE_SLOT0 + i) + ".sav").lastModified();
+        } else if (System.nanoTime() - thumbWantAt > 3_000_000_000L) {
+            thumbWantSlot = -1;   // no frame came (game paused?); the .sav is still there
+            scanStateSlots();
+        }
     }
 
     // Rewrite one `key = value` line inside a section of the user's zelda3.ini.
@@ -1696,7 +1864,7 @@ public class MinimapView extends View {
                     settingsTouchLastY = y;
                 } else {
                     if (action == MotionEvent.ACTION_UP && !settingsScrolling
-                            && tab == TAB_SETTINGS && !remapMode)
+                            && tab == TAB_SETTINGS && !remapMode && !statesMode)
                         settingsTap(x, y);
                     settingsTouch = false;
                 }
@@ -1719,20 +1887,30 @@ public class MinimapView extends View {
         }
         if (action != MotionEvent.ACTION_DOWN) return true;
 
-        if (tabItemsR.contains(x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leaveRemap(); return true; }
-        if (tabMapR.contains(x, y)) { tab = TAB_MAP; leaveRemap(); return true; }
-        if (tabGearR.contains(x, y)) { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leaveRemap(); return true; }
+        if (tabItemsR.contains(x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leaveSubPanel(); return true; }
+        if (tabMapR.contains(x, y)) { tab = TAB_MAP; leaveSubPanel(); return true; }
+        if (tabGearR.contains(x, y)) { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leaveSubPanel(); return true; }
         if (tabSettingsR.contains(x, y)) {
             tab = (tab == TAB_SETTINGS) ? TAB_MAP : TAB_SETTINGS;
             // re-scan here rather than per frame in case a pack was just copied over
             if (tab == TAB_SETTINGS) msuPack = msuPackPresent();
-            leaveRemap();
+            leaveSubPanel();
             return true;
         }
 
         if (tab == TAB_SETTINGS) {
-            if (remapMode) {
-                if (remapBackR.contains(x, y)) { leaveRemap(); return true; }
+            if (statesMode) {
+                if (statesBackR.contains(x, y)) { leaveSubPanel(); return true; }
+                if (nativeBroken) return true;
+                for (int i = 0; i < STATE_SLOTS; i++) {
+                    if (stateSaveR[i].contains(x, y)) { requestState(i, true); return true; }
+                    if (stateLoadR[i].contains(x, y) && stateStamp[i] != 0) {
+                        requestState(i, false);
+                        return true;
+                    }
+                }
+            } else if (remapMode) {
+                if (remapBackR.contains(x, y)) { leaveSubPanel(); return true; }
                 for (int i = 0; i < 12; i++) {
                     if (remapRowR[i].contains(x, y) && !nativeBroken) {
                         if (remapArm == i) {
@@ -1823,10 +2001,11 @@ public class MinimapView extends View {
         return true;
     }
 
-    private void leaveRemap() {
+    private void leaveSubPanel() {
         if (remapArm >= 0 && !nativeBroken) GameState.armButtonCapture(false);
         remapArm = -1;
         remapMode = false;
+        statesMode = false;
         armedRing = 0;   // leaving/changing tabs cancels a pending assignment
     }
 

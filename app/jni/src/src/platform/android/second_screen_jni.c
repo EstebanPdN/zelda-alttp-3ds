@@ -19,6 +19,8 @@ int SS_GetEquippedSlotX(void); void SS_AssignSlotX(int slot);
 uint32 SS_GetFeatures(void); void SS_SetFeature(unsigned mask, bool on);
 bool SS_GetIndoorExit(int *out);
 void SS_SaveLoadState(bool save); void SS_SetAutosave(bool on);
+void SS_RequestSaveState(int slot); void SS_RequestLoadState(int slot);
+bool SS_TakeThumbnail(uint32 *out);
 
 #include <jni.h>
 
@@ -119,6 +121,13 @@ JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_loadState(JNIEnv *env, j
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setAutosave(JNIEnv *env, jclass clazz, jboolean on) { SS_SetAutosave(on); }
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_armButtonCapture(JNIEnv *env, jclass clazz, jboolean arm) { SS_ArmButtonCapture(arm); }
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getCapturedButton(JNIEnv *env, jclass clazz) { return SS_GetCapturedButton(); }
+
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_requestSaveState(JNIEnv *env, jclass clazz, jint slot) { SS_RequestSaveState(slot); }
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_requestLoadState(JNIEnv *env, jclass clazz, jint slot) { SS_RequestLoadState(slot); }
+JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_takeStateThumbnail(JNIEnv *env, jclass clazz, jintArray out) {
+  if ((*env)->GetArrayLength(env, out) < 128 * 112) return false;
+  return JniCopyPixels(env, out, 128 * 112, SS_TakeThumbnail(g_jni_px));
+}
 
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_getGamepadControls(JNIEnv *env, jclass clazz, jintArray out) {
   if ((*env)->GetArrayLength(env, out) < 12) return;
