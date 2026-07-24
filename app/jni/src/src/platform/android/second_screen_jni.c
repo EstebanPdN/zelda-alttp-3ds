@@ -12,6 +12,7 @@ bool SS_RenderLetterSheet(uint32 *px); bool SS_RenderWorldMap(uint32 *px, bool d
 bool SS_RenderLinkFace(uint32 *px, int chunk); int SS_GetDungeonLayout(int palace, uint8 *out, int cap);
 bool SS_RenderDungeonFloor(int palace, int floorIdx, uint32 *px); bool SS_RenderMapIcons(int palace, uint32 *px);
 void SS_EquipSlot(int slot); void SS_SetWidescreen(bool on); bool SS_IsWidescreen(void);
+void SS_SetCrtFilter(bool on); bool SS_IsCrtFilter(void);
 void SS_SetHudHidden(bool hide); bool SS_IsHudHidden(void); void SS_ArmButtonCapture(bool arm);
 int SS_GetCapturedButton(void); void SS_GetGamepadControls(int *out); void SS_SetGamepadControls(const int *in);
 int SS_GetEquippedSlotX(void); void SS_AssignSlotX(int slot);
@@ -107,6 +108,8 @@ JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_equipSlot(JNIEnv *env, j
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_assignSlotX(JNIEnv *env, jclass clazz, jint slot) { SS_AssignSlotX(slot); }
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setWidescreen(JNIEnv *env, jclass clazz, jboolean on) { SS_SetWidescreen(on); }
 JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isWidescreen(JNIEnv *env, jclass clazz) { return SS_IsWidescreen(); }
+JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setCrtFilter(JNIEnv *env, jclass clazz, jboolean on) { SS_SetCrtFilter(on); }
+JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isCrtFilter(JNIEnv *env, jclass clazz) { return SS_IsCrtFilter(); }
 JNIEXPORT void JNICALL Java_com_dishii_zelda3_GameState_setHudHidden(JNIEnv *env, jclass clazz, jboolean hide) { SS_SetHudHidden(hide); }
 JNIEXPORT jboolean JNICALL Java_com_dishii_zelda3_GameState_isHudHidden(JNIEnv *env, jclass clazz) { return SS_IsHudHidden(); }
 JNIEXPORT jint JNICALL Java_com_dishii_zelda3_GameState_getFeatures(JNIEnv *env, jclass clazz) { return (jint)SS_GetFeatures(); }

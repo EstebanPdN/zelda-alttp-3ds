@@ -129,7 +129,7 @@ public class MinimapView extends View {
     // touch regions (recomputed during draw)
     private final RectF tabItemsR = new RectF(), tabGearR = new RectF(), tabMapR = new RectF();
     private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
-    private final RectF[] settingsRowR = new RectF[8 + FEAT_MASKS.length];
+    private final RectF[] settingsRowR = new RectF[9 + FEAT_MASKS.length];
     private final RectF[] remapRowR = new RectF[12];
     private final RectF mapAreaR = new RectF(), yRingR = new RectF(), xRingR = new RectF();
 
@@ -728,10 +728,11 @@ public class MinimapView extends View {
         }
         drawText(c, "SETTINGS", r.centerX() - textWidth("SETTINGS", 3 * u) / 2, r.top + 18 * u, 3 * u);
 
-        boolean ws = false, hudHidden = false;
+        boolean ws = false, crt = false, hudHidden = false;
         int feats = 0;
         if (!nativeBroken) {
             ws = GameState.isWidescreen();
+            crt = GameState.isCrtFilter();
             hudHidden = GameState.isHudHidden();
             feats = GameState.getFeatures();
         }
@@ -760,14 +761,15 @@ public class MinimapView extends View {
             else if (i == 2) { label = "LOAD STATE"; v = rowFlash(i, stateFile().exists() ? "" : "EMPTY"); }
             else if (i == 3) { label = "AUTOSAVE"; v = autosave ? "ON" : "OFF"; }
             else if (i == 4) { label = "WIDESCREEN"; v = ws ? "ON" : "OFF"; }
-            else if (i == 5) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
-            else if (i == 6) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
-            else if (i == 7) {
+            else if (i == 5) { label = "CRT FILTER"; v = crt ? "ON" : "OFF"; }
+            else if (i == 6) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
+            else if (i == 7) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
+            else if (i == 8) {
                 label = "SWAP SCREENS";
                 v = swapScreens != swapScreensApplied ? "RESTART" : (swapScreens ? "ON" : "OFF");
             }
             else {
-                int f = i - 8;
+                int f = i - 9;
                 label = FEAT_LABELS[f];
                 v = (((feats & FEAT_MASKS[f]) != 0) ^ FEAT_INVERT[f]) ? "ON" : "OFF";
             }
@@ -826,11 +828,15 @@ public class MinimapView extends View {
                 GameState.setWidescreen(on);
                 updateIni("[General]", "ExtendedAspectRatio", on ? "16:9" : "4:3");
             } else if (i == 5) {
+                boolean on = !GameState.isCrtFilter();
+                GameState.setCrtFilter(on);
+                updateIni("[Graphics]", "CrtFilter", on ? "1" : "0");
+            } else if (i == 6) {
                 boolean hide = !GameState.isHudHidden();
                 GameState.setHudHidden(hide);
                 getContext().getSharedPreferences("secondscreen", 0)
                         .edit().putBoolean("hideTopHud", hide).apply();
-            } else if (i == 6) {
+            } else if (i == 7) {
                 xRing = !xRing;
                 armedRing = 0;
                 updateIni("[General]", "SecondScreenXItemRing", xRing ? "1" : "0");
@@ -840,13 +846,13 @@ public class MinimapView extends View {
                     GameState.setFeature(FEAT_MASKS[0], true);
                     updateIni(FEAT_SECTIONS[0], FEAT_KEYS[0], "1");
                 }
-            } else if (i == 7) {
+            } else if (i == 8) {
                 // needs the game window rebuilt on the other display, which only
                 // happens at activity launch - the row shows RESTART until then
                 swapScreens = !swapScreens;
                 updateIni("[General]", "SecondScreenSwap", swapScreens ? "1" : "0");
             } else {
-                int f = i - 8;
+                int f = i - 9;
                 boolean on = (GameState.getFeatures() & FEAT_MASKS[f]) == 0;
                 GameState.setFeature(FEAT_MASKS[f], on);
                 updateIni(FEAT_SECTIONS[f], FEAT_KEYS[f], on ? "1" : "0");

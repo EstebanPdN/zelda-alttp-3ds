@@ -15,9 +15,16 @@ static uint8 *g_screen_buffer;
 static size_t g_screen_buffer_size;
 static int g_draw_width, g_draw_height;
 static unsigned int g_program, g_VAO;
+static int g_crt_params_loc, g_crt_origin_loc;
 static GlTextureWithSize g_texture;
 static GlslShader *g_glsl_shader;
 static bool g_opengl_es;
+
+// Matches the sdl renderer's crt filter (see CrtFilter_Build in main.c).
+static const float kCrtScanlineDepth = 0.28f;
+static const float kCrtMaskDepth = 0.12f;
+
+int ZeldaGetSnesHeight(void);  // main.c
 
 static void GL_APIENTRY MessageCallback(GLenum source,
                 GLenum type,
@@ -125,28 +132,56 @@ static bool OpenGLRenderer_Init(SDL_Window *window) {
     printf("%s\n", infolog);
   }
 
-  // fragment shader
+  // fragment shader. crtParams is (scanline depth, mask depth, output rows per
+  // snes scanline), the last one 0 when the crt filter is off; crtOrigin is the
+  // viewport corner, so the pattern is counted from the picture, not the window.
   const GLchar *fs_code_core = "#version 330 core\n" CODE(
   out vec4 FragColor;
   in vec2 TexCoord;
   // texture samplers
   uniform sampler2D texture1;
+  uniform vec3 crtParams;
+  uniform vec2 crtOrigin;
   void main() {
-    FragColor = texture(texture1, TexCoord);
+    vec4 c = texture(texture1, TexCoord);
+    if (crtParams.z > 0.0) {
+      vec2 p = gl_FragCoord.xy - crtOrigin;
+      // brightest across the middle of a scanline, darkest at the seam
+      float f = fract(p.y / crtParams.z);
+      c.rgb *= 1.0 - crtParams.x * (0.5 + 0.5 * cos(f * 6.2831853));
+      // aperture grille: every pixel keeps one channel and dims the other two
+      float m = mod(p.x, 3.0);
+      vec3 sel = vec3(float(m < 1.0), float(m >= 1.0 && m < 2.0), float(m >= 2.0));
+      c.rgb *= vec3(1.0 - crtParams.y) + crtParams.y * sel;
+    }
+    FragColor = c;
   }
 );
 
+  // highp, else fract() of a screen row over a scanline height is too coarse
   const GLchar *fs_code_es = "#version 300 es\n" CODE(
-  precision mediump float;
+  precision highp float;
   out vec4 FragColor;
   in vec2 TexCoord;
   // texture samplers
   uniform sampler2D texture1;
+  uniform vec3 crtParams;
+  uniform vec2 crtOrigin;
   void main() {
-    FragColor = texture(texture1, TexCoord);
+    vec4 c = texture(texture1, TexCoord);
+    if (crtParams.z > 0.0) {
+      vec2 p = gl_FragCoord.xy - crtOrigin;
+      // brightest across the middle of a scanline, darkest at the seam
+      float f = fract(p.y / crtParams.z);
+      c.rgb *= 1.0 - crtParams.x * (0.5 + 0.5 * cos(f * 6.2831853));
+      // aperture grille: every pixel keeps one channel and dims the other two
+      float m = mod(p.x, 3.0);
+      vec3 sel = vec3(float(m < 1.0), float(m >= 1.0 && m < 2.0), float(m >= 2.0));
+      c.rgb *= vec3(1.0 - crtParams.y) + crtParams.y * sel;
+    }
+    FragColor = c;
   }
 );
-
 
   const GLchar *fs_code = g_opengl_es ? fs_code_es : fs_code_core;
   unsigned int fs = glCreateShader(GL_FRAGMENT_SHADER);
@@ -170,6 +205,9 @@ static bool OpenGLRenderer_Init(SDL_Window *window) {
     glGetProgramInfoLog(program, 512, NULL, infolog);
     printf("%s\n", infolog);
   }
+
+  g_crt_params_loc = glGetUniformLocation(program, "crtParams");
+  g_crt_origin_loc = glGetUniformLocation(program, "crtOrigin");
 
   if (g_config.shader)
     g_glsl_shader = GlslShader_CreateFromFile(g_config.shader, g_opengl_es);
@@ -237,6 +275,13 @@ static void OpenGLRenderer_EndDraw() {
   if (g_glsl_shader == NULL) {
     glViewport(viewport_x, viewport_y, viewport_width, viewport_height);
     glUseProgram(g_program);
+    if (g_crt_params_loc >= 0) {
+      // below two rows per scanline there's nothing to draw lines into
+      float line_h = g_config.crt_filter ? (float)viewport_height / ZeldaGetSnesHeight() : 0.0f;
+      float depth = kCrtScanlineDepth * (line_h >= 2.0f ? 1.0f : line_h - 1.0f);
+      glUniform3f(g_crt_params_loc, depth > 0.0f ? depth : 0.0f, kCrtMaskDepth, line_h);
+      glUniform2f(g_crt_origin_loc, (float)viewport_x, (float)viewport_y);
+    }
     int filter = g_config.linear_filtering ? GL_LINEAR : GL_NEAREST;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);

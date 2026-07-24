@@ -420,6 +420,7 @@ bool SS_RenderMapIcons(int palace, uint32 *px) {
 static volatile int g_pending_equip_slot;
 static volatile int g_pending_assign_x_slot;
 static volatile int g_pending_widescreen = -1;
+static volatile int g_pending_crt_filter = -1;
 static volatile int g_pending_hide_hud = -1;
 static volatile int g_pending_controls_set;
 static uint8 g_pending_controls[12];
@@ -450,6 +451,14 @@ bool SS_IsWidescreen(void) {
   int pending = g_pending_widescreen;
   if (pending >= 0) return pending != 0;
   return g_zenv.ppu && g_zenv.ppu->extraLeftRight != 0;
+}
+
+void SS_SetCrtFilter(bool on) { g_pending_crt_filter = on ? 1 : 0; }
+
+bool SS_IsCrtFilter(void) {
+  int pending = g_pending_crt_filter;
+  if (pending >= 0) return pending != 0;
+  return g_config.crt_filter;
 }
 
 void SS_SetHudHidden(bool hide) { g_pending_hide_hud = hide ? 1 : 0; }
@@ -524,6 +533,11 @@ void SecondScreen_RunFrameHook(void) {
     g_pending_widescreen = -1;
     extern void ZeldaSetWidescreen(bool enable);
     ZeldaSetWidescreen(ws != 0);
+  }
+  int crt = g_pending_crt_filter;
+  if (crt >= 0) {
+    g_pending_crt_filter = -1;
+    g_config.crt_filter = crt != 0;  // the renderer picks it up on the next frame
   }
   int hh = g_pending_hide_hud;
   if (hh >= 0) {

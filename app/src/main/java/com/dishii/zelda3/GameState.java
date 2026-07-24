@@ -31,6 +31,9 @@ public class GameState {
     /** Toggle the extended aspect ratio at runtime; applied on the game thread. */
     public static native void setWidescreen(boolean on);
     public static native boolean isWidescreen();
+    /** Toggle the CRT filter (scanlines + rgb mask) at runtime; applied on the game thread. */
+    public static native void setCrtFilter(boolean on);
+    public static native boolean isCrtFilter();
     /** Blank the game's own HUD strip on the top screen; applied on the game thread. */
     public static native void setHudHidden(boolean hide);
     public static native boolean isHudHidden();

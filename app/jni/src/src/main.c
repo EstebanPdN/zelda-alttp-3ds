@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <math.h>
 #include <SDL.h>
 #ifdef _WIN32
 #include "platform/win32/volume_control.h"
@@ -212,6 +213,90 @@ static SDL_Renderer *g_renderer;
 static SDL_Texture *g_texture;
 static SDL_Rect g_sdl_renderer_rect;
 
+// ---- CRT filter (scanlines + a subtle rgb mask), sdl renderer ----
+// Two multiply overlays instead of one full screen one: a 1px wide column with
+// the scanline profile, stretched sideways, and a 1px tall row with the
+// phosphor triads, stretched down. Each maps 1:1 along the axis it varies on,
+// so nothing shimmers when the game is scaled, and both are a few kb.
+static SDL_Texture *g_crt_scan_tex, *g_crt_mask_tex;
+static int g_crt_w, g_crt_h;
+static float g_crt_line_h;
+
+static const float kCrtScanlineDepth = 0.28f;  // how dark the gap between lines is
+static const float kCrtMaskDepth = 0.12f;      // how much the mask dims the two other channels
+
+static uint32 CrtColor(float r, float g, float b) {
+  return 0xff000000 | (uint32)(r * 255.0f + 0.5f) << 16 |
+         (uint32)(g * 255.0f + 0.5f) << 8 | (uint32)(b * 255.0f + 0.5f);
+}
+
+static SDL_Texture *CrtMakeTexture(int w, int h, const uint32 *pixels) {
+  SDL_Texture *tex = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_ARGB8888,
+                                       SDL_TEXTUREACCESS_STATIC, w, h);
+  if (tex == NULL)
+    return NULL;
+  SDL_UpdateTexture(tex, NULL, pixels, w * 4);
+  SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_MOD);
+  SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+  return tex;
+}
+
+static void CrtFilter_Free() {
+  if (g_crt_scan_tex) SDL_DestroyTexture(g_crt_scan_tex), g_crt_scan_tex = NULL;
+  if (g_crt_mask_tex) SDL_DestroyTexture(g_crt_mask_tex), g_crt_mask_tex = NULL;
+  g_crt_w = g_crt_h = 0;
+}
+
+// w/h are the size of the drawn area in real pixels, line_h how many of those
+// rows one snes scanline covers.
+static void CrtFilter_Build(int w, int h, float line_h) {
+  CrtFilter_Free();
+  if (w <= 0 || h <= 0 || line_h <= 0.0f)
+    return;
+  g_crt_w = w, g_crt_h = h, g_crt_line_h = line_h;
+
+  // below two rows per scanline there's nothing to draw lines into, so fade out
+  float depth = kCrtScanlineDepth * (line_h >= 2.0f ? 1.0f : line_h - 1.0f);
+  if (depth < 0.0f)
+    depth = 0.0f;
+  uint32 *col = malloc(h * sizeof(uint32));
+  for (int y = 0; y < h; y++) {
+    float f = y / line_h;
+    // brightest across the middle of a scanline, darkest at the seam
+    float v = 1.0f - depth * (0.5f + 0.5f * cosf((f - floorf(f)) * 6.2831853f));
+    col[y] = CrtColor(v, v, v);
+  }
+  g_crt_scan_tex = CrtMakeTexture(1, h, col);
+  free(col);
+
+  uint32 *row = malloc(w * sizeof(uint32));
+  for (int x = 0; x < w; x++) {
+    // aperture grille: every pixel keeps one channel and dims the other two
+    float v[3] = { 1.0f - kCrtMaskDepth, 1.0f - kCrtMaskDepth, 1.0f - kCrtMaskDepth };
+    v[x % 3] = 1.0f;
+    row[x] = CrtColor(v[0], v[1], v[2]);
+  }
+  g_crt_mask_tex = CrtMakeTexture(w, 1, row);
+  free(row);
+}
+
+static void CrtFilter_Draw() {
+  SDL_Rect vp;
+  float sx, sy;
+  SDL_RenderGetViewport(g_renderer, &vp);
+  SDL_RenderGetScale(g_renderer, &sx, &sy);
+  // the viewport is in logical units, which are snes pixels once the logical
+  // size is set; without it they're real pixels and the scale is 1
+  int w = (int)(vp.w * sx + 0.5f), h = (int)(vp.h * sy + 0.5f);
+  float line_h = (float)h / g_snes_height;
+  if (w != g_crt_w || h != g_crt_h || line_h != g_crt_line_h)
+    CrtFilter_Build(w, h, line_h);
+  if (g_crt_scan_tex)
+    SDL_RenderCopy(g_renderer, g_crt_scan_tex, NULL, NULL);
+  if (g_crt_mask_tex)
+    SDL_RenderCopy(g_renderer, g_crt_mask_tex, NULL, NULL);
+}
+
 static bool SdlRenderer_Init(SDL_Window *window) {
 
   if (g_config.shader)
@@ -249,6 +334,7 @@ static bool SdlRenderer_Init(SDL_Window *window) {
 }
 
 static void SdlRenderer_Destroy() {
+  CrtFilter_Free();
   SDL_DestroyTexture(g_texture);
   SDL_DestroyRenderer(g_renderer);
 }
@@ -271,7 +357,15 @@ static void SdlRenderer_EndDraw() {
 //  printf("%f ms\n", v * 1000);
   SDL_RenderClear(g_renderer);
   SDL_RenderCopy(g_renderer, g_texture, &g_sdl_renderer_rect, NULL);
+  if (g_config.crt_filter)
+    CrtFilter_Draw();
   SDL_RenderPresent(g_renderer); // vsyncs to 60 FPS?
+}
+
+// The snes height of the frame being drawn; the ppu buffer can be a multiple
+// of it with enhanced mode 7, and the crt filter wants the real scanlines.
+int ZeldaGetSnesHeight(void) {
+  return g_snes_height;
 }
 
 // Toggle the extended aspect ratio while running (game thread).
