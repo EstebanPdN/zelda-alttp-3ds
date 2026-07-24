@@ -129,7 +129,7 @@ public class MinimapView extends View {
     // touch regions (recomputed during draw)
     private final RectF tabItemsR = new RectF(), tabGearR = new RectF(), tabMapR = new RectF();
     private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
-    private final RectF[] settingsRowR = new RectF[9 + FEAT_MASKS.length];
+    private final RectF[] settingsRowR = new RectF[10 + FEAT_MASKS.length];
     private final RectF[] remapRowR = new RectF[12];
     private final RectF mapAreaR = new RectF(), yRingR = new RectF(), xRingR = new RectF();
 
@@ -152,6 +152,11 @@ public class MinimapView extends View {
     private int settingsFlashRow = -1;
     private long settingsFlashUntil;
     private String settingsFlash = "";
+    // MSU-1 audio packs; the emulator only reads EnableMSU at startup, so this
+    // one also waits for a restart. msuOnValue keeps whichever flavour the ini
+    // had (true/deluxe/opuz/deluxe-opuz) so turning it back on restores it.
+    private boolean msuOn, msuOnApplied, msuPack;
+    private String msuOnValue = "true";
     private int armedRing = 0;          // 1/2 = next items-grid tap assigns Y/X
     private static final String[] PAD_CMD_NAMES = {
         "UP", "DOWN", "LEFT", "RIGHT", "SELECT", "START", "A", "B", "X", "Y", "L", "R",
@@ -206,6 +211,10 @@ public class MinimapView extends View {
         xRing = readIniBool("[General]", "SecondScreenXItemRing");
         swapScreens = swapScreensApplied = readIniBool("[General]", "SecondScreenSwap");
         autosave = readIniBool("[General]", "Autosave");
+        String msu = readIni("[Sound]", "EnableMSU");
+        msuOn = msuOnApplied = iniEnabled(msu);
+        if (msuOn) msuOnValue = msu.trim();
+        msuPack = msuPackPresent();
         loadAssets(context);
     }
 
@@ -768,8 +777,13 @@ public class MinimapView extends View {
                 label = "SWAP SCREENS";
                 v = swapScreens != swapScreensApplied ? "RESTART" : (swapScreens ? "ON" : "OFF");
             }
+            else if (i == 9) {
+                label = "MSU-1 MUSIC";
+                v = !msuPack ? "NO PACK"
+                        : msuOn != msuOnApplied ? "RESTART" : (msuOn ? "ON" : "OFF");
+            }
             else {
-                int f = i - 9;
+                int f = i - 10;
                 label = FEAT_LABELS[f];
                 v = (((feats & FEAT_MASKS[f]) != 0) ^ FEAT_INVERT[f]) ? "ON" : "OFF";
             }
@@ -851,8 +865,17 @@ public class MinimapView extends View {
                 // happens at activity launch - the row shows RESTART until then
                 swapScreens = !swapScreens;
                 updateIni("[General]", "SecondScreenSwap", swapScreens ? "1" : "0");
+            } else if (i == 9) {
+                // with no pack installed there is nothing to switch on, so the
+                // row just reads NO PACK and does nothing
+                if (!msuPack) return;
+                // the MSU player only picks up EnableMSU when the emulator boots,
+                // and switching it off mid-track would leave the current .pcm
+                // playing over a paused SPC - so this waits for a restart too
+                msuOn = !msuOn;
+                updateIni("[Sound]", "EnableMSU", msuOn ? msuOnValue : "false");
             } else {
-                int f = i - 9;
+                int f = i - 10;
                 boolean on = (GameState.getFeatures() & FEAT_MASKS[f]) == 0;
                 GameState.setFeature(FEAT_MASKS[f], on);
                 updateIni(FEAT_SECTIONS[f], FEAT_KEYS[f], on ? "1" : "0");
@@ -965,13 +988,12 @@ public class MinimapView extends View {
         }
     }
 
-    // Read one boolean `key = value` from a section of the user's zelda3.ini.
-    private boolean readIniBool(String section, String key) {
+    // Read one `key = value` from a section of the user's zelda3.ini.
+    private String readIni(String section, String key) {
         try {
             java.io.File f = new java.io.File(getContext().getExternalFilesDir(null), "zelda3.ini");
             java.io.BufferedReader in = new java.io.BufferedReader(new java.io.FileReader(f));
-            String line, cur = "";
-            boolean v = false;
+            String line, cur = "", v = null;
             while ((line = in.readLine()) != null) {
                 String t = line.trim();
                 if (t.startsWith("["))
@@ -979,16 +1001,49 @@ public class MinimapView extends View {
                 else if (cur.equalsIgnoreCase(section)
                         && t.toLowerCase().startsWith(key.toLowerCase())
                         && t.substring(key.length()).trim().startsWith("=")) {
-                    String s = t.substring(t.indexOf('=') + 1).trim();
-                    v = s.equals("1") || s.equalsIgnoreCase("on")
-                            || s.equalsIgnoreCase("true") || s.equalsIgnoreCase("yes");
+                    v = t.substring(t.indexOf('=') + 1).trim();
                 }
             }
             in.close();
             return v;
         } catch (java.io.IOException e) {
-            return false;
+            return null;
         }
+    }
+
+    private boolean readIniBool(String section, String key) {
+        String s = readIni(section, key);
+        return s != null && (s.equals("1") || s.equalsIgnoreCase("on")
+                || s.equalsIgnoreCase("true") || s.equalsIgnoreCase("yes"));
+    }
+
+    // EnableMSU also accepts deluxe/opuz/deluxe-opuz, so treat anything that
+    // isn't an explicit "off" as enabled (config.c ParseBool does the same).
+    private static boolean iniEnabled(String s) {
+        if (s == null) return false;
+        s = s.trim();
+        return !(s.isEmpty() || s.equals("0") || s.equalsIgnoreCase("false")
+                || s.equalsIgnoreCase("off") || s.equalsIgnoreCase("no"));
+    }
+
+    // Is there anything for the MSU player to load? MSUPath is a filename prefix
+    // ("msu/alttp_msu-"), relative to the folder holding zelda3.ini, and the
+    // player appends the track number plus .pcm or .opuz.
+    private boolean msuPackPresent() {
+        String p = readIni("[Sound]", "MSUPath");
+        if (p == null || p.isEmpty()) p = "msu/alttp_msu-";
+        java.io.File f = p.startsWith("/") ? new java.io.File(p)
+                : new java.io.File(getContext().getExternalFilesDir(null), p);
+        boolean isDir = p.endsWith("/");
+        java.io.File dir = isDir ? f : f.getParentFile();
+        String prefix = isDir ? "" : f.getName();
+        String[] names = dir == null ? null : dir.list();
+        if (names == null) return false;
+        for (String n : names) {
+            if (n.startsWith(prefix) && (n.endsWith(".pcm") || n.endsWith(".opuz")))
+                return true;
+        }
+        return false;
     }
 
     private void writeIniGamepadControls() {
@@ -1503,6 +1558,8 @@ public class MinimapView extends View {
         if (tabGearR.contains(x, y)) { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leaveRemap(); return true; }
         if (tabSettingsR.contains(x, y)) {
             tab = (tab == TAB_SETTINGS) ? TAB_MAP : TAB_SETTINGS;
+            // re-scan here rather than per frame in case a pack was just copied over
+            if (tab == TAB_SETTINGS) msuPack = msuPackPresent();
             leaveRemap();
             return true;
         }
