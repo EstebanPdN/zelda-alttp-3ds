@@ -479,7 +479,8 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
       g_config.language = value;
       return true;
     } else if (StringEqualsNoCase(key, "SecondScreenXItemRing") ||
-               StringEqualsNoCase(key, "SecondScreenSwap")) {
+               StringEqualsNoCase(key, "SecondScreenSwap") ||
+               StringEqualsNoCase(key, "SecondScreenCrt")) {
       return true;  // read by the second-screen UI only, the engine ignores it
     }
   } else if (section == 4) {

@@ -497,6 +497,7 @@ void SS_SetFeature(unsigned mask, bool on) {
 void SS_SaveLoadState(bool save) { g_pending_saveload = save ? 1 : 2; }
 
 void SS_SetAutosave(bool on) { g_config.autosave = on; }
+
 // ---- save states ----
 // The picker drives SaveLoadSlot, which touches audio state, so the request is
 // queued here and applied under the audio lock on the game thread.

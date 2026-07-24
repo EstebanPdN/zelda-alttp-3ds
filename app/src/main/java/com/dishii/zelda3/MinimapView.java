@@ -144,7 +144,7 @@ public class MinimapView extends View {
     // touch regions (recomputed during draw)
     private final RectF tabItemsR = new RectF(), tabGearR = new RectF(), tabMapR = new RectF();
     private final RectF tabSettingsR = new RectF(), remapBackR = new RectF();
-    private final RectF[] settingsRowR = new RectF[11 + FEAT_MASKS.length];
+    private final RectF[] settingsRowR = new RectF[12 + FEAT_MASKS.length];
     private final RectF[] remapRowR = new RectF[12];
     private final RectF mapAreaR = new RectF(), yRingR = new RectF(), xRingR = new RectF();
 
@@ -163,6 +163,10 @@ public class MinimapView extends View {
     // which screen hosts the game; toggling takes effect on the next app start
     private boolean swapScreens, swapScreensApplied;
     private boolean autosave;
+    // scanlines over this screen; the top screen's filter is a separate option
+    private boolean crtBottom;
+    private Paint scanPaint;
+    private int scanPeriod;
     // transient feedback on an action row ("SAVED"/"LOADED"/"EMPTY")
     private int settingsFlashRow = -1;
     private long settingsFlashUntil;
@@ -191,6 +195,11 @@ public class MinimapView extends View {
     private int stateFlashSlot = -1;     // brief SAVED / LOADED banner on one card
     private String stateFlashMsg;
     private long stateFlashUntil;
+    // the slot list scrolls like the settings list
+    private float statesScroll, statesMaxScroll;
+    private float statesListTop, statesListBot;
+    private boolean statesTouch, statesScrolling;
+    private float statesTouchStartY, statesTouchLastY;
     private static final String[] MONTHS = {
         "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
     };
@@ -260,6 +269,7 @@ public class MinimapView extends View {
         xRing = readIniBool("[General]", "SecondScreenXItemRing");
         swapScreens = swapScreensApplied = readIniBool("[General]", "SecondScreenSwap");
         autosave = readIniBool("[General]", "Autosave");
+        crtBottom = readIniBool("[General]", "SecondScreenCrt");
         String msu = readIni("[Sound]", "EnableMSU");
         msuOn = msuOnApplied = iniEnabled(msu);
         if (msuOn) msuOnValue = msu.trim();
@@ -425,7 +435,9 @@ public class MinimapView extends View {
         // re-apply the persisted top-screen HUD choice once per app start
         if (!hudPrefApplied && !nativeBroken) {
             hudPrefApplied = true;
-            if (getContext().getSharedPreferences("secondscreen", 0).getBoolean("hideTopHud", false))
+            // hidden by default: the bottom screen already shows hearts, magic
+            // and the counters, so the game's own strip is redundant
+            if (getContext().getSharedPreferences("secondscreen", 0).getBoolean("hideTopHud", true))
                 GameState.setHudHidden(true);
         }
 
@@ -504,8 +516,28 @@ public class MinimapView extends View {
         }
         drawSidebar(canvas, w - sideW + 4 * u, 10 * u, sideW - 14 * u, h - tabH - 14 * u, dungeonMode);
         drawTabBar(canvas, w, h, tabH);
+        if (crtBottom) drawScanlines(canvas, w, h);
 
         if (isAttachedToWindow()) postInvalidateOnAnimation();
+    }
+
+    /**
+     * Scanlines over the finished frame. Lighter than the top screen's filter -
+     * no rgb mask and a shallower dip - because this screen is mostly small
+     * pixel text, which the mask would blur into colour fringes.
+     */
+    private void drawScanlines(Canvas c, int w, int h) {
+        int p = Math.max(2, Math.round(2 * u));
+        if (scanPaint == null || scanPeriod != p) {
+            scanPeriod = p;
+            Bitmap b = Bitmap.createBitmap(1, p, Bitmap.Config.ARGB_8888);
+            int[] px = new int[p];
+            for (int i = 0; i < p; i++) px[i] = i == p - 1 ? 0x3C000000 : 0;
+            b.setPixels(px, 0, 1, 0, 0, 1, p);
+            scanPaint = new Paint();
+            scanPaint.setShader(new BitmapShader(b, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT));
+        }
+        c.drawRect(0, 0, w, h, scanPaint);
     }
 
     // ---------- chrome helpers ----------
@@ -667,22 +699,52 @@ public class MinimapView extends View {
     }
 
     /** A player-dropped pin: gold head on a dark stem, tip at the marked spot. */
+    // A pinned spot: a little pennant on a pole, drawn on a pixel grid so it
+    // sits next to the HUD art instead of looking like a vector overlay.
+    private static final String[] PIN_ART = {
+        "########",
+        "########",
+        "#######.",
+        "######..",
+        "#####...",
+        "###.....",
+        "##......",
+        "##......",
+        "##......",
+        "##......",
+        "##......",
+        "##......",
+    };
+
     private void drawPin(Canvas c, float x, float y, float s) {
-        float hy = y - 13 * s;   // the head sits above the spot it marks
-        aa.setStyle(Paint.Style.STROKE);
-        aa.setStrokeWidth(7 * s); aa.setColor(COL_OUTLINE);
-        c.drawLine(x, y, x, hy, aa);
-        aa.setStyle(Paint.Style.FILL);
-        aa.setColor(COL_OUTLINE);
-        c.drawCircle(x, hy, 8.5f * s, aa);
-        aa.setStyle(Paint.Style.STROKE);
-        aa.setStrokeWidth(3 * s); aa.setColor(COL_GOLD_DARK);
-        c.drawLine(x, y, x, hy, aa);
-        aa.setStyle(Paint.Style.FILL);
-        aa.setColor(COL_GOLD);
-        c.drawCircle(x, hy, 6.5f * s, aa);
-        aa.setColor(COL_OUTLINE);
-        c.drawCircle(x, hy, 2.5f * s, aa);
+        // the pole's foot marks the spot; grid is 8 wide and 12 tall
+        float px = x - 1 * s, py = y - 12 * s;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+                if (dx != 0 || dy != 0)
+                    drawPixelArt(c, PIN_ART, px + dx * s, py + dy * s, s, COL_OUTLINE);
+        drawPixelArt(c, PIN_ART, px, py, s, COL_GOLD);
+    }
+
+    /**
+     * Draws a '#' grid as square pixels of side `cell`, top-left at (x, y).
+     * Runs of set cells become one rect so no seams show between them.
+     */
+    private void drawPixelArt(Canvas c, String[] rows, float x, float y, float cell, int color) {
+        fill.setColor(color);
+        for (int ry = 0; ry < rows.length; ry++) {
+            String row = rows[ry];
+            int run = -1;
+            for (int rx = 0; rx <= row.length(); rx++) {
+                boolean on = rx < row.length() && row.charAt(rx) == '#';
+                if (on && run < 0) run = rx;
+                if (!on && run >= 0) {
+                    c.drawRect(x + run * cell, y + ry * cell,
+                            x + rx * cell, y + (ry + 1) * cell, fill);
+                    run = -1;
+                }
+            }
+        }
     }
 
     /**
@@ -951,20 +1013,21 @@ public class MinimapView extends View {
             else if (i == 3) { label = "LOAD STATE"; v = rowFlash(i, stateFile().exists() ? "" : "EMPTY"); }
             else if (i == 4) { label = "AUTOSAVE"; v = autosave ? "ON" : "OFF"; }
             else if (i == 5) { label = "WIDESCREEN"; v = ws ? "ON" : "OFF"; }
-            else if (i == 6) { label = "CRT FILTER"; v = crt ? "ON" : "OFF"; }
-            else if (i == 7) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
-            else if (i == 8) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
-            else if (i == 9) {
+            else if (i == 6) { label = "CRT TOP SCREEN"; v = crt ? "ON" : "OFF"; }
+            else if (i == 7) { label = "CRT THIS SCREEN"; v = crtBottom ? "ON" : "OFF"; }
+            else if (i == 8) { label = "TOP SCREEN HUD"; v = hudHidden ? "OFF" : "ON"; }
+            else if (i == 9) { label = "X ITEM RING"; v = xRing ? "ON" : "OFF"; }
+            else if (i == 10) {
                 label = "SWAP SCREENS";
                 v = swapScreens != swapScreensApplied ? "RESTART" : (swapScreens ? "ON" : "OFF");
             }
-            else if (i == 10) {
+            else if (i == 11) {
                 label = "MSU-1 MUSIC";
                 v = !msuPack ? "NO PACK"
                         : msuOn != msuOnApplied ? "RESTART" : (msuOn ? "ON" : "OFF");
             }
             else {
-                int f = i - 11;
+                int f = i - 12;
                 label = FEAT_LABELS[f];
                 v = (((feats & FEAT_MASKS[f]) != 0) ^ FEAT_INVERT[f]) ? "ON" : "OFF";
             }
@@ -1030,11 +1093,14 @@ public class MinimapView extends View {
                 GameState.setCrtFilter(on);
                 updateIni("[Graphics]", "CrtFilter", on ? "1" : "0");
             } else if (i == 7) {
+                crtBottom = !crtBottom;
+                updateIni("[General]", "SecondScreenCrt", crtBottom ? "1" : "0");
+            } else if (i == 8) {
                 boolean hide = !GameState.isHudHidden();
                 GameState.setHudHidden(hide);
                 getContext().getSharedPreferences("secondscreen", 0)
                         .edit().putBoolean("hideTopHud", hide).apply();
-            } else if (i == 8) {
+            } else if (i == 9) {
                 xRing = !xRing;
                 armedRing = 0;
                 updateIni("[General]", "SecondScreenXItemRing", xRing ? "1" : "0");
@@ -1044,12 +1110,12 @@ public class MinimapView extends View {
                     GameState.setFeature(FEAT_MASKS[0], true);
                     updateIni(FEAT_SECTIONS[0], FEAT_KEYS[0], "1");
                 }
-            } else if (i == 9) {
+            } else if (i == 10) {
                 // needs the game window rebuilt on the other display, which only
                 // happens at activity launch - the row shows RESTART until then
                 swapScreens = !swapScreens;
                 updateIni("[General]", "SecondScreenSwap", swapScreens ? "1" : "0");
-            } else if (i == 10) {
+            } else if (i == 11) {
                 // with no pack installed there is nothing to switch on, so the
                 // row just reads NO PACK and does nothing
                 if (!msuPack) return;
@@ -1059,7 +1125,7 @@ public class MinimapView extends View {
                 msuOn = !msuOn;
                 updateIni("[Sound]", "EnableMSU", msuOn ? msuOnValue : "false");
             } else {
-                int f = i - 11;
+                int f = i - 12;
                 boolean on = (GameState.getFeatures() & FEAT_MASKS[f]) == 0;
                 GameState.setFeature(FEAT_MASKS[f], on);
                 updateIni(FEAT_SECTIONS[f], FEAT_KEYS[f], on ? "1" : "0");
@@ -1152,32 +1218,36 @@ public class MinimapView extends View {
         drawText(c, "BACK", statesBackR.centerX() - textWidth("BACK", 2.2f * u) / 2,
                 statesBackR.centerY() - 9 * u, 2.2f * u);
 
-        float pad = 14 * u, gap = 20 * u;
-        float y0 = r.top + 66 * u;
-        float colW = (r.width() - 3 * gap) / 2;
-        float rowH = (r.bottom - 20 * u - y0 - gap) / 2;
+        // one full-width row per slot: thumbnail, then slot name over its
+        // timestamp, then the two buttons - nothing shares a line, so the
+        // stamp stays readable however narrow the panel is
+        float pad = 12 * u, gap = 14 * u, rowH = 116 * u;
+        statesListTop = r.top + 62 * u;
+        statesListBot = r.bottom - 16 * u;
+        statesMaxScroll = Math.max(0, STATE_SLOTS * (rowH + gap) - gap - (statesListBot - statesListTop));
+        statesScroll = clamp(statesScroll, 0, statesMaxScroll);
         boolean flashing = System.nanoTime() < stateFlashUntil;
+
+        c.save();
+        c.clipRect(r.left + 12 * u, statesListTop, r.right - 12 * u, statesListBot);
+        float y0 = statesListTop - statesScroll;
         for (int i = 0; i < STATE_SLOTS; i++) {
-            float cx = r.left + gap + (i % 2) * (colW + gap);
-            float cy = y0 + (i / 2) * (rowH + gap);
+            float cx = r.left + 20 * u, cw = r.width() - 40 * u;
+            float cy = y0 + i * (rowH + gap);
+            stateSaveR[i].setEmpty();
+            stateLoadR[i].setEmpty();
+            if (cy + rowH < statesListTop || cy > statesListBot) continue;
             boolean lit = flashing && stateFlashSlot == i;
-            dst.set(cx, cy, cx + colW, cy + rowH);
+            dst.set(cx, cy, cx + cw, cy + rowH);
             fill.setColor(Color.rgb(28, 28, 28));
             c.drawRoundRect(dst, 8 * u, 8 * u, fill);
             stroke.setStrokeWidth(3 * u); stroke.setColor(lit ? COL_GOLD : COL_GOLD_DARK);
             c.drawRoundRect(dst, 8 * u, 8 * u, stroke);
 
-            drawText(c, "SLOT " + (i + 1), cx + pad, cy + pad, 2.4f * u);
-            String note = lit ? stateFlashMsg : (stateStamp[i] == 0 ? "" : stamp(stateStamp[i]));
-            drawText(c, note, cx + colW - pad - textWidth(note, 2 * u), cy + pad + 2 * u, 2 * u);
-
-            // the moment the slot was written, in the game's own 8:7 shape;
-            // narrow panels shrink it so the buttons keep a usable width
-            float th = rowH - 2 * pad - 34 * u;
+            // the frame the slot was written on, in the game's own 8:7 shape
+            float th = rowH - 2 * pad;
             float tw = th * GameState.THUMB_W / GameState.THUMB_H;
-            float twMax = (colW - 3 * pad) * 0.55f;
-            if (tw > twMax) { tw = twMax; th = tw * GameState.THUMB_H / GameState.THUMB_W; }
-            float tx = cx + pad, ty = cy + pad + 34 * u;
+            float tx = cx + pad, ty = cy + pad;
             dst.set(tx, ty, tx + tw, ty + th);
             fill.setColor(Color.rgb(10, 10, 10));
             c.drawRect(dst, fill);
@@ -1186,17 +1256,45 @@ public class MinimapView extends View {
                 c.drawBitmap(stateThumb[i], src, dst, bmp);
             } else {
                 String e = stateStamp[i] == 0 ? "EMPTY" : "NO IMAGE";
-                drawText(c, e, dst.centerX() - textWidth(e, 2 * u) / 2, dst.centerY() - 8 * u, 2 * u);
+                drawText(c, e, dst.centerX() - textWidth(e, 1.6f * u) / 2, dst.centerY() - 6 * u, 1.6f * u);
             }
             stroke.setStrokeWidth(2 * u); stroke.setColor(COL_GOLD_DARK);
             c.drawRect(dst, stroke);
 
             // SAVE is always live; LOAD only once the slot holds a state
-            float bx = tx + tw + pad, bw = cx + colW - pad - bx, bh = (th - pad) / 2;
+            float bw = 104 * u, bh = (th - pad) / 2;
+            float bx = cx + cw - pad - bw;
             stateSaveR[i].set(bx, ty, bx + bw, ty + bh);
             stateLoadR[i].set(bx, ty + bh + pad, bx + bw, ty + th);
             drawStateButton(c, stateSaveR[i], "SAVE", true);
             drawStateButton(c, stateLoadR[i], "LOAD", stateStamp[i] != 0);
+
+            float lx = tx + tw + pad * 1.5f;
+            drawText(c, "SLOT " + (i + 1), lx, ty + 6 * u, 2.4f * u);
+            String note = lit ? stateFlashMsg : (stateStamp[i] == 0 ? "EMPTY" : stamp(stateStamp[i]));
+            drawText(c, note, lx, ty + 34 * u, 2 * u);
+        }
+        c.restore();
+
+        if (statesMaxScroll > 0) {
+            float span = statesListBot - statesListTop;
+            float thumbH = Math.max(40 * u, span * span / (span + statesMaxScroll));
+            float thumbY = statesListTop + (span - thumbH) * (statesScroll / statesMaxScroll);
+            fill.setColor(Color.rgb(28, 28, 28));
+            dst.set(r.right - 20 * u, statesListTop, r.right - 14 * u, statesListBot);
+            c.drawRoundRect(dst, 3 * u, 3 * u, fill);
+            fill.setColor(COL_GOLD_DARK);
+            dst.set(r.right - 20 * u, thumbY, r.right - 14 * u, thumbY + thumbH);
+            c.drawRoundRect(dst, 3 * u, 3 * u, fill);
+        }
+    }
+
+    // A tap in the slot list, once it's known not to be a drag.
+    private void statesTap(float x, float y) {
+        if (nativeBroken || y < statesListTop || y > statesListBot) return;
+        for (int i = 0; i < STATE_SLOTS; i++) {
+            if (stateSaveR[i].contains(x, y)) { requestState(i, true); return; }
+            if (stateLoadR[i].contains(x, y) && stateStamp[i] != 0) { requestState(i, false); return; }
         }
     }
 
@@ -1556,17 +1654,23 @@ public class MinimapView extends View {
         drawCog(c, tabSettingsR.centerX(), tabSettingsR.centerY(), bh * 0.28f);
     }
 
+    // Three sliders on a 9x9 grid. A gear reads as a white blob at this size,
+    // and "GEAR" already means equipment on the tab beside it.
+    private static final String[] COG_ART = {
+        ".###.....",
+        "#########",
+        ".###.....",
+        ".....###.",
+        "#########",
+        ".....###.",
+        "..###....",
+        "#########",
+        "..###....",
+    };
+
     private void drawCog(Canvas c, float cx, float cy, float r) {
-        aa.setStyle(Paint.Style.FILL);
-        aa.setColor(Color.WHITE);
-        for (int i = 0; i < 8; i++) {
-            double a = Math.PI / 4 * i;
-            float tx = cx + (float) Math.cos(a) * r, ty = cy + (float) Math.sin(a) * r;
-            c.drawCircle(tx, ty, r * 0.3f, aa);
-        }
-        c.drawCircle(cx, cy, r * 0.85f, aa);
-        aa.setColor(COL_BOX);
-        c.drawCircle(cx, cy, r * 0.38f, aa);
+        float cell = 2 * r / 9f;
+        drawPixelArt(c, COG_ART, cx - 4.5f * cell, cy - 4.5f * cell, cell, Color.WHITE);
     }
 
     private void drawTabButton(Canvas c, RectF r, String label, boolean active) {
@@ -1856,6 +1960,18 @@ public class MinimapView extends View {
         // the settings list scrolls, so its taps resolve on UP (a drag is not a tap)
         if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_UP
                 || action == MotionEvent.ACTION_CANCEL) {
+            if (statesTouch) {
+                if (action == MotionEvent.ACTION_MOVE) {
+                    if (Math.abs(y - statesTouchStartY) > 18 * u) statesScrolling = true;
+                    if (statesScrolling)
+                        statesScroll = clamp(statesScroll + (statesTouchLastY - y), 0, statesMaxScroll);
+                    statesTouchLastY = y;
+                } else {
+                    if (action == MotionEvent.ACTION_UP && !statesScrolling && statesMode)
+                        statesTap(x, y);
+                    statesTouch = false;
+                }
+            }
             if (settingsTouch) {
                 if (action == MotionEvent.ACTION_MOVE) {
                     if (Math.abs(y - settingsTouchStartY) > 18 * u) settingsScrolling = true;
@@ -1901,14 +2017,13 @@ public class MinimapView extends View {
         if (tab == TAB_SETTINGS) {
             if (statesMode) {
                 if (statesBackR.contains(x, y)) { leaveSubPanel(); return true; }
-                if (nativeBroken) return true;
-                for (int i = 0; i < STATE_SLOTS; i++) {
-                    if (stateSaveR[i].contains(x, y)) { requestState(i, true); return true; }
-                    if (stateLoadR[i].contains(x, y) && stateStamp[i] != 0) {
-                        requestState(i, false);
-                        return true;
-                    }
+                if (mapAreaR.contains(x, y)) {
+                    // taps and drag-scrolling in the list are resolved on MOVE/UP
+                    statesTouch = true;
+                    statesScrolling = false;
+                    statesTouchStartY = statesTouchLastY = y;
                 }
+                return true;
             } else if (remapMode) {
                 if (remapBackR.contains(x, y)) { leaveSubPanel(); return true; }
                 for (int i = 0; i < 12; i++) {
@@ -2006,6 +2121,8 @@ public class MinimapView extends View {
         remapArm = -1;
         remapMode = false;
         statesMode = false;
+        statesTouch = false;
+        statesScroll = 0;
         armedRing = 0;   // leaving/changing tabs cancels a pending assignment
     }
 
