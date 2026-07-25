@@ -66,3 +66,11 @@ make zelda3          # needs SDL2 dev headers (libsdl2-dev / SDL2-devel / sdl2)
 This compiles `src/*.c` + `src/platform/linux/*.c` into the `zelda3` binary. Enable the second screen with `ZELDA3_SECOND_SCREEN=1` (env knobs are documented at the top of `second_screen_sdl.c`).
 
 The generated tables (`src/platform/linux/ss_sheets.h`, `ss_textures.h`) come from `app/src/main/assets/secondscreen/` and are committed, so a normal build doesn't regenerate them. If those assets change, run `python tools/secondscreen/gen_linux_tables.py` from the repo root (needs Pillow).
+
+# MSU-1 music (custom soundtracks)
+
+To use an MSU-1 audio pack instead of the built-in music:
+
+1. Copy the pack files (`alttp_msu-1.pcm`, `alttp_msu-2.pcm`, ...) into `Android/data/com.dishii.zelda3/files/msu/`.
+2. In `Android/data/com.dishii.zelda3/files/zelda3.ini`, set `EnableMSU = true`, `MSUPath = msu/alttp_msu-`, and `AudioFreq = 44100` (use `48000` for OPUZ packs).
+3. Relaunch the game.
