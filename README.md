@@ -57,9 +57,10 @@ Every GitHub release includes:
 - installable CIA
 - Homebrew Launcher 3DSX
 - source snapshot zip
-- SHA-256 hashes
-- changelog and technical notes
 - QR code for scanning the CIA URL from FBI on a 3DS
+
+The release page itself shows the QR code, legal notice and a short changelog.
+Detailed development notes are preserved inside the source snapshot.
 
 Latest release:
 
