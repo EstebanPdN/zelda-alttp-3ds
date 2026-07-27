@@ -43,7 +43,7 @@ fi
 
 "${BANNERTOOL}" makesmdh \
   -s "Zelda 3DS" \
-  -l "Zelda3 dual-screen port" \
+  -l "Zelda3 dual-screen v1.2" \
   -p "snesrev / samyost1 / 3DS port" \
   -i "${ROOT}/platform/3ds/assets/icon.png" \
   -f visible,nosavebackups \
@@ -58,7 +58,7 @@ fi
   cd "${ROOT}"
   "${MAKEROM}" \
     -f cia \
-    -o "${GAME_BUILD}/zelda3-3ds-v1.1.cia" \
+    -o "${GAME_BUILD}/zelda3-3ds-v1.2.cia" \
     -DAPP_ROMFS=build-3ds/game/romfs \
     -rsf platform/3ds/cia/zelda3.rsf \
     -target t \
@@ -69,5 +69,5 @@ fi
 )
 
 printf 'Listos:\n'
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.1.3dsx"
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.1.cia"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.2.3dsx"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.2.cia"

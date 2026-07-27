@@ -644,6 +644,9 @@ int main(int argc, char** argv) {
   uint32 curTick = 0;
   uint32 frameCtr = 0;
   bool audiopaused = true;
+#ifdef __3DS__
+  uint32 nextLogicTick = SDL_GetTicks();
+#endif
 
   if (g_config.autosave)
     HandleCommand(kKeys_Load + 0, true);
@@ -711,9 +714,22 @@ int main(int argc, char** argv) {
     inputs = Platform3DS_ReadInput(&turbo_held, &turbo_multiplier);
     SecondScreenSDL_Handle3DSTouch();
     g_turbo = turbo_held;
-    int frames_to_run = g_turbo ? turbo_multiplier : 1;
-    if (frames_to_run < 1) frames_to_run = 1;
-    if (frames_to_run > 5) frames_to_run = 5;
+    uint32 now = SDL_GetTicks();
+    if (now - nextLogicTick > 250)
+      nextLogicTick = now;
+    static const uint8 logic_delays[3] = { 17, 17, 16 };
+    int frames_due = 0;
+    while ((int32)(now - nextLogicTick) >= 0 && frames_due < 5) {
+      nextLogicTick += logic_delays[(frameCtr + frames_due) % 3];
+      frames_due++;
+    }
+    if (frames_due == 0) {
+      SDL_Delay(1);
+      continue;
+    }
+    int frames_to_run = frames_due * (g_turbo ? turbo_multiplier : 1);
+    if (frames_to_run > 20)
+      frames_to_run = 20;
     for (int i = 0; i < frames_to_run; i++) {
       extern void SecondScreen_RunFrameHook(void);
       SecondScreen_RunFrameHook();

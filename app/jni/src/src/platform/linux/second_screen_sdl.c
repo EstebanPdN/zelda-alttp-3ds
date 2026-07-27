@@ -218,6 +218,14 @@ static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi 
 static bool in_rect(const RectFS *r, float x, float y) {
   return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
 }
+static float unit_for_size(int w, int h) {
+  float unit = (w < h ? w : h) / 720.0f;
+#ifdef __3DS__
+  if (unit < 0.5f)
+    unit = 0.5f;
+#endif
+  return unit;
+}
 
 // draw primitives
 static void set_color(uint32_t c) {
@@ -350,6 +358,7 @@ static SDL_Texture *make_tex(int w, int h, const void *px, bool blend) {
   SDL_Texture *t = SDL_CreateTexture(ss_r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, w, h);
   if (!t) return NULL;
   SDL_UpdateTexture(t, NULL, px, w * 4);
+  SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
   if (blend) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
   return t;
 }
@@ -1058,6 +1067,7 @@ static bool ensure_window(void) {
     ss_enabled = false;
     return false;
   }
+  SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
   ss_r = SDL_CreateRenderer(ss_win, -1, SDL_RENDERER_SOFTWARE);
   if (!ss_r) {
     fprintf(stderr, "second screen: CreateRenderer failed: %s\n", SDL_GetError());
@@ -1071,7 +1081,7 @@ static bool ensure_window(void) {
   ss_winid = SDL_GetWindowID(ss_win);
   SDL_GetRendererOutputSize(ss_r, &W, &H);
   if (W <= 0 || H <= 0) { W = 640; H = 480; }
-  u = (W < H ? W : H) / 720.0f;
+  u = unit_for_size(W, H);
   printf("second screen: display %d of %d, %dx%d (u=%.2f)\n", target, n, W, H, u);
 #ifdef __3DS__
   Platform3DS_LogRuntime("Bottom screen initialized: display %d of %d, %dx%d",
@@ -1368,7 +1378,7 @@ static void rebuild_renderer(int w2, int h2) {
     return;
   }
   W = w2; H = h2;
-  u = (W < H ? W : H) / 720.0f;
+  u = unit_for_size(W, H);
   printf("second screen resized: %dx%d (u=%.2f)\n", W, H, u);
   fflush(stdout);
 }
