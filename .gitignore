@@ -1,6 +1,8 @@
 # Gradle files
 .gradle/
 build/
+build-3ds/
+.DS_Store
 
 # Local configuration file (sdk path, etc)
 local.properties

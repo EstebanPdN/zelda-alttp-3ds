@@ -17,6 +17,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef __3DS__
+#include "platform_3ds.h"
+#endif
+
 #include "../../types.h"                 // uint8/uint16 for the tables header
 #include "../../second_screen_tables.h"  // kIconCount/kIconCols/kGlyphCount/kGlyphCols
 #include "ss_sheets.h"             // generated cell indices for icons/glyphs/letters
@@ -326,7 +330,7 @@ static void slot_bg(float x, float y, float size) {
 }
 
 // textures from second_screen.c buffers
-static SDL_Texture *make_tex(int w, int h, const uint32_t *px, bool blend) {
+static SDL_Texture *make_tex(int w, int h, const void *px, bool blend) {
   SDL_Texture *t = SDL_CreateTexture(ss_r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, w, h);
   if (!t) return NULL;
   SDL_UpdateTexture(t, NULL, px, w * 4);
@@ -960,11 +964,17 @@ static SDL_Window *main_win;
 static bool ss_enabled;
 
 bool SecondScreenSDL_Init(SDL_Window *main_window) {
+#ifdef __3DS__
+  main_win = main_window;
+  ss_enabled = true;
+  return true;
+#else
   const char *env = SDL_getenv("ZELDA3_SECOND_SCREEN");
   if (!env || env[0] != '1') return false;
   main_win = main_window;
   ss_enabled = true;
   return true;
+#endif
 }
 
 // Create the bottom window lazily on the other display, after the game has
@@ -992,16 +1002,27 @@ static bool ensure_window(void) {
   if (!title || !title[0]) title = "Zelda3 Bottom Screen";
   ss_win = SDL_CreateWindow(title,
                             SDL_WINDOWPOS_CENTERED_DISPLAY(target),
-                            SDL_WINDOWPOS_CENTERED_DISPLAY(target), 640, 480,
+                            SDL_WINDOWPOS_CENTERED_DISPLAY(target),
+#ifdef __3DS__
+                            320, 240,
+#else
+                            640, 480,
+#endif
                             SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_BORDERLESS);
   if (!ss_win) {
     fprintf(stderr, "second screen: CreateWindow failed: %s\n", SDL_GetError());
+#ifdef __3DS__
+    Platform3DS_LogRuntime("ERROR bottom window: %s", SDL_GetError());
+#endif
     ss_enabled = false;
     return false;
   }
   ss_r = SDL_CreateRenderer(ss_win, -1, SDL_RENDERER_SOFTWARE);
   if (!ss_r) {
     fprintf(stderr, "second screen: CreateRenderer failed: %s\n", SDL_GetError());
+#ifdef __3DS__
+    Platform3DS_LogRuntime("ERROR bottom renderer: %s", SDL_GetError());
+#endif
     SDL_DestroyWindow(ss_win); ss_win = NULL;
     ss_enabled = false;
     return false;
@@ -1011,6 +1032,10 @@ static bool ensure_window(void) {
   if (W <= 0 || H <= 0) { W = 640; H = 480; }
   u = (W < H ? W : H) / 720.0f;
   printf("second screen: display %d of %d, %dx%d (u=%.2f)\n", target, n, W, H, u);
+#ifdef __3DS__
+  Platform3DS_LogRuntime("Bottom screen initialized: display %d of %d, %dx%d",
+                         target, n, W, H);
+#endif
   return true;
 }
 
@@ -1046,7 +1071,11 @@ static void handle_tap(float x, float y) {
       } else if (in_rect(&settings_row_r[1], x, y)) {
         bool on = !SS_IsWidescreen();
         SS_SetWidescreen(on);
+#ifdef __3DS__
+        update_ini("[General]", "ExtendedAspectRatio", on ? "extend_y, 5:3" : "extend_y, 4:3");
+#else
         update_ini("[General]", "ExtendedAspectRatio", on ? "16:9" : "4:3");
+#endif
       } else if (in_rect(&settings_row_r[2], x, y)) {
         bool hide = !SS_IsHudHidden();
         SS_SetHudHidden(hide);

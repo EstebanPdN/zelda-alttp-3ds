@@ -28,6 +28,9 @@
 #include "util.h"
 #include "audio.h"
 #include "android_logging.h"
+#ifdef __3DS__
+#include "platform_3ds.h"
+#endif
 
 static bool g_run_without_emu = 0;
 
@@ -46,10 +49,14 @@ static void HandleCommand(uint32 j, bool pressed);
 static int RemapSdlButton(int button);
 static void HandleGamepadInput(int button, bool pressed);
 static void HandleGamepadAxisInput(int gamepad_id, int axis, int value);
+#ifndef __3DS__
 static void OpenOneGamepad(int i);
+#endif
 static void HandleVolumeAdjustment(int volume_adjustment);
 static void LoadAssets();
+#ifndef __3DS__
 static void SwitchDirectory();
+#endif
 
 enum {
   kDefaultFullscreen = 0,
@@ -60,7 +67,11 @@ enum {
 };
 
 static const char kWindowTitle[] = "The Legend of Zelda: A Link to the Past";
+#ifdef __3DS__
+static uint32 g_win_flags = SDL_WINDOW_FULLSCREEN;
+#else
 static uint32 g_win_flags = SDL_WINDOW_RESIZABLE;
+#endif
 static SDL_Window *g_window;
 
 static uint8 g_paused, g_turbo, g_replay_turbo = true, g_cursor = true;
@@ -125,6 +136,7 @@ void ChangeWindowScale(int scale_step) {
 }
 
 #define RESIZE_BORDER 20
+#ifndef __3DS__
 static SDL_HitTestResult HitTestCallback(SDL_Window *win, const SDL_Point *pt, void *data) {
   uint32 flags = SDL_GetWindowFlags(win);
   if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0 || (flags & SDL_WINDOW_FULLSCREEN) != 0)
@@ -151,6 +163,7 @@ static SDL_HitTestResult HitTestCallback(SDL_Window *win, const SDL_Point *pt, v
   }
   return SDL_HITTEST_NORMAL;
 }
+#endif
 
 static void DrawPpuFrameWithPerf() {
   int render_scale = PpuGetCurrentRenderScale(g_zenv.ppu, g_ppu_render_flags);
@@ -332,7 +345,7 @@ static bool SdlRenderer_Init(SDL_Window *window) {
   SDL_GetRendererInfo(renderer, &renderer_info);
   if (kDebugFlag) {
     printf("Supported texture formats:");
-    for (int i = 0; i < renderer_info.num_texture_formats; i++)
+    for (Uint32 i = 0; i < renderer_info.num_texture_formats; i++)
       printf(" %s", SDL_GetPixelFormatName(renderer_info.texture_formats[i]));
     printf("\n");
   }
@@ -389,7 +402,11 @@ int ZeldaGetSnesHeight(void) {
 
 // Toggle the extended aspect ratio while running (game thread).
 void ZeldaSetWidescreen(bool enable) {
+#ifdef __3DS__
+  int extra = enable ? (g_snes_height * 5 / 3 - 256) / 2 : 0;
+#else
   int extra = enable ? (g_snes_height * 16 / 9 - 256) / 2 : 0;
+#endif
   g_config.extended_aspect_ratio = extra;
   g_zenv.ppu->extraLeftRight = UintMin(extra, kPpuExtraLeftRight);
   if (!enable)
@@ -422,14 +439,30 @@ int main(int argc, char** argv) {
     config_file = argv[1];
     argc -= 2, argv += 2;
   } else {
+#ifdef __3DS__
+    if (!Platform3DS_PrepareStorage())
+      return 0;
+#else
     SwitchDirectory();
+#endif
   }
 
   ParseConfigFile(config_file);
+#ifdef __3DS__
+  Platform3DS_ApplyConfig(&g_config);
+  Platform3DS_LogRuntime("Configuration loaded: %dx%d, software renderer, 5:3",
+                         g_config.window_width, g_config.window_height);
+#endif
   LoadAssets();
+#ifdef __3DS__
+  Platform3DS_LogRuntime("Assets loaded and validated");
+#endif
   LoadLinkGraphics();
 
   ZeldaInitialize();
+#ifdef __3DS__
+  Platform3DS_LogRuntime("Game engine initialized");
+#endif
   g_zenv.ppu->extraLeftRight = UintMin(g_config.extended_aspect_ratio, kPpuExtraLeftRight);
   g_snes_width = (g_config.extended_aspect_ratio * 2 + 256);
   g_snes_height = (g_config.extend_y ? 240 : 224);
@@ -468,13 +501,20 @@ int main(int argc, char** argv) {
   // set up SDL
   if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
     printf("Failed to init SDL: %s\n", SDL_GetError());
+#ifdef __3DS__
+    Platform3DS_LogRuntime("ERROR SDL_Init: %s", SDL_GetError());
+#endif
     return 1;
   }
+#ifdef __3DS__
+  Platform3DS_LogRuntime("SDL initialized");
+#endif
 
   bool custom_size  = g_config.window_width != 0 && g_config.window_height != 0;
   int window_width  = custom_size ? g_config.window_width  : g_current_window_scale * g_snes_width;
   int window_height = custom_size ? g_config.window_height : g_current_window_scale * g_snes_height;
 
+#ifndef __3DS__
   if (g_config.output_method == kOutputMethod_OpenGL ||
       g_config.output_method == kOutputMethod_OpenGL_ES) {
     g_win_flags |= SDL_WINDOW_OPENGL;
@@ -482,19 +522,41 @@ int main(int argc, char** argv) {
   } else {
     g_renderer_funcs = kSdlRendererFuncs;
   }
+#else
+  g_renderer_funcs = kSdlRendererFuncs;
+#endif
 
   SDL_Window* window = SDL_CreateWindow(kWindowTitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, window_width, window_height, g_win_flags);
   if(window == NULL) {
     printf("Failed to create window: %s\n", SDL_GetError());
+#ifdef __3DS__
+    Platform3DS_LogRuntime("ERROR top window: %s", SDL_GetError());
+#endif
     return 1;
   }
+#ifdef __3DS__
+  Platform3DS_LogRuntime("Top window created");
+#endif
   g_window = window;
+#ifndef __3DS__
   SDL_SetWindowHitTest(window, HitTestCallback, NULL);
+#endif
 
-  if (!g_renderer_funcs.Initialize(window))
+  if (!g_renderer_funcs.Initialize(window)) {
+#ifdef __3DS__
+    Platform3DS_LogRuntime("ERROR top renderer: %s", SDL_GetError());
+#endif
     return 1;
+  }
+#ifdef __3DS__
+  Platform3DS_LogRuntime("Top renderer initialized");
+#endif
 
-  SecondScreenSDL_Init(window);
+  if (!SecondScreenSDL_Init(window)) {
+#ifdef __3DS__
+    Platform3DS_LogRuntime("ERROR second screen initialization: %s", SDL_GetError());
+#endif
+  }
 
   SDL_AudioDeviceID device = 0;
   SDL_AudioSpec want = { 0 }, have;
@@ -510,11 +572,18 @@ int main(int argc, char** argv) {
     device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (device == 0) {
       printf("Failed to open audio device: %s\n", SDL_GetError());
+#ifdef __3DS__
+      Platform3DS_LogRuntime("ERROR audio device: %s", SDL_GetError());
+#endif
       return 1;
     }
     g_audio_channels = have.channels;
     g_frames_per_block = (534 * have.freq) / 32000;
     g_audiobuffer = malloc(g_frames_per_block * have.channels * sizeof(int16));
+#ifdef __3DS__
+    Platform3DS_LogRuntime("Audio initialized: %d Hz, %d channels, %d samples",
+                           have.freq, have.channels, have.samples);
+#endif
   }
 
   if (argc >= 1 && !g_run_without_emu)
@@ -527,9 +596,17 @@ int main(int argc, char** argv) {
 #endif
 
   ZeldaReadSram();
+#ifdef __3DS__
+  Platform3DS_LogRuntime("Entering main loop");
+#endif
 
-  for (int i = 0; i < SDL_NumJoysticks(); i++)
+#ifdef __3DS__
+  Platform3DS_LogRuntime("Native HID input enabled");
+#else
+  int joystick_count = SDL_NumJoysticks();
+  for (int i = 0; i < joystick_count; i++)
     OpenOneGamepad(i);
+#endif
 
   bool running = true;
   SDL_Event event;
@@ -547,7 +624,9 @@ int main(int argc, char** argv) {
         continue;
       switch(event.type) {
       case SDL_CONTROLLERDEVICEADDED:
+#ifndef __3DS__
         OpenOneGamepad(event.cdevice.which);
+#endif
         break;
       case SDL_CONTROLLERAXISMOTION:
         HandleGamepadAxisInput(event.caxis.which, event.caxis.axis, event.caxis.value);
@@ -595,10 +674,17 @@ int main(int argc, char** argv) {
     }
 
     // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
-    int inputs = g_input1_state;
+    int inputs;
+#ifdef __3DS__
+    bool turbo_held;
+    inputs = Platform3DS_ReadInput(&turbo_held);
+    g_turbo = turbo_held;
+#else
+    inputs = g_input1_state;
     if (g_input1_state & 0xf0)
       g_gamepad_buttons = 0;
     inputs |= g_gamepad_buttons;
+#endif
 
     extern void SecondScreen_RunFrameHook(void);
     SecondScreen_RunFrameHook();
@@ -803,6 +889,7 @@ static void HandleInput(int keyCode, int keyMod, bool pressed) {
     HandleCommand(j, pressed);
 }
 
+#ifndef __3DS__
 static void OpenOneGamepad(int i) {
   if (SDL_IsGameController(i)) {
     SDL_GameController *controller = SDL_GameControllerOpen(i);
@@ -810,6 +897,7 @@ static void OpenOneGamepad(int i) {
       fprintf(stderr, "Could not open gamepad %d: %s\n", i, SDL_GetError());
   }
 }
+#endif
 
 static int RemapSdlButton(int button) {
   switch (button) {
@@ -867,8 +955,11 @@ static float ApproximateAtan2(float y, float x) {
   uint32 sign_mask = 0x80000000;
   float b = 0.596227f;
   // Extract the sign bits
-  uint32 ux_s = sign_mask & *(uint32 *)&x;
-  uint32 uy_s = sign_mask & *(uint32 *)&y;
+  uint32 x_bits, y_bits;
+  memcpy(&x_bits, &x, sizeof(x_bits));
+  memcpy(&y_bits, &y, sizeof(y_bits));
+  uint32 ux_s = sign_mask & x_bits;
+  uint32 uy_s = sign_mask & y_bits;
   // Determine the quadrant offset
   float q = (float)((~ux_s & uy_s) >> 29 | ux_s >> 30);
   // Calculate the arctangent in the first quadrant
@@ -877,8 +968,12 @@ static float ApproximateAtan2(float y, float x) {
   float num = bxy_a + y * y;
   float atan_1q = num / (x * x + bxy_a + num + 0.000001f);
   // Translate it to the proper quadrant
-  uint32_t uatan_2q = (ux_s ^ uy_s) | *(uint32 *)&atan_1q;
-  return q + *(float *)&uatan_2q;
+  uint32_t atan_bits;
+  memcpy(&atan_bits, &atan_1q, sizeof(atan_bits));
+  uint32_t uatan_2q = (ux_s ^ uy_s) | atan_bits;
+  float atan_2q;
+  memcpy(&atan_2q, &uatan_2q, sizeof(atan_2q));
+  return q + atan_2q;
 }
 
 static void HandleGamepadAxisInput(int gamepad_id, int axis, int value) {
@@ -1019,6 +1114,7 @@ static void LoadAssets() {
 }
 
 // Go some steps up and find zelda3.ini
+#ifndef __3DS__
 static void SwitchDirectory() {
   char buf[4096];
   if (!getcwd(buf, sizeof(buf) - 32))
@@ -1043,6 +1139,7 @@ static void SwitchDirectory() {
       pos--;
   }
 }
+#endif
 
 MemBlk FindInAssetArray(int asset, int idx) {
   return FindIndexInMemblk((MemBlk) { g_asset_ptrs[asset], g_asset_sizes[asset] }, idx);

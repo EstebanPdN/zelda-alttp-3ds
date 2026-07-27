@@ -1,0 +1,124 @@
+BasicInfo:
+  Title: "Zelda 3DS"
+  ProductCode: "CTR-P-Z3DS"
+  Logo: Homebrew
+
+RomFs:
+  RootPath: $(APP_ROMFS)
+
+TitleInfo:
+  Category: Application
+  UniqueId: 0x5A13D
+
+Option:
+  UseOnSD: true
+  FreeProductCode: true
+  MediaFootPadding: false
+  EnableCrypt: false
+  EnableCompress: true
+
+AccessControlInfo:
+  CoreVersion: 2
+  DescVersion: 2
+  ReleaseKernelMajor: "02"
+  ReleaseKernelMinor: "33"
+  UseExtSaveData: false
+
+  FileSystemAccess:
+    - CategoryFileSystemTool
+    - DirectSdmc
+    - DirectSdmcWrite
+
+  MemoryType: Application
+  SystemMode: 64MB
+  IdealProcessor: 0
+  AffinityMask: 1
+  Priority: 16
+  MaxCpu: 0x9E
+  HandleTableSize: 0x200
+  DisableDebug: false
+  EnableForceDebug: false
+  CanWriteSharedPage: true
+  CanUsePrivilegedPriority: false
+  CanUseNonAlphabetAndNumber: true
+  PermitMainFunctionArgument: true
+  CanShareDeviceMemory: true
+  RunnableOnSleep: false
+  SpecialMemoryArrange: true
+
+  SystemModeExt: Legacy
+  CpuSpeed: 804MHz
+  EnableL2Cache: true
+  CanAccessCore2: false
+
+  IORegisterMapping:
+    - 1ff00000-1ff7ffff
+  MemoryMapping:
+    - 1f000000-1f5fffff:r
+
+  SystemCallAccess:
+    ControlMemory: 1
+    QueryMemory: 2
+    ExitProcess: 3
+    CreateThread: 8
+    ExitThread: 9
+    SleepThread: 10
+    GetThreadPriority: 11
+    SetThreadPriority: 12
+    CreateMutex: 19
+    ReleaseMutex: 20
+    CreateSemaphore: 21
+    ReleaseSemaphore: 22
+    CreateEvent: 23
+    SignalEvent: 24
+    ClearEvent: 25
+    CreateTimer: 26
+    SetTimer: 27
+    CancelTimer: 28
+    ClearTimer: 29
+    CreateMemoryBlock: 30
+    MapMemoryBlock: 31
+    UnmapMemoryBlock: 32
+    CreateAddressArbiter: 33
+    ArbitrateAddress: 34
+    CloseHandle: 35
+    WaitSynchronization1: 36
+    WaitSynchronizationN: 37
+    DuplicateHandle: 39
+    GetSystemTick: 40
+    GetHandleInfo: 41
+    GetSystemInfo: 42
+    GetProcessInfo: 43
+    GetThreadInfo: 44
+    ConnectToPort: 45
+    SendSyncRequest1: 46
+    SendSyncRequest2: 47
+    SendSyncRequest3: 48
+    SendSyncRequest4: 49
+    SendSyncRequest: 50
+    GetResourceLimit: 56
+    GetResourceLimitLimitValues: 57
+    GetResourceLimitCurrentValues: 58
+    Break: 60
+    OutputDebugString: 61
+
+  ServiceAccessControl:
+    - APT:U
+    - cfg:u
+    - dsp::DSP
+    - fs:USER
+    - gsp::Gpu
+    - hid:USER
+    - ptm:u
+
+SystemControlInfo:
+  SaveDataSize: 0KB
+  RemasterVersion: 1
+  StackSize: 0x40000
+
+  Dependency:
+    cfg: 0x0004013000001702
+    dsp: 0x0004013000001a02
+    gsp: 0x0004013000001c02
+    hid: 0x0004013000001d02
+    ptm: 0x0004013000002202
