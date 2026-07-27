@@ -30,6 +30,12 @@ void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode);
 bool Platform3DS_TakeQuickDumpRequest(void);
 int Platform3DS_GetTurboMultiplier(void);
 void Platform3DS_SetTurboMultiplier(int multiplier);
+bool Platform3DS_InitTopPresenter(void);
+void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
+                                 int width, int height);
+void Platform3DS_WaitForVBlank(void);
+void Platform3DS_RecordFrameTiming(uint32_t top_work_us,
+                                   uint32_t total_work_us);
 bool Platform3DS_CreateDumpDirectory(char *out, size_t out_size);
 bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8_t *pixels,
                                  int pitch, int width, int height);

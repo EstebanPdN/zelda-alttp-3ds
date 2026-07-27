@@ -28,6 +28,15 @@ static enum Platform3DSDisplayMode g_display_mode =
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_quick_dump_requested;
+static bool g_is_new_3ds;
+static bool g_core1_time_enabled;
+static uint64_t g_frame_timing_samples;
+static uint64_t g_top_work_total_us;
+static uint64_t g_total_work_total_us;
+static uint64_t g_top_frames_over_budget;
+static uint64_t g_total_frames_over_budget;
+static uint32_t g_top_work_max_us;
+static uint32_t g_total_work_max_us;
 
 static void LogSetup(const char *format, ...) {
   FILE *log = fopen("setup-progress.txt", "ab");
@@ -203,6 +212,116 @@ void Platform3DS_SetTurboMultiplier(int multiplier) {
     multiplier = 5;
   g_turbo_multiplier = multiplier;
   Platform3DS_LogRuntime("Turbo multiplier set: %d", g_turbo_multiplier);
+}
+
+bool Platform3DS_InitTopPresenter(void) {
+  bool is_new_3ds = false;
+  if (R_SUCCEEDED(APT_CheckNew3DS(&is_new_3ds)))
+    g_is_new_3ds = is_new_3ds;
+
+  // This is a no-op on Old 3DS and enables 804 MHz operation for 3DSX builds
+  // on New 3DS. CIA builds also request the faster clock in their exheader.
+  osSetSpeedupEnable(true);
+
+  // Give SDL's audio worker access to a small share of the system core. Its
+  // 3DS thread backend uses an all-core affinity, so this reduces contention
+  // with game logic and PPU rendering on the application core.
+  g_core1_time_enabled = R_SUCCEEDED(APT_SetAppCpuTimeLimit(20));
+
+  // Zelda's source image is derived from the SNES 15-bit palette. RGB565 keeps
+  // that detail while halving the top framebuffer bandwidth versus RGBA8.
+  gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);
+  gfxSetDoubleBuffering(GFX_TOP, true);
+
+  g_frame_timing_samples = 0;
+  g_top_work_total_us = 0;
+  g_total_work_total_us = 0;
+  g_top_frames_over_budget = 0;
+  g_total_frames_over_budget = 0;
+  g_top_work_max_us = 0;
+  g_total_work_max_us = 0;
+  Platform3DS_LogRuntime(
+    "Top presenter: native RGB565, New 3DS=%s, Core 1 audio budget=%s",
+    g_is_new_3ds ? "yes" : "no",
+    g_core1_time_enabled ? "20%" : "unavailable");
+  return gfxGetScreenFormat(GFX_TOP) == GSP_RGB565_OES;
+}
+
+static inline uint16_t ARGB8888ToRGB565(uint32_t color) {
+  return (uint16_t)(((color >> 8) & 0xf800) |
+                    ((color >> 5) & 0x07e0) |
+                    ((color >> 3) & 0x001f));
+}
+
+void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
+                                 int width, int height) {
+  if (!pixels || pitch < width * 4 || width <= 0 || height <= 0)
+    return;
+
+  u16 native_width = 0;
+  u16 native_height = 0;
+  uint16_t *framebuffer = (uint16_t *)gfxGetFramebuffer(
+    GFX_TOP, GFX_LEFT, &native_width, &native_height);
+  if (!framebuffer || native_width == 0 || native_height == 0)
+    return;
+
+  const int output_width = native_height;
+  const int output_height = native_width;
+  const int copy_height = height < output_height ? height : output_height;
+  const int y_offset = (output_height - copy_height) / 2;
+  const enum Platform3DSDisplayMode mode = g_display_mode;
+  const int x_offset = (output_width - width) / 2;
+
+  for (int x = 0; x < output_width; x++) {
+    int source_x = -1;
+    if (mode == kPlatform3DSDisplayStretch) {
+      source_x = x * width / output_width;
+    } else if (x >= x_offset && x < x_offset + width) {
+      source_x = x - x_offset;
+    }
+
+    uint16_t *destination = framebuffer + x * output_height;
+    if (source_x < 0 || source_x >= width) {
+      memset(destination, 0, (size_t)output_height * sizeof(*destination));
+      continue;
+    }
+
+    if (y_offset > 0) {
+      memset(destination, 0, (size_t)y_offset * sizeof(*destination));
+      memset(destination + y_offset + copy_height, 0,
+             (size_t)(output_height - y_offset - copy_height) *
+               sizeof(*destination));
+    }
+
+    const uint8_t *source = pixels + source_x * 4;
+    uint16_t *out = destination + output_height - y_offset - 1;
+    for (int y = 0; y < copy_height; y++, source += pitch)
+      *out-- = ARGB8888ToRGB565(*(const uint32_t *)source);
+  }
+
+  GSPGPU_FlushDataCache(framebuffer,
+                        (size_t)output_width * output_height *
+                          sizeof(*framebuffer));
+  gfxScreenSwapBuffers(GFX_TOP, false);
+}
+
+void Platform3DS_WaitForVBlank(void) {
+  gspWaitForVBlank();
+}
+
+void Platform3DS_RecordFrameTiming(uint32_t top_work_us,
+                                   uint32_t total_work_us) {
+  g_frame_timing_samples++;
+  g_top_work_total_us += top_work_us;
+  g_total_work_total_us += total_work_us;
+  if (top_work_us > g_top_work_max_us)
+    g_top_work_max_us = top_work_us;
+  if (total_work_us > g_total_work_max_us)
+    g_total_work_max_us = total_work_us;
+  if (top_work_us > 16667)
+    g_top_frames_over_budget++;
+  if (total_work_us > 16667)
+    g_total_frames_over_budget++;
 }
 
 static bool HasExtension(const char *name, const char *extension) {
@@ -655,6 +774,29 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "SRAM bytes: %lu\n", (unsigned long)sram_size);
     fprintf(info, "VRAM words: %lu\n", (unsigned long)vram_words);
     fprintf(info, "Display mode: %d\n", (int)g_display_mode);
+    fprintf(info, "Top presenter: native RGB565\n");
+    fprintf(info, "New 3DS speedup requested: %s\n",
+            g_is_new_3ds ? "yes" : "no");
+    fprintf(info, "Core 1 audio budget: %s\n",
+            g_core1_time_enabled ? "20%" : "unavailable");
+    fprintf(info, "Frame timing samples: %llu\n",
+            (unsigned long long)g_frame_timing_samples);
+    if (g_frame_timing_samples != 0) {
+      fprintf(info, "Average top frame work: %llu us\n",
+              (unsigned long long)(g_top_work_total_us /
+                                   g_frame_timing_samples));
+      fprintf(info, "Maximum top frame work: %lu us\n",
+              (unsigned long)g_top_work_max_us);
+      fprintf(info, "Top frames over 16.67 ms: %llu\n",
+              (unsigned long long)g_top_frames_over_budget);
+      fprintf(info, "Average total frame work: %llu us\n",
+              (unsigned long long)(g_total_work_total_us /
+                                   g_frame_timing_samples));
+      fprintf(info, "Maximum total frame work: %lu us\n",
+              (unsigned long)g_total_work_max_us);
+      fprintf(info, "Total frames over 16.67 ms: %llu\n",
+              (unsigned long long)g_total_frames_over_budget);
+    }
     if (g_turbo_multiplier > 0)
       fprintf(info, "Turbo speed: x%d\n", g_turbo_multiplier);
     else

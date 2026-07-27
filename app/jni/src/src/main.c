@@ -5,6 +5,9 @@
 #include <stdbool.h>
 #include <math.h>
 #include <SDL.h>
+#ifdef __3DS__
+#include <malloc.h>
+#endif
 #ifdef _WIN32
 #include "platform/win32/volume_control.h"
 #include <direct.h>
@@ -234,6 +237,13 @@ static void SDLCALL AudioCallback(void *userdata, Uint8 *stream, int len) {
 static SDL_Renderer *g_renderer;
 static SDL_Texture *g_texture;
 static SDL_Rect g_sdl_renderer_rect;
+#ifdef __3DS__
+static uint8 *g_3ds_top_pixels;
+enum {
+  k3DSTopWidth = 400,
+  k3DSTopHeight = 240,
+};
+#endif
 
 // ---- CRT filter (scanlines + a subtle rgb mask), sdl renderer ----
 // Two multiply overlays instead of one full screen one: a 1px wide column with
@@ -340,8 +350,21 @@ static bool SdlRenderer_Init(SDL_Window *window) {
     fprintf(stderr, "Warning: Shaders are supported only with the OpenGL backend\n");
 
 #ifdef __3DS__
+  (void)window;
+  g_3ds_top_pixels = memalign(64, k3DSTopWidth * k3DSTopHeight * 4);
+  if (!g_3ds_top_pixels) {
+    SDL_SetError("Unable to allocate native 3DS top framebuffer");
+    return false;
+  }
+  if (!Platform3DS_InitTopPresenter()) {
+    free(g_3ds_top_pixels);
+    g_3ds_top_pixels = NULL;
+    SDL_SetError("Unable to initialize native 3DS top presenter");
+    return false;
+  }
+  return true;
+#else
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
-#endif
   SDL_Renderer *renderer = SDL_CreateRenderer(g_window, -1,
                                               g_config.output_method == kOutputMethod_SDLSoftware ? SDL_RENDERER_SOFTWARE :
                                               SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -372,25 +395,47 @@ static bool SdlRenderer_Init(SDL_Window *window) {
   }
   SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeNearest);
   return true;
+#endif
 }
 
 static void SdlRenderer_Destroy() {
+#ifdef __3DS__
+  free(g_3ds_top_pixels);
+  g_3ds_top_pixels = NULL;
+#else
   CrtFilter_Free();
   SDL_DestroyTexture(g_texture);
   SDL_DestroyRenderer(g_renderer);
+#endif
 }
 
 static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pitch) {
   g_sdl_renderer_rect.w = width;
   g_sdl_renderer_rect.h = height;
+#ifdef __3DS__
+  if (width > k3DSTopWidth || height > k3DSTopHeight) {
+    *pixels = NULL;
+    *pitch = 0;
+    return;
+  }
+  *pixels = g_3ds_top_pixels;
+  *pitch = width * 4;
+#else
   if (SDL_LockTexture(g_texture, &g_sdl_renderer_rect, (void **)pixels, pitch) != 0) {
     printf("Failed to lock texture: %s\n", SDL_GetError());
     return;
   }
+#endif
 }
 
 static void SdlRenderer_EndDraw() {
 
+#ifdef __3DS__
+  Platform3DS_PresentTopFrame(g_3ds_top_pixels,
+                              g_sdl_renderer_rect.w * 4,
+                              g_sdl_renderer_rect.w,
+                              g_sdl_renderer_rect.h);
+#else
 //  uint64 before = SDL_GetPerformanceCounter();
   SDL_UnlockTexture(g_texture);
 //  uint64 after = SDL_GetPerformanceCounter();
@@ -401,6 +446,7 @@ static void SdlRenderer_EndDraw() {
   if (g_config.crt_filter)
     CrtFilter_Draw();
   SDL_RenderPresent(g_renderer); // vsyncs to 60 FPS?
+#endif
 }
 
 // The snes height of the frame being drawn; the ppu buffer can be a multiple
@@ -650,13 +696,12 @@ int main(int argc, char** argv) {
 
   bool running = true;
   SDL_Event event;
+#ifndef __3DS__
   uint32 lastTick = SDL_GetTicks();
   uint32 curTick = 0;
+#endif
   uint32 frameCtr = 0;
   bool audiopaused = true;
-#ifdef __3DS__
-  uint32 nextLogicTick = SDL_GetTicks();
-#endif
 
   if (g_config.autosave)
     HandleCommand(kKeys_Load + 0, true);
@@ -720,6 +765,7 @@ int main(int argc, char** argv) {
     bool is_replay = false;
     int rendered_logic_frames = 1;
 #ifdef __3DS__
+    uint64 frame_work_start = SDL_GetPerformanceCounter();
     bool turbo_held;
     int turbo_multiplier;
     inputs = Platform3DS_ReadInput(&turbo_held, &turbo_multiplier);
@@ -727,22 +773,11 @@ int main(int argc, char** argv) {
     if (Platform3DS_TakeQuickDumpRequest())
       SecondScreenSDL_RequestDump();
     g_turbo = turbo_held;
-    uint32 now = SDL_GetTicks();
-    if (now - nextLogicTick > 250)
-      nextLogicTick = now;
-    static const uint8 logic_delays[3] = { 17, 17, 16 };
-    int frames_due = 0;
-    while ((int32)(now - nextLogicTick) >= 0 && frames_due < 5) {
-      nextLogicTick += logic_delays[(frameCtr + frames_due) % 3];
-      frames_due++;
-    }
-    if (frames_due == 0) {
-      SDL_Delay(1);
-      continue;
-    }
-    int frames_to_run = frames_due * (g_turbo ? turbo_multiplier : 1);
-    if (frames_to_run > 20)
-      frames_to_run = 20;
+    int frames_to_run = g_turbo ? turbo_multiplier : 1;
+    if (frames_to_run < 1)
+      frames_to_run = 1;
+    if (frames_to_run > 5)
+      frames_to_run = 5;
     rendered_logic_frames = frames_to_run;
     for (int i = 0; i < frames_to_run; i++) {
       extern void SecondScreen_RunFrameHook(void);
@@ -775,7 +810,21 @@ int main(int argc, char** argv) {
 #endif
 
     DrawPpuFrameWithPerf();
+#ifdef __3DS__
+    uint64 top_work_ticks = SDL_GetPerformanceCounter() - frame_work_start;
+#endif
     SecondScreenSDL_Update(rendered_logic_frames);
+
+#ifdef __3DS__
+    uint64 total_work_ticks = SDL_GetPerformanceCounter() - frame_work_start;
+    uint64 performance_frequency = SDL_GetPerformanceFrequency();
+    uint32 top_work_us = performance_frequency != 0 ?
+      (uint32)(top_work_ticks * 1000000ull / performance_frequency) : 0;
+    uint32 total_work_us = performance_frequency != 0 ?
+      (uint32)(total_work_ticks * 1000000ull / performance_frequency) : 0;
+    Platform3DS_RecordFrameTiming(top_work_us, total_work_us);
+    Platform3DS_WaitForVBlank();
+#else
 
     if (g_config.display_perf_title) {
       char title[60];
@@ -802,6 +851,7 @@ int main(int argc, char** argv) {
         lastTick = curTick;
       }
     }
+#endif
   }
   if (g_config.autosave)
     HandleCommand(kKeys_Save + 0, true);

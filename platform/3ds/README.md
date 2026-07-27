@@ -20,7 +20,7 @@ console's own firmware through Rosalina's `Dump DSP firmware` command.
 
 ## Display and controls
 
-- Top screen: 400x240 software-rendered gameplay at 5:3.
+- Top screen: 400x240 gameplay at 5:3 through a native RGB565 presenter.
 - Bottom screen: 320x240 live map, gear, touch inventory and settings.
 - D-Pad or Circle Pad: movement.
 - A/B/X/Y, L/R, Start and Select: corresponding game buttons.
@@ -29,12 +29,16 @@ console's own firmware through Rosalina's `Dump DSP firmware` command.
 
 The CIA metadata uses the Legacy memory mode for Old 3DS compatibility and
 requests the New 3DS 804 MHz/L2 configuration when that hardware is available.
+The 3DSX also requests New 3DS speedup at runtime. Normal gameplay advances
+once per VBlank, while the bottom UI redraws at 30 FPS. Quick-dump `info.txt`
+files include average/max frame work time and the number of frames that exceed
+the 16.67 ms budget.
 
-The HOME Menu metadata is versioned for every release. v1.6 uses:
+The HOME Menu metadata is versioned for every release. v1.7 uses:
 
 ```text
 Short name: Zelda ALttP 3DS
-Long name:  Zelda A Link to the Past 3DS v1.6
+Long name:  Zelda A Link to the Past 3DS v1.7
 ```
 
 The CIA banner prefers `assets/banner.cgfx` when present. v1.6 uses a real
