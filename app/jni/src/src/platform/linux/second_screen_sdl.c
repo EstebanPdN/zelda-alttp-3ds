@@ -643,19 +643,8 @@ static void draw_items(RectFS r) {
 
 static void draw_gear(RectFS r) {
   menu_box(r, COL_BOX_BORDER2);
-  draw_text("GEAR", r.x + r.w / 2 - text_width("GEAR", 2.6f * u) / 2,
-            r.y + 16 * u, 2.6f * u);
-
-  float pad = 18 * u;
-  float gap = 8 * u;
-  float inner_w = r.w - 2 * pad;
-  float cell = (inner_w - 3 * gap) / 4.0f;
-  if (cell > 38 * u) cell = 38 * u;
-  if (cell < 25 * u) cell = 25 * u;
-  float grid_w = cell * 4 + gap * 3;
-  float x0 = r.x + (r.w - grid_w) / 2;
-  float y0 = r.y + 42 * u;
-  float icon_s = clampf((cell - 10 * u) / 16.0f, 1.3f * u, 3.0f * u);
+  draw_text("GEAR", r.x + r.w / 2 - text_width("GEAR", 2.2f * u) / 2,
+            r.y + 13 * u, 2.2f * u);
 
   int sword = sram8(0x59), shield = sram8(0x5A);
   int gear_cells[7];
@@ -666,66 +655,75 @@ static void draw_gear(RectFS r) {
   gear_cells[4] = sram8(0x55) > 0 ? SS_ICON_BOOTS_1 : -1;
   gear_cells[5] = sram8(0x56) > 0 ? SS_ICON_FLIPPERS_1 : -1;
   gear_cells[6] = sram8(0x57) > 0 ? SS_ICON_MOONPEARL_1 : -1;
+
+  float cell = 30.0f;
+  float gap = 7.0f;
+  float row_w = 7 * cell + 6 * gap;
+  if (row_w > r.w - 22) {
+    gap = 5.0f;
+    cell = (r.w - 22 - 6 * gap) / 7.0f;
+  }
+  float x0 = r.x + (r.w - (7 * cell + 6 * gap)) / 2;
+  float y0 = r.y + 30.0f;
+  float icon_s = clampf((cell - 5.0f) / 16.0f, 1.25f, 1.75f);
+
   for (int i = 0; i < 7; i++) {
-    int col = i % 4, row = i / 4;
-    float x = x0 + col * (cell + gap);
-    float y = y0 + row * (cell + gap);
+    float x = x0 + i * (cell + gap);
+    float y = y0;
     slot_bg(x, y, cell);
     if (gear_cells[i] >= 0)
       draw_icon(gear_cells[i], x + (cell - 16 * icon_s) / 2,
                 y + (cell - 16 * icon_s) / 2, icon_s);
   }
 
-  float y1 = y0 + 2 * cell + gap + 12 * u;
-  float bottle_cell = cell * 0.78f;
-  float bottle_gap = 7 * u;
-  draw_text("BOTTLES", x0, y1 - 13 * u, 1.5f * u);
+  float y1 = y0 + cell + 24.0f;
+  float bottle_cell = 25.0f;
+  float bottle_gap = 7.0f;
+  draw_text("BOTTLES", x0, y1 - 12.0f, 1.25f * u);
   for (int i = 0; i < 4; i++) {
     float x = x0 + i * (bottle_cell + bottle_gap);
     slot_bg(x, y1, bottle_cell);
     int lv = sram8(0x5C + i);
     if (lv > 7) lv = 7;
     if (lv > 0) {
-      float bs = clampf((bottle_cell - 8 * u) / 16.0f, 1.2f * u, 2.6f * u);
+      float bs = clampf((bottle_cell - 5.0f) / 16.0f, 1.15f, 1.35f);
       draw_icon(SS_ICON_BOTTLE_1 + (lv - 1),
                 x + (bottle_cell - 16 * bs) / 2,
                 y1 + (bottle_cell - 16 * bs) / 2, bs);
     }
   }
-  float pend_x = x0 + grid_w - 78 * u;
-  draw_text("PENDANTS", pend_x, y1 - 13 * u, 1.5f * u);
+  float pend_x = r.x + r.w - 108.0f;
+  draw_text("PENDANTS", pend_x, y1 - 12.0f, 1.25f * u);
   int pend = sram8(0x74);
   static const int pbit[3] = {4, 2, 1};
   static const uint32_t pcol[3] = {COL(64, 200, 88), COL(70, 110, 240), COL(230, 60, 60)};
   for (int i = 0; i < 3; i++) {
-    float cxp = pend_x + i * 25 * u + 9 * u;
-    float cyp = y1 + bottle_cell * 0.52f;
-    fill_circle(cxp, cyp, 8.5f * u, (pend & pbit[i]) ? pcol[i] : COL(34, 34, 34));
-    stroke_circle(cxp, cyp, 8.5f * u, 2 * u, COL_GOLD_DARK);
+    float cxp = pend_x + i * 28.0f + 13.0f;
+    float cyp = y1 + 13.0f;
+    fill_circle(cxp, cyp, 8.0f, (pend & pbit[i]) ? pcol[i] : COL(34, 34, 34));
+    stroke_circle(cxp, cyp, 8.0f, 2.0f, COL_GOLD_DARK);
   }
 
-  float cyC = y1 + bottle_cell + 22 * u;
-  draw_text("CRYSTALS", x0, cyC - 13 * u, 1.5f * u);
-  float crystal_start = x0 + 62 * u;
-  float crystal_step = (x0 + grid_w - crystal_start - 12 * u) / 6.0f;
-  if (crystal_step < 13 * u) crystal_step = 13 * u;
-  if (crystal_step > 20 * u) crystal_step = 20 * u;
+  float cyC = y1 + 49.0f;
+  draw_text("CRYSTALS", x0, cyC - 12.0f, 1.25f * u);
+  float crystal_start = x0 + 78.0f;
+  float crystal_step = 23.0f;
   int owned7 = sram8(0x7A) & 0x7F, n_owned = 0;
   while (owned7) { n_owned += owned7 & 1; owned7 >>= 1; }
   for (int i = 0; i < 7; i++) {
     float cxp = crystal_start + i * crystal_step;
-    float cyp = cyC + 2 * u;
-    fill_circle(cxp, cyp, 7.5f * u, i < n_owned ? COL(110, 160, 255) : COL(34, 34, 34));
-    stroke_circle(cxp, cyp, 7.5f * u, 2 * u, COL_GOLD_DARK);
+    float cyp = cyC;
+    fill_circle(cxp, cyp, 7.0f, i < n_owned ? COL(110, 160, 255) : COL(34, 34, 34));
+    stroke_circle(cxp, cyp, 7.0f, 2.0f, COL_GOLD_DARK);
   }
 
-  float yp = cyC + 20 * u;
-  draw_glyph(SS_GLYPH_HEART_FULL, x0, yp - 4 * u, 3.5f * u);
+  float yp = cyC + 25.0f;
+  draw_glyph(SS_GLYPH_HEART_FULL, x0, yp - 3.0f, 1.7f);
   int pieces = sram8(0x6B) & 3;
   for (int i = 0; i < 4; i++) {
-    float gx = x0 + 42 * u + i * 27 * u, gy = yp;
-    fill_round(gx - 2 * u, gy - 2 * u, 21 * u, 21 * u, 5 * u, COL_GOLD_DARK);
-    fill_round(gx, gy, 17 * u, 17 * u, 4 * u, i < pieces ? COL(235, 80, 80) : COL(40, 34, 30));
+    float gx = x0 + 34.0f + i * 25.0f, gy = yp;
+    fill_round(gx - 2.0f, gy - 2.0f, 20.0f, 20.0f, 5.0f, COL_GOLD_DARK);
+    fill_round(gx, gy, 16.0f, 16.0f, 4.0f, i < pieces ? COL(235, 80, 80) : COL(40, 34, 30));
   }
 }
 
@@ -1017,6 +1015,27 @@ static void draw_tab_bar(float tab_h) {
 
 // public API
 
+static void request_dump_now(void) {
+  char dump_dir[160] = {0};
+#ifdef __3DS__
+  if (Platform3DS_CreateDumpDirectory(dump_dir, sizeof(dump_dir)) && ss_r) {
+    int bw = W, bh = H, pitch = bw * 4;
+    uint8_t *pixels = malloc((size_t)pitch * (size_t)bh);
+    if (pixels) {
+      if (SDL_RenderReadPixels(ss_r, NULL, SDL_PIXELFORMAT_ARGB8888,
+                               pixels, pitch) == 0) {
+        char path[192];
+        snprintf(path, sizeof(path), "%s/bottom-screen.bmp", dump_dir);
+        Platform3DS_SaveARGB8888Bmp(path, pixels, pitch, bw, bh);
+      }
+      free(pixels);
+    }
+  }
+#endif
+  SS_RequestMemoryDump(dump_dir);
+  dump_flash_until = SDL_GetTicks() + 1200;
+}
+
 static SDL_Window *main_win;
 static bool ss_enabled;
 
@@ -1032,6 +1051,12 @@ bool SecondScreenSDL_Init(SDL_Window *main_window) {
   ss_enabled = true;
   return true;
 #endif
+}
+
+void SecondScreenSDL_RequestDump(void) {
+  if (!ss_enabled)
+    return;
+  request_dump_now();
 }
 
 // Create the bottom window lazily on the other display, after the game has
@@ -1162,24 +1187,7 @@ static void handle_tap(float x, float y) {
         SS_GetGamepadControls(pad_controls);
         remap_mode = true;
       } else if (in_rect(&settings_row_r[4], x, y)) {
-        char dump_dir[160] = {0};
-#ifdef __3DS__
-        if (Platform3DS_CreateDumpDirectory(dump_dir, sizeof(dump_dir)) && ss_r) {
-          int bw = W, bh = H, pitch = bw * 4;
-          uint8_t *pixels = malloc((size_t)pitch * (size_t)bh);
-          if (pixels) {
-            if (SDL_RenderReadPixels(ss_r, NULL, SDL_PIXELFORMAT_ARGB8888,
-                                     pixels, pitch) == 0) {
-              char path[192];
-              snprintf(path, sizeof(path), "%s/bottom-screen.bmp", dump_dir);
-              Platform3DS_SaveARGB8888Bmp(path, pixels, pitch, bw, bh);
-            }
-            free(pixels);
-          }
-        }
-#endif
-        SS_RequestMemoryDump(dump_dir);
-        dump_flash_until = SDL_GetTicks() + 1200;
+        request_dump_now();
       } else if (in_rect(&settings_row_r[5], x, y)) {
         SS_RequestRestart();
       }
@@ -1266,7 +1274,7 @@ void SecondScreenSDL_Handle3DSTouch(void) {
 #endif
 }
 
-void SecondScreenSDL_Update(void) {
+void SecondScreenSDL_Update(int logic_frames) {
   if (!ss_enabled) return;
   static uint32_t frame_no;
   frame_no++;
@@ -1275,8 +1283,10 @@ void SecondScreenSDL_Update(void) {
     if (!ensure_window()) return;  // disables itself on failure
   }
 #ifdef __3DS__
-  if (frame_no % 3) return;   // 20fps; smoother map while keeping present cost bounded.
+  int divisor = logic_frames <= 1 ? 2 : 6;  // 30fps when caught up, 10fps when catching up.
+  if (frame_no % divisor) return;
 #else
+  (void)logic_frames;
   if (frame_no & 1) return;   // UI renders at 30fps
 #endif
 
@@ -1356,7 +1366,10 @@ void SecondScreenSDL_Update(void) {
              dungeon_mode ? COL_BG_STONE : COL_BG_MENU);
   float tab_h = 84 * u;
   float side_w = 200 * u;
-  map_area_r = (RectFS){10 * u, 10 * u, W - side_w - 14 * u, H - tab_h - 14 * u};
+  bool gear_full_width = tab == TAB_GEAR;
+  map_area_r = gear_full_width ?
+    (RectFS){10 * u, 10 * u, W - 20 * u, H - tab_h - 14 * u} :
+    (RectFS){10 * u, 10 * u, W - side_w - 14 * u, H - tab_h - 14 * u};
 
   if (tab == TAB_ITEMS)      draw_items(map_area_r);
   else if (tab == TAB_GEAR)  draw_gear(map_area_r);
@@ -1364,7 +1377,8 @@ void SecondScreenSDL_Update(void) {
   else if (dungeon_mode)     draw_dungeon(map_area_r, link_x, link_y, area & 0xFF, dungeon_info);
   else                       draw_overworld(map_area_r, link_x, link_y, area);
 
-  draw_sidebar(W - side_w + 4 * u, 10 * u, side_w - 14 * u, H - tab_h - 14 * u, dungeon_mode);
+  if (!gear_full_width)
+    draw_sidebar(W - side_w + 4 * u, 10 * u, side_w - 14 * u, H - tab_h - 14 * u, dungeon_mode);
   draw_tab_bar(tab_h);
 
   SDL_RenderPresent(ss_r);

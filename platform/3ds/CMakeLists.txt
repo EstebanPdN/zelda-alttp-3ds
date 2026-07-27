@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(zelda3_3ds VERSION 1.3 LANGUAGES C)
+project(zelda3_3ds VERSION 1.4 LANGUAGES C)
 
 set(ZELDA3_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(ZELDA3_NATIVE "${ZELDA3_ROOT}/app/jni/src")
@@ -52,7 +52,7 @@ target_include_directories(zelda3-3ds PRIVATE
 
 target_compile_definitions(zelda3-3ds PRIVATE
   SYSTEM_VOLUME_MIXER_AVAILABLE=0
-  ZELDA3_3DS_VERSION=\"1.3\"
+  ZELDA3_3DS_VERSION=\"1.4\"
 )
 
 target_compile_options(zelda3-3ds PRIVATE
@@ -89,14 +89,14 @@ set(ZELDA3_SMDH "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds.smdh")
 ctr_generate_smdh(
   OUTPUT "${ZELDA3_SMDH}"
   NAME "Zelda 3DS"
-  DESCRIPTION "Zelda3 dual-screen v1.3"
+  DESCRIPTION "Zelda3 dual-screen v1.4"
   AUTHOR "snesrev, samyost1, 3DS port"
   ICON "${CMAKE_CURRENT_LIST_DIR}/assets/icon.png"
 )
 
 ctr_create_3dsx(zelda3-3ds-3dsx
   TARGET zelda3-3ds
-  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v1.3.3dsx"
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v1.4.3dsx"
   SMDH "${ZELDA3_SMDH}"
   ROMFS "${ZELDA3_ROMFS}"
 )

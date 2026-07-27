@@ -27,6 +27,7 @@ static enum Platform3DSDisplayMode g_display_mode =
   kPlatform3DSDisplayUltraWideMod;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
+static bool g_quick_dump_requested;
 
 static void LogSetup(const char *format, ...) {
   FILE *log = fopen("setup-progress.txt", "ab");
@@ -60,6 +61,13 @@ static bool CStickIsHeld(u32 keys) {
 uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   hidScanInput();
   u32 keys = hidKeysHeld();
+  static bool quick_dump_combo_was_held;
+  bool quick_dump_combo =
+    (keys & (KEY_L | KEY_R | KEY_A)) == (KEY_L | KEY_R | KEY_A);
+  if (quick_dump_combo && !quick_dump_combo_was_held)
+    g_quick_dump_requested = true;
+  quick_dump_combo_was_held = quick_dump_combo;
+
   circlePosition circle;
   hidCircleRead(&circle);
 
@@ -70,7 +78,7 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   if ((keys & KEY_DRIGHT) || circle.dx > 40) input |= 1u << 7;
   if (keys & KEY_SELECT) input |= 1u << 2;
   if (keys & KEY_START) input |= 1u << 3;
-  if (keys & KEY_A) input |= 1u << 8;
+  if ((keys & KEY_A) && !quick_dump_combo) input |= 1u << 8;
   if (keys & KEY_B) input |= 1u << 0;
   if (keys & KEY_X) input |= 1u << 9;
   if (keys & KEY_Y) input |= 1u << 1;
@@ -178,6 +186,12 @@ void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode) {
 
 int Platform3DS_GetTurboMultiplier(void) {
   return g_turbo_multiplier;
+}
+
+bool Platform3DS_TakeQuickDumpRequest(void) {
+  bool requested = g_quick_dump_requested;
+  g_quick_dump_requested = false;
+  return requested;
 }
 
 void Platform3DS_SetTurboMultiplier(int multiplier) {

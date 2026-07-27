@@ -38,7 +38,8 @@ static bool g_run_without_emu = 0;
 bool SecondScreenSDL_Init(SDL_Window *main_window);
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e);
 void SecondScreenSDL_Handle3DSTouch(void);
-void SecondScreenSDL_Update(void);
+void SecondScreenSDL_Update(int logic_frames);
+void SecondScreenSDL_RequestDump(void);
 void SecondScreenSDL_Shutdown(void);
 
 // Forwards
@@ -338,6 +339,9 @@ static bool SdlRenderer_Init(SDL_Window *window) {
   if (g_config.shader)
     fprintf(stderr, "Warning: Shaders are supported only with the OpenGL backend\n");
 
+#ifdef __3DS__
+  SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+#endif
   SDL_Renderer *renderer = SDL_CreateRenderer(g_window, -1,
                                               g_config.output_method == kOutputMethod_SDLSoftware ? SDL_RENDERER_SOFTWARE :
                                               SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -366,6 +370,7 @@ static bool SdlRenderer_Init(SDL_Window *window) {
     printf("Failed to create texture: %s\n", SDL_GetError());
     return false;
   }
+  SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeNearest);
   return true;
 }
 
@@ -416,6 +421,8 @@ static void ZeldaApplyRendererSize(void) {
     int tex_mult = (g_ppu_render_flags & kPpuRenderFlags_4x4Mode7) ? 4 : 1;
     g_texture = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                   g_snes_width * tex_mult, g_snes_height * tex_mult);
+    if (g_texture)
+      SDL_SetTextureScaleMode(g_texture, SDL_ScaleModeNearest);
   }
 }
 
@@ -711,11 +718,14 @@ int main(int argc, char** argv) {
 
     int inputs;
     bool is_replay = false;
+    int rendered_logic_frames = 1;
 #ifdef __3DS__
     bool turbo_held;
     int turbo_multiplier;
     inputs = Platform3DS_ReadInput(&turbo_held, &turbo_multiplier);
     SecondScreenSDL_Handle3DSTouch();
+    if (Platform3DS_TakeQuickDumpRequest())
+      SecondScreenSDL_RequestDump();
     g_turbo = turbo_held;
     uint32 now = SDL_GetTicks();
     if (now - nextLogicTick > 250)
@@ -733,6 +743,7 @@ int main(int argc, char** argv) {
     int frames_to_run = frames_due * (g_turbo ? turbo_multiplier : 1);
     if (frames_to_run > 20)
       frames_to_run = 20;
+    rendered_logic_frames = frames_to_run;
     for (int i = 0; i < frames_to_run; i++) {
       extern void SecondScreen_RunFrameHook(void);
       SecondScreen_RunFrameHook();
@@ -764,7 +775,7 @@ int main(int argc, char** argv) {
 #endif
 
     DrawPpuFrameWithPerf();
-    SecondScreenSDL_Update();
+    SecondScreenSDL_Update(rendered_logic_frames);
 
     if (g_config.display_perf_title) {
       char title[60];

@@ -27,6 +27,7 @@ enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void);
 void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode);
 enum Platform3DSCStickMode Platform3DS_GetCStickMode(void);
 void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode);
+bool Platform3DS_TakeQuickDumpRequest(void);
 int Platform3DS_GetTurboMultiplier(void);
 void Platform3DS_SetTurboMultiplier(int multiplier);
 bool Platform3DS_CreateDumpDirectory(char *out, size_t out_size);
