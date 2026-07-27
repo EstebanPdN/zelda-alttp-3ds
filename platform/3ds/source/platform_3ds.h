@@ -29,6 +29,10 @@ enum Platform3DSCStickMode Platform3DS_GetCStickMode(void);
 void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode);
 int Platform3DS_GetTurboMultiplier(void);
 void Platform3DS_SetTurboMultiplier(int multiplier);
-bool Platform3DS_DumpMemory(const uint8_t *ram, size_t ram_size,
+bool Platform3DS_CreateDumpDirectory(char *out, size_t out_size);
+bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8_t *pixels,
+                                 int pitch, int width, int height);
+bool Platform3DS_DumpMemory(const char *directory,
+                            const uint8_t *ram, size_t ram_size,
                             const uint8_t *sram, size_t sram_size,
                             const uint16_t *vram, size_t vram_words);

@@ -194,6 +194,9 @@ static void DrawPpuFrameWithPerf() {
   extern void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch, int width, int height);
   SecondScreen_CaptureFrameHook(pixel_buffer, pitch,
                                 g_snes_width * render_scale, g_snes_height * render_scale);
+  extern void SecondScreen_CaptureDumpTopHook(const uint8 *px, int pitch, int width, int height);
+  SecondScreen_CaptureDumpTopHook(pixel_buffer, pitch,
+                                  g_snes_width * render_scale, g_snes_height * render_scale);
   g_renderer_funcs.EndDraw();
 }
 

@@ -76,16 +76,9 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   if (keys & KEY_Y) input |= 1u << 1;
   if (keys & KEY_L) input |= 1u << 10;
   if (keys & KEY_R) input |= 1u << 11;
-  if (g_cstick_mode == kPlatform3DSCStickWalk) {
-    if (keys & KEY_CSTICK_UP) input |= 1u << 4;
-    if (keys & KEY_CSTICK_DOWN) input |= 1u << 5;
-    if (keys & KEY_CSTICK_LEFT) input |= 1u << 6;
-    if (keys & KEY_CSTICK_RIGHT) input |= 1u << 7;
-  }
-  *turbo_held = (keys & KEY_ZL) != 0 ||
-                (g_cstick_mode == kPlatform3DSCStickTurbo &&
-                 CStickIsHeld(keys));
-  *turbo_multiplier = g_turbo_multiplier;
+  *turbo_held = g_turbo_multiplier > 0 &&
+                ((keys & KEY_ZL) != 0 || CStickIsHeld(keys));
+  *turbo_multiplier = g_turbo_multiplier > 0 ? g_turbo_multiplier : 1;
   return input;
 }
 
@@ -111,16 +104,22 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
     else
       g_display_mode = kPlatform3DSDisplayUltraWideMod;
   } else if (strcasecmp(key, "CStickMode") == 0) {
-    if (strcasecmp(value, "Walk") == 0)
-      g_cstick_mode = kPlatform3DSCStickWalk;
-    else if (strcasecmp(value, "Disabled") == 0 ||
-             strcasecmp(value, "Off") == 0)
+    if (strcasecmp(value, "Disabled") == 0 ||
+        strcasecmp(value, "Off") == 0) {
       g_cstick_mode = kPlatform3DSCStickDisabled;
-    else
+      g_turbo_multiplier = 0;
+    } else {
       g_cstick_mode = kPlatform3DSCStickTurbo;
+    }
   } else if (strcasecmp(key, "CStickTurboMultiplier") == 0) {
+    if (strcasecmp(value, "Off") == 0 || strcasecmp(value, "Disabled") == 0) {
+      g_turbo_multiplier = 0;
+      return;
+    }
     int multiplier = atoi(value);
-    if (multiplier < 2)
+    if (multiplier <= 0)
+      multiplier = 0;
+    else if (multiplier < 2)
       multiplier = 2;
     if (multiplier > 5)
       multiplier = 5;
@@ -182,7 +181,9 @@ int Platform3DS_GetTurboMultiplier(void) {
 }
 
 void Platform3DS_SetTurboMultiplier(int multiplier) {
-  if (multiplier < 2)
+  if (multiplier <= 0)
+    multiplier = 0;
+  else if (multiplier < 2)
     multiplier = 2;
   if (multiplier > 5)
     multiplier = 5;
@@ -505,8 +506,8 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->audio_samples = 1024;
   config->enable_msu = 0;
   config->disable_frame_delay = true;
-  Platform3DS_LogRuntime("Runtime settings: display=%d, cstick=%d, turbo=%d",
-                         (int)g_display_mode, (int)g_cstick_mode,
+  Platform3DS_LogRuntime("Runtime settings: display=%d, turbo=%d",
+                         (int)g_display_mode,
                          g_turbo_multiplier);
 }
 
@@ -522,27 +523,117 @@ static bool WriteBlob(const char *path, const void *data, size_t size) {
   return ok;
 }
 
-bool Platform3DS_DumpMemory(const uint8_t *ram, size_t ram_size,
-                            const uint8_t *sram, size_t sram_size,
-                            const uint16_t *vram, size_t vram_words) {
-  char stamp[32];
+static bool EnsureDirectory(const char *path) {
+  if (mkdir(path, 0777) == 0)
+    return true;
+  if (errno == EEXIST) {
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+  }
+  return false;
+}
+
+static void MakeTimestamp(char *stamp, size_t stamp_size) {
   time_t now = time(NULL);
   struct tm *tm_now = now > 0 ? localtime(&now) : NULL;
-  if (tm_now) {
-    strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", tm_now);
-  } else {
-    snprintf(stamp, sizeof(stamp), "unknown-time");
+  if (tm_now)
+    strftime(stamp, stamp_size, "%Y%m%d-%H%M%S", tm_now);
+  else
+    snprintf(stamp, stamp_size, "unknown-time");
+}
+
+bool Platform3DS_CreateDumpDirectory(char *out, size_t out_size) {
+  if (!out || out_size == 0)
+    return false;
+  if (!EnsureDirectory("dumps")) {
+    Platform3DS_LogRuntime("Dump directory create failed: dumps");
+    return false;
+  }
+  char stamp[32];
+  MakeTimestamp(stamp, sizeof(stamp));
+  for (int attempt = 0; attempt < 100; attempt++) {
+    if (attempt == 0)
+      snprintf(out, out_size, "dumps/dump-%s", stamp);
+    else
+      snprintf(out, out_size, "dumps/dump-%s-%02d", stamp, attempt);
+    if (mkdir(out, 0777) == 0) {
+      Platform3DS_LogRuntime("Dump session directory: %s", out);
+      return true;
+    }
+    if (errno != EEXIST)
+      break;
+  }
+  Platform3DS_LogRuntime("Dump session directory create failed");
+  out[0] = 0;
+  return false;
+}
+
+bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8_t *pixels,
+                                 int pitch, int width, int height) {
+  if (!path || !pixels || pitch <= 0 || width <= 0 || height <= 0)
+    return false;
+  FILE *file = fopen(path, "wb");
+  if (!file)
+    return false;
+
+  int row_size = (width * 3 + 3) & ~3;
+  uint32_t file_size = 54u + (uint32_t)row_size * (uint32_t)height;
+  uint8_t header[54] = {
+    'B', 'M',
+    (uint8_t)file_size, (uint8_t)(file_size >> 8),
+    (uint8_t)(file_size >> 16), (uint8_t)(file_size >> 24),
+    0, 0, 0, 0, 54, 0, 0, 0,
+    40, 0, 0, 0,
+    (uint8_t)width, (uint8_t)(width >> 8),
+    (uint8_t)(width >> 16), (uint8_t)(width >> 24),
+    (uint8_t)height, (uint8_t)(height >> 8),
+    (uint8_t)(height >> 16), (uint8_t)(height >> 24),
+    1, 0, 24, 0,
+  };
+  bool ok = fwrite(header, 1, sizeof(header), file) == sizeof(header);
+  uint8_t *row = malloc((size_t)row_size);
+  if (!row)
+    ok = false;
+  for (int y = height - 1; ok && y >= 0; y--) {
+    memset(row, 0, (size_t)row_size);
+    const uint32_t *src = (const uint32_t *)(pixels + (size_t)y * pitch);
+    for (int x = 0; x < width; x++) {
+      uint32_t c = src[x];
+      row[x * 3 + 0] = (uint8_t)c;
+      row[x * 3 + 1] = (uint8_t)(c >> 8);
+      row[x * 3 + 2] = (uint8_t)(c >> 16);
+    }
+    ok = fwrite(row, 1, (size_t)row_size, file) == (size_t)row_size;
+  }
+  free(row);
+  if (fclose(file) != 0)
+    ok = false;
+  if (!ok)
+    remove(path);
+  Platform3DS_LogRuntime("Screenshot %s: %s", path, ok ? "OK" : "FAILED");
+  return ok;
+}
+
+bool Platform3DS_DumpMemory(const char *directory,
+                            const uint8_t *ram, size_t ram_size,
+                            const uint8_t *sram, size_t sram_size,
+                            const uint16_t *vram, size_t vram_words) {
+  char local_directory[128];
+  if (!directory || !directory[0]) {
+    if (!Platform3DS_CreateDumpDirectory(local_directory, sizeof(local_directory)))
+      return false;
+    directory = local_directory;
   }
 
-  char path[128];
-  snprintf(path, sizeof(path), "memdump-%s-ram.bin", stamp);
+  char path[192];
+  snprintf(path, sizeof(path), "%s/ram.bin", directory);
   bool ok = WriteBlob(path, ram, ram_size);
-  snprintf(path, sizeof(path), "memdump-%s-sram.bin", stamp);
+  snprintf(path, sizeof(path), "%s/sram.bin", directory);
   ok = WriteBlob(path, sram, sram_size) && ok;
-  snprintf(path, sizeof(path), "memdump-%s-vram.bin", stamp);
+  snprintf(path, sizeof(path), "%s/vram.bin", directory);
   ok = WriteBlob(path, vram, vram_words * sizeof(*vram)) && ok;
 
-  snprintf(path, sizeof(path), "memdump-%s-info.txt", stamp);
+  snprintf(path, sizeof(path), "%s/info.txt", directory);
   FILE *info = fopen(path, "wb");
   if (info) {
     fprintf(info, "Zelda 3DS v%s memory dump\n", ZELDA3_3DS_VERSION);
@@ -550,14 +641,17 @@ bool Platform3DS_DumpMemory(const uint8_t *ram, size_t ram_size,
     fprintf(info, "SRAM bytes: %lu\n", (unsigned long)sram_size);
     fprintf(info, "VRAM words: %lu\n", (unsigned long)vram_words);
     fprintf(info, "Display mode: %d\n", (int)g_display_mode);
-    fprintf(info, "C-stick mode: %d\n", (int)g_cstick_mode);
-    fprintf(info, "Turbo multiplier: %d\n", g_turbo_multiplier);
+    if (g_turbo_multiplier > 0)
+      fprintf(info, "Turbo speed: x%d\n", g_turbo_multiplier);
+    else
+      fprintf(info, "Turbo speed: off\n");
     if (fclose(info) != 0)
       ok = false;
   } else {
     ok = false;
   }
 
-  Platform3DS_LogRuntime("Memory dump %s: %s", stamp, ok ? "OK" : "FAILED");
+  Platform3DS_LogRuntime("Memory dump %s: %s", directory,
+                         ok ? "OK" : "FAILED");
   return ok;
 }

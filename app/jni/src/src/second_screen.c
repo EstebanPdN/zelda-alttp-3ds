@@ -3,6 +3,7 @@
 // and the SDL UI (second_screen_sdl.c) calls it directly.
 #include <string.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "types.h"
 #include "variables.h"
@@ -431,7 +432,11 @@ static volatile int g_pending_controls_set;
 static uint8 g_pending_controls[12];
 static volatile int g_pending_saveload;  // 0 idle, 1 save, 2 load
 static volatile int g_pending_memory_dump;
+static volatile int g_pending_restart;
 static volatile int g_pending_display_mode = -1;
+static char g_pending_dump_dir[160];
+static char g_top_screenshot_dir[160];
+static volatile int g_pending_top_screenshot;
 // Save-state slot picker: kSaveLoad_Save/kSaveLoad_Load, -1 when idle.
 static volatile int g_pending_state_cmd = -1;
 static volatile int g_pending_state_slot;
@@ -459,7 +464,17 @@ void SS_SetWidescreen(bool on) { g_pending_widescreen = on ? 1 : 0; }
 
 void SS_Set3DSDisplayMode(int mode) { g_pending_display_mode = mode; }
 
-void SS_RequestMemoryDump(void) { g_pending_memory_dump = 1; }
+void SS_RequestMemoryDump(const char *dump_dir) {
+  if (dump_dir && dump_dir[0]) {
+    strncpy(g_pending_dump_dir, dump_dir, sizeof(g_pending_dump_dir) - 1);
+    g_pending_dump_dir[sizeof(g_pending_dump_dir) - 1] = 0;
+  } else {
+    g_pending_dump_dir[0] = 0;
+  }
+  g_pending_memory_dump = 1;
+}
+
+void SS_RequestRestart(void) { g_pending_restart = 1; }
 
 bool SS_IsWidescreen(void) {
   int pending = g_pending_widescreen;
@@ -541,6 +556,19 @@ void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch, int width, int he
       out[x] = row[x0 + x * cw / kSsThumbW] | 0xff000000u;
   }
   g_ss_thumb_state = 2;
+}
+
+void SecondScreen_CaptureDumpTopHook(const uint8 *px, int pitch, int width, int height) {
+  if (g_pending_top_screenshot != 1 || !px || width <= 0 || height <= 0)
+    return;
+  g_pending_top_screenshot = 0;
+#ifdef __3DS__
+  char path[192];
+  snprintf(path, sizeof(path), "%s/top-screen.bmp", g_top_screenshot_dir);
+  extern bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8 *pixels,
+                                          int pitch, int width, int height);
+  Platform3DS_SaveARGB8888Bmp(path, px, pitch, width, height);
+#endif
 }
 
 // Fills out (kSsThumbW*kSsThumbH ARGB) with the frame grabbed for the last save
@@ -631,12 +659,24 @@ void SecondScreen_RunFrameHook(void) {
   if (g_pending_memory_dump) {
     g_pending_memory_dump = 0;
 #ifdef __3DS__
-    extern bool Platform3DS_DumpMemory(const uint8 *ram, size_t ram_size,
+    strncpy(g_top_screenshot_dir, g_pending_dump_dir,
+            sizeof(g_top_screenshot_dir) - 1);
+    g_top_screenshot_dir[sizeof(g_top_screenshot_dir) - 1] = 0;
+    g_pending_top_screenshot = g_top_screenshot_dir[0] != 0;
+    extern bool Platform3DS_DumpMemory(const char *directory,
+                                       const uint8 *ram, size_t ram_size,
                                        const uint8 *sram, size_t sram_size,
                                        const uint16 *vram, size_t vram_words);
-    Platform3DS_DumpMemory(g_ram, 131072, g_zenv.sram, 8192,
+    Platform3DS_DumpMemory(g_top_screenshot_dir, g_ram, 131072, g_zenv.sram, 8192,
                            g_zenv.vram, 32768);
 #endif
+  }
+  if (g_pending_restart) {
+    g_pending_restart = 0;
+    g_ss_has_outdoor = false;
+    ZeldaApuLock();
+    ZeldaReset(true);
+    ZeldaApuUnlock();
   }
   int state_cmd = g_pending_state_cmd;
   if (state_cmd >= 0) {
