@@ -24,8 +24,10 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 - New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
 - Quick diagnostics: press `L + R + A` to create a dump with memory files plus
   top and bottom screenshots.
-- HOME Menu metadata is versioned for each build. v1.5 appears as
-  `Zelda ALttP 3DS` / `Zelda A Link to the Past 3DS v1.5`.
+- HOME Menu metadata is versioned for each build. v1.6 appears as
+  `Zelda ALttP 3DS` / `Zelda A Link to the Past 3DS v1.6`.
+- HOME Menu banner uses a lightweight CGFX 3D box model with the supplied
+  hover sound converted to a short PCM WAV.
 
 ## Installation
 
@@ -73,6 +75,8 @@ Requirements:
 - devkitARM, libctru and 3ds-cmake under `DEVKITPRO`
 - `makerom` and `bannertool` for CIA packaging
 - the vendored SDL2 source in `app/jni/SDL2`
+- `banner.cgfx` is prebuilt in `platform/3ds/assets`; it was generated from
+  the supplied box glTF with only the base diffuse texture.
 
 Build:
 

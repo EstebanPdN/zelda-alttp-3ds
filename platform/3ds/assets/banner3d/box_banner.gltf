@@ -1,0 +1,181 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Codex 3DS banner prep"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "BannerScene",
+      "nodes": [
+        0,
+        1
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "COMMON",
+      "mesh": 0
+    },
+    {
+      "name": "Banner Camera",
+      "camera": 0,
+      "translation": [
+        0,
+        1,
+        44.786
+      ]
+    }
+  ],
+  "cameras": [
+    {
+      "name": "Banner Camera",
+      "type": "perspective",
+      "perspective": {
+        "aspectRatio": 1.66666666667,
+        "yfov": 0.523599,
+        "zfar": 1000,
+        "znear": 26.5
+      }
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "box_banner.bin",
+      "byteLength": 4596
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 1512,
+      "target": 34962,
+      "byteStride": 12
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1512,
+      "byteLength": 1512,
+      "target": 34962,
+      "byteStride": 12
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 3024,
+      "byteLength": 1008,
+      "target": 34962,
+      "byteStride": 8
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 4032,
+      "byteLength": 564,
+      "target": 34963
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 126,
+      "type": "VEC3",
+      "min": [
+        -8.678968824310932,
+        -6.077273862422323,
+        -1.5037409112468103
+      ],
+      "max": [
+        8.678968824310932,
+        6.077273862422323,
+        1.5037409112468103
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 126,
+      "type": "VEC3",
+      "min": [
+        -1,
+        -1,
+        -1
+      ],
+      "max": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 126,
+      "type": "VEC2",
+      "min": [
+        0.18649613857269287,
+        0.0007024299702607095
+      ],
+      "max": [
+        0.7965819239616394,
+        1.0
+      ]
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5123,
+      "count": 282,
+      "type": "SCALAR"
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9729,
+      "wrapS": 33071,
+      "wrapT": 33071
+    }
+  ],
+  "images": [
+    {
+      "uri": "box_base_256.png"
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    }
+  ],
+  "materials": [
+    {
+      "name": "BoxDiffuse",
+      "doubleSided": true,
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "roughnessFactor": 1.0,
+        "metallicFactor": 0.0
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Box",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    }
+  ]
+}
