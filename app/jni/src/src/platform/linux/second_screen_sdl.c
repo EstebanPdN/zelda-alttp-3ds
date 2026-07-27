@@ -18,7 +18,20 @@
 #include <string.h>
 
 #ifdef __3DS__
+#include <3ds.h>
 #include "platform_3ds.h"
+#else
+enum Platform3DSDisplayMode {
+  kPlatform3DSDisplayOriginal,
+  kPlatform3DSDisplayUltraWideMod,
+  kPlatform3DSDisplayStretch,
+};
+
+enum Platform3DSCStickMode {
+  kPlatform3DSCStickTurbo,
+  kPlatform3DSCStickWalk,
+  kPlatform3DSCStickDisabled,
+};
 #endif
 
 #include "../../types.h"                 // uint8/uint16 for the tables header
@@ -48,8 +61,10 @@ bool SS_RenderMapIcons(int palace, uint32_t *px);
 void SS_EquipSlot(int slot);
 void SS_SetWidescreen(bool on);
 bool SS_IsWidescreen(void);
+void SS_Set3DSDisplayMode(int mode);
 void SS_SetHudHidden(bool hide);
 bool SS_IsHudHidden(void);
+void SS_RequestMemoryDump(void);
 void SS_ArmButtonCapture(bool arm);
 int  SS_GetCapturedButton(void);
 void SS_GetGamepadControls(int *out12);
@@ -162,7 +177,7 @@ static bool ss_needs_rebuild;
 
 // touch rects recomputed every draw, used by the tap handler
 static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_ring_r;
-static RectFS settings_row_r[3], remap_row_r[12], remap_back_r;
+static RectFS settings_row_r[6], remap_row_r[12], remap_back_r;
 
 // settings / remap state
 static bool remap_mode;
@@ -170,6 +185,7 @@ static int  remap_arm = -1;         // row currently waiting for a button press
 static uint32_t remap_arm_at;
 static int  pad_controls[12];
 static bool hud_pref_applied;
+static uint32_t dump_flash_until;
 static RectFS plaque_r[16];
 static int    plaque_floor[16], plaque_count;
 static float  grid_x, grid_y, grid_cell;
@@ -903,27 +919,52 @@ static void draw_settings(RectFS r) {
   }
   draw_text("SETTINGS", r.x + r.w / 2 - text_width("SETTINGS", 3 * u) / 2, r.y + 18 * u, 3 * u);
 
-  bool ws = SS_IsWidescreen();
   bool hud_hidden = SS_IsHudHidden();
-  static const char *const labels[3] = {"REMAP BUTTONS", "WIDESCREEN", "TOP SCREEN HUD"};
-  const char *values[3] = {"", ws ? "ON" : "OFF", hud_hidden ? "OFF" : "ON"};
-  float row_h = 76 * u, gap = 18 * u;
-  float y0 = r.y + 60 * u;
-  for (int i = 0; i < 3; i++) {
+  const char *display_value = SS_IsWidescreen() ? "WIDE MOD" : "ORIGINAL";
+  const char *cstick_value = "TURBO";
+  char turbo_value[8];
+#ifdef __3DS__
+  switch (Platform3DS_GetDisplayMode()) {
+  case kPlatform3DSDisplayOriginal: display_value = "ORIGINAL"; break;
+  case kPlatform3DSDisplayStretch: display_value = "STRETCH"; break;
+  case kPlatform3DSDisplayUltraWideMod:
+  default: display_value = "WIDE MOD"; break;
+  }
+  switch (Platform3DS_GetCStickMode()) {
+  case kPlatform3DSCStickWalk: cstick_value = "WALK"; break;
+  case kPlatform3DSCStickDisabled: cstick_value = "OFF"; break;
+  case kPlatform3DSCStickTurbo:
+  default: cstick_value = "TURBO"; break;
+  }
+  snprintf(turbo_value, sizeof(turbo_value), "X%d", Platform3DS_GetTurboMultiplier());
+#else
+  snprintf(turbo_value, sizeof(turbo_value), "X5");
+#endif
+  static const char *const labels[6] = {
+    "TOP SCREEN", "C STICK", "TURBO SPEED",
+    "TOP HUD", "REMAP BUTTONS", "MEM DUMP",
+  };
+  const char *values[6] = {
+    display_value, cstick_value, turbo_value,
+    hud_hidden ? "OFF" : "ON", "", SDL_GetTicks() < dump_flash_until ? "DONE" : "WRITE",
+  };
+  float row_h = 44 * u, gap = 8 * u;
+  float y0 = r.y + 55 * u;
+  for (int i = 0; i < 6; i++) {
     RectFS *row = &settings_row_r[i];
     *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
     draw_settings_row(row, false);
-    float ty = row->y + row->h / 2 - 12 * u;
-    draw_text(labels[i], row->x + 22 * u, ty, 3 * u);
+    float ty = row->y + row->h / 2 - 8 * u;
+    draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
     if (values[i][0] == 0) {
       // chevron for the remap sub-screen
-      float ax = row->x + row->w - 40 * u, ay = row->y + row->h / 2;
-      for (float d = 0; d < 14 * u; d += 1.0f) {
-        fill_rect(ax - 8 * u + d, ay - 12 * u + d * 0.857f, 5 * u, 2 * u, COL_GOLD);
-        fill_rect(ax - 8 * u + d, ay + 12 * u - d * 0.857f - 2 * u, 5 * u, 2 * u, COL_GOLD);
+      float ax = row->x + row->w - 26 * u, ay = row->y + row->h / 2;
+      for (float d = 0; d < 10 * u; d += 1.0f) {
+        fill_rect(ax - 6 * u + d, ay - 8 * u + d * 0.8f, 4 * u, 2 * u, COL_GOLD);
+        fill_rect(ax - 6 * u + d, ay + 8 * u - d * 0.8f - 2 * u, 4 * u, 2 * u, COL_GOLD);
       }
     } else {
-      draw_text(values[i], row->x + row->w - 22 * u - text_width(values[i], 3 * u), ty, 3 * u);
+      draw_text(values[i], row->x + row->w - 16 * u - text_width(values[i], 2 * u), ty, 2 * u);
     }
   }
 }
@@ -1066,21 +1107,55 @@ static void handle_tap(float x, float y) {
       }
     } else {
       if (in_rect(&settings_row_r[0], x, y)) {
-        SS_GetGamepadControls(pad_controls);
-        remap_mode = true;
-      } else if (in_rect(&settings_row_r[1], x, y)) {
-        bool on = !SS_IsWidescreen();
-        SS_SetWidescreen(on);
+        enum Platform3DSDisplayMode mode = kPlatform3DSDisplayUltraWideMod;
 #ifdef __3DS__
-        update_ini("[General]", "ExtendedAspectRatio", on ? "extend_y, 5:3" : "extend_y, 4:3");
+        mode = Platform3DS_GetDisplayMode();
 #else
-        update_ini("[General]", "ExtendedAspectRatio", on ? "16:9" : "4:3");
+        mode = SS_IsWidescreen() ? kPlatform3DSDisplayUltraWideMod : kPlatform3DSDisplayOriginal;
 #endif
+        mode = mode == kPlatform3DSDisplayUltraWideMod ? kPlatform3DSDisplayStretch :
+               mode == kPlatform3DSDisplayStretch ? kPlatform3DSDisplayOriginal :
+               kPlatform3DSDisplayUltraWideMod;
+        SS_Set3DSDisplayMode((int)mode);
+#ifdef __3DS__
+        Platform3DS_SetDisplayMode(mode);
+#endif
+        update_ini("[General]", "DisplayMode",
+                   mode == kPlatform3DSDisplayOriginal ? "Original" :
+                   mode == kPlatform3DSDisplayStretch ? "Stretch" : "UltraWideMod");
+      } else if (in_rect(&settings_row_r[1], x, y)) {
+        enum Platform3DSCStickMode mode = kPlatform3DSCStickTurbo;
+#ifdef __3DS__
+        mode = Platform3DS_GetCStickMode();
+        mode = mode == kPlatform3DSCStickTurbo ? kPlatform3DSCStickWalk :
+               mode == kPlatform3DSCStickWalk ? kPlatform3DSCStickDisabled :
+               kPlatform3DSCStickTurbo;
+        Platform3DS_SetCStickMode(mode);
+#endif
+        update_ini("[General]", "CStickMode",
+                   mode == kPlatform3DSCStickWalk ? "Walk" :
+                   mode == kPlatform3DSCStickDisabled ? "Disabled" : "Turbo");
       } else if (in_rect(&settings_row_r[2], x, y)) {
+        int multiplier = 5;
+#ifdef __3DS__
+        multiplier = Platform3DS_GetTurboMultiplier();
+        multiplier = multiplier >= 5 ? 2 : multiplier + 1;
+        Platform3DS_SetTurboMultiplier(multiplier);
+#endif
+        char value[16];
+        snprintf(value, sizeof(value), "%d", multiplier);
+        update_ini("[General]", "CStickTurboMultiplier", value);
+      } else if (in_rect(&settings_row_r[3], x, y)) {
         bool hide = !SS_IsHudHidden();
         SS_SetHudHidden(hide);
         if (hide) { FILE *f = fopen(".ss_hidehud", "wb"); if (f) fclose(f); }
         else remove(".ss_hidehud");
+      } else if (in_rect(&settings_row_r[4], x, y)) {
+        SS_GetGamepadControls(pad_controls);
+        remap_mode = true;
+      } else if (in_rect(&settings_row_r[5], x, y)) {
+        SS_RequestMemoryDump();
+        dump_flash_until = SDL_GetTicks() + 1200;
       }
     }
     return;
@@ -1147,6 +1222,24 @@ bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
   }
 }
 
+void SecondScreenSDL_Handle3DSTouch(void) {
+#ifdef __3DS__
+  if (!ss_win)
+    return;
+  static bool was_touching;
+  u32 keys = hidKeysHeld();
+  bool touching = (keys & KEY_TOUCH) != 0;
+  if (touching && !was_touching) {
+    touchPosition pos;
+    hidTouchRead(&pos);
+    float x = W > 0 ? (float)pos.px * W / 320.0f : (float)pos.px;
+    float y = H > 0 ? (float)pos.py * H / 240.0f : (float)pos.py;
+    handle_tap(x, y);
+  }
+  was_touching = touching;
+#endif
+}
+
 void SecondScreenSDL_Update(void) {
   if (!ss_enabled) return;
   static uint32_t frame_no;
@@ -1155,7 +1248,11 @@ void SecondScreenSDL_Update(void) {
     if (frame_no < 3) return;      // let the game settle its first GL frames
     if (!ensure_window()) return;  // disables itself on failure
   }
+#ifdef __3DS__
+  if (frame_no % 6) return;   // 10fps; avoid a second-display present tax.
+#else
   if (frame_no & 1) return;   // UI renders at 30fps
+#endif
 
   // rebuild the renderer if the compositor resized us
   if (ss_needs_rebuild) {

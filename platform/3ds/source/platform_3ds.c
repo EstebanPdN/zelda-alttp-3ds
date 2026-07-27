@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "assets.h"
@@ -21,6 +22,11 @@ static const char kAssetsFilename[] = "zelda3_assets.dat";
 static const char kTemporaryAssetsFilename[] = "zelda3_assets.tmp";
 static const char kBundledPatch[] = "romfs:/zelda3_assets.bps";
 static const char kBundledConfig[] = "romfs:/zelda3.ini";
+
+static enum Platform3DSDisplayMode g_display_mode =
+  kPlatform3DSDisplayUltraWideMod;
+static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
+static int g_turbo_multiplier = 5;
 
 static void LogSetup(const char *format, ...) {
   FILE *log = fopen("setup-progress.txt", "ab");
@@ -46,7 +52,13 @@ void Platform3DS_LogRuntime(const char *format, ...) {
   fclose(log);
 }
 
-uint16_t Platform3DS_ReadInput(bool *turbo_held) {
+static bool CStickIsHeld(u32 keys) {
+  return (keys & (KEY_CSTICK_UP | KEY_CSTICK_DOWN |
+                  KEY_CSTICK_LEFT | KEY_CSTICK_RIGHT)) != 0;
+}
+
+uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
+  hidScanInput();
   u32 keys = hidKeysHeld();
   circlePosition circle;
   hidCircleRead(&circle);
@@ -64,8 +76,118 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held) {
   if (keys & KEY_Y) input |= 1u << 1;
   if (keys & KEY_L) input |= 1u << 10;
   if (keys & KEY_R) input |= 1u << 11;
-  *turbo_held = (keys & KEY_ZL) != 0;
+  if (g_cstick_mode == kPlatform3DSCStickWalk) {
+    if (keys & KEY_CSTICK_UP) input |= 1u << 4;
+    if (keys & KEY_CSTICK_DOWN) input |= 1u << 5;
+    if (keys & KEY_CSTICK_LEFT) input |= 1u << 6;
+    if (keys & KEY_CSTICK_RIGHT) input |= 1u << 7;
+  }
+  *turbo_held = (keys & KEY_ZL) != 0 ||
+                (g_cstick_mode == kPlatform3DSCStickTurbo &&
+                 CStickIsHeld(keys));
+  *turbo_multiplier = g_turbo_multiplier;
   return input;
+}
+
+static char *Trim(char *text) {
+  while (*text == ' ' || *text == '\t' || *text == '\r' || *text == '\n')
+    text++;
+  char *end = text + strlen(text);
+  while (end > text &&
+         (end[-1] == ' ' || end[-1] == '\t' ||
+          end[-1] == '\r' || end[-1] == '\n')) {
+    *--end = 0;
+  }
+  return text;
+}
+
+static void LoadRuntimeSetting(const char *key, const char *value) {
+  if (strcasecmp(key, "DisplayMode") == 0) {
+    if (strcasecmp(value, "Original") == 0)
+      g_display_mode = kPlatform3DSDisplayOriginal;
+    else if (strcasecmp(value, "Stretch") == 0 ||
+             strcasecmp(value, "UltraWideStretch") == 0)
+      g_display_mode = kPlatform3DSDisplayStretch;
+    else
+      g_display_mode = kPlatform3DSDisplayUltraWideMod;
+  } else if (strcasecmp(key, "CStickMode") == 0) {
+    if (strcasecmp(value, "Walk") == 0)
+      g_cstick_mode = kPlatform3DSCStickWalk;
+    else if (strcasecmp(value, "Disabled") == 0 ||
+             strcasecmp(value, "Off") == 0)
+      g_cstick_mode = kPlatform3DSCStickDisabled;
+    else
+      g_cstick_mode = kPlatform3DSCStickTurbo;
+  } else if (strcasecmp(key, "CStickTurboMultiplier") == 0) {
+    int multiplier = atoi(value);
+    if (multiplier < 2)
+      multiplier = 2;
+    if (multiplier > 5)
+      multiplier = 5;
+    g_turbo_multiplier = multiplier;
+  }
+}
+
+void Platform3DS_LoadRuntimeSettings(void) {
+  FILE *file = fopen("zelda3.ini", "rb");
+  if (!file)
+    return;
+  bool in_general = false;
+  char line[256];
+  while (fgets(line, sizeof(line), file)) {
+    char *text = Trim(line);
+    if (text[0] == 0 || text[0] == '#' || text[0] == ';')
+      continue;
+    if (text[0] == '[') {
+      in_general = strcasecmp(text, "[General]") == 0;
+      continue;
+    }
+    if (!in_general)
+      continue;
+    char *equals = strchr(text, '=');
+    if (!equals)
+      continue;
+    *equals = 0;
+    LoadRuntimeSetting(Trim(text), Trim(equals + 1));
+  }
+  fclose(file);
+}
+
+enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void) {
+  return g_display_mode;
+}
+
+void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode) {
+  if (mode < kPlatform3DSDisplayOriginal ||
+      mode > kPlatform3DSDisplayStretch)
+    mode = kPlatform3DSDisplayUltraWideMod;
+  g_display_mode = mode;
+  Platform3DS_LogRuntime("Display mode set: %d", (int)g_display_mode);
+}
+
+enum Platform3DSCStickMode Platform3DS_GetCStickMode(void) {
+  return g_cstick_mode;
+}
+
+void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode) {
+  if (mode < kPlatform3DSCStickTurbo ||
+      mode > kPlatform3DSCStickDisabled)
+    mode = kPlatform3DSCStickTurbo;
+  g_cstick_mode = mode;
+  Platform3DS_LogRuntime("C-stick mode set: %d", (int)g_cstick_mode);
+}
+
+int Platform3DS_GetTurboMultiplier(void) {
+  return g_turbo_multiplier;
+}
+
+void Platform3DS_SetTurboMultiplier(int multiplier) {
+  if (multiplier < 2)
+    multiplier = 2;
+  if (multiplier > 5)
+    multiplier = 5;
+  g_turbo_multiplier = multiplier;
+  Platform3DS_LogRuntime("Turbo multiplier set: %d", g_turbo_multiplier);
 }
 
 static bool HasExtension(const char *name, const char *extension) {
@@ -200,7 +322,7 @@ static void ShowFatalSetupError(const char *message) {
   consoleClear();
   printf("\x1b[2;2HZelda 3DS v%s\n\n", ZELDA3_3DS_VERSION);
   printf("%s\n\n", message);
-  printf("Pulsa B para salir.");
+  printf("Press B to exit.");
   PresentSetupConsole();
   WaitForButtons(KEY_B | KEY_START);
 }
@@ -208,13 +330,13 @@ static void ShowFatalSetupError(const char *message) {
 static bool ConfirmExtraction(void) {
   consoleClear();
   printf("\x1b[2;2HZelda 3DS v%s\n\n", ZELDA3_3DS_VERSION);
-  printf("No se encontraron los assets del juego.\n\n");
-  printf("Coloca tu ROM legal en:\n");
+  printf("Game assets were not found.\n\n");
+  printf("Place your legal ROM in:\n");
   printf("sdmc:/3ds/Zelda 3DS/\n\n");
-  printf("Formatos aceptados: .sfc o .smc\n");
-  printf("Region requerida: USA\n\n");
-  printf("[A] Si, extraer assets\n");
-  printf("[B] No, salir\n");
+  printf("Accepted formats: .sfc or .smc\n");
+  printf("Required region: USA, no header\n\n");
+  printf("[A] Extract assets\n");
+  printf("[B] Exit\n");
   PresentSetupConsole();
   return (WaitForButtons(KEY_A | KEY_B) & KEY_A) != 0;
 }
@@ -245,17 +367,17 @@ static bool ExtractAssetsFromRom(void) {
   if (!FindRom(rom_path, sizeof(rom_path))) {
     LogSetup("ROM search failed");
     ShowFatalSetupError(
-      "Error: no se encontro una ROM .sfc o .smc\n"
-      "en la carpeta Zelda 3DS.");
+      "Error: no .sfc or .smc ROM was found\n"
+      "in the Zelda 3DS folder.");
     return false;
   }
   LogSetup("ROM found: %s", rom_path);
 
   consoleClear();
   printf("\x1b[2;2HZelda 3DS v%s\n\n", ZELDA3_3DS_VERSION);
-  printf("ROM encontrada: %s\n\n", rom_path);
-  printf("Validando y extrayendo assets...\n");
-  printf("No apagues la consola.");
+  printf("ROM found: %s\n\n", rom_path);
+  printf("Validating and extracting assets...\n");
+  printf("Do not power off the console.");
   PresentSetupConsole();
 
   size_t rom_size = 0;
@@ -268,11 +390,11 @@ static bool ExtractAssetsFromRom(void) {
   if (!rom || !patch) {
     char error[256];
     snprintf(error, sizeof(error),
-      "Error al leer archivos.\n"
+      "Error reading files.\n"
       "ROM: %s (%lu bytes)\n"
-      "Parche interno: %s (%lu bytes)",
-      rom ? "OK" : "FALLO", (unsigned long)rom_size,
-      patch ? "OK" : "FALLO", (unsigned long)patch_size);
+      "Internal patch: %s (%lu bytes)",
+      rom ? "OK" : "FAILED", (unsigned long)rom_size,
+      patch ? "OK" : "FAILED", (unsigned long)patch_size);
     free(rom);
     free(patch);
     ShowFatalSetupError(error);
@@ -287,9 +409,9 @@ static bool ExtractAssetsFromRom(void) {
   free(patch);
   if (!assets) {
     ShowFatalSetupError(
-      "Error: la ROM no es la version correcta.\n"
-      "Se requiere Zelda 3 USA sin cabecera.\n"
-      "SHA-256 esperado:\n"
+      "Error: the ROM is not the correct version.\n"
+      "Required: Zelda 3 USA, no header.\n"
+      "Expected SHA-256:\n"
       "66871d66be19ad2c34c927d6b14cd8eb\n"
       "6fc3181965b6e517cb361f7316009cfb");
     return false;
@@ -300,15 +422,15 @@ static bool ExtractAssetsFromRom(void) {
   free(assets);
   if (!written || !AssetsFileLooksValid(kAssetsFilename)) {
     ShowFatalSetupError(
-      "Error al guardar zelda3_assets.dat.\n"
-      "Comprueba el espacio libre y la tarjeta SD.");
+      "Error saving zelda3_assets.dat.\n"
+      "Check free space and the SD card.");
     return false;
   }
 
   consoleClear();
   printf("\x1b[2;2HZelda 3DS v%s\n\n", ZELDA3_3DS_VERSION);
-  printf("Assets extraidos correctamente.\n\n");
-  printf("Preparacion completada.");
+  printf("Assets extracted successfully.\n\n");
+  printf("Setup complete.");
   PresentSetupConsole();
   for (int i = 0; i < 60; i++)
     gspWaitForVBlank();
@@ -327,6 +449,7 @@ bool Platform3DS_PrepareStorage(void) {
   LogSetup("Zelda 3DS v%s setup started", ZELDA3_3DS_VERSION);
   Platform3DS_LogRuntime("Zelda 3DS v%s runtime started", ZELDA3_3DS_VERSION);
   CopyFileIfMissing(kBundledConfig, "zelda3.ini");
+  Platform3DS_LoadRuntimeSettings();
   bool assets_ready = AssetsFileLooksValid(kAssetsFilename);
   if (assets_ready) {
     Platform3DS_LogRuntime("Assets file header validated");
@@ -345,11 +468,11 @@ bool Platform3DS_PrepareStorage(void) {
     Platform3DS_LogRuntime("ERROR DSP firmware missing");
     BeginSetupConsole();
     ShowFatalSetupError(
-      "Falta el firmware de audio DSP:\n"
+      "DSP audio firmware is missing:\n"
       "sdmc:/3ds/dspfirm.cdc\n\n"
-      "Abre Rosalina (L + Abajo + Select),\n"
-      "entra en Miscellaneous options y usa\n"
-      "Dump DSP firmware. Despues reinicia.");
+      "Open Rosalina (L + Down + Select),\n"
+      "enter Miscellaneous options, then use\n"
+      "Dump DSP firmware. Restart afterward.");
     EndSetupConsole();
     return false;
   }
@@ -363,17 +486,78 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->window_scale = 1;
   config->fullscreen = 1;
   config->output_method = kOutputMethod_SDLSoftware;
-  config->ignore_aspect_ratio = false;
+  config->ignore_aspect_ratio = g_display_mode == kPlatform3DSDisplayStretch;
   config->linear_filtering = false;
   config->crt_filter = false;
   config->enhanced_mode7 = false;
   config->new_renderer = true;
   config->extend_y = true;
-  config->extended_aspect_ratio = 72;
-  config->features0 |= kFeatures0_ExtendScreen64 |
-                       kFeatures0_WidescreenVisualFixes;
+  config->extended_aspect_ratio =
+    g_display_mode == kPlatform3DSDisplayUltraWideMod ? 72 : 0;
+  config->features0 &= ~(kFeatures0_ExtendScreen64 |
+                         kFeatures0_WidescreenVisualFixes);
+  if (g_display_mode == kPlatform3DSDisplayUltraWideMod) {
+    config->features0 |= kFeatures0_ExtendScreen64 |
+                         kFeatures0_WidescreenVisualFixes;
+  }
   config->audio_freq = 32000;
   config->audio_channels = 2;
   config->audio_samples = 1024;
   config->enable_msu = 0;
+  config->disable_frame_delay = true;
+  Platform3DS_LogRuntime("Runtime settings: display=%d, cstick=%d, turbo=%d",
+                         (int)g_display_mode, (int)g_cstick_mode,
+                         g_turbo_multiplier);
+}
+
+static bool WriteBlob(const char *path, const void *data, size_t size) {
+  FILE *file = fopen(path, "wb");
+  if (!file)
+    return false;
+  bool ok = fwrite(data, 1, size, file) == size;
+  if (fclose(file) != 0)
+    ok = false;
+  if (!ok)
+    remove(path);
+  return ok;
+}
+
+bool Platform3DS_DumpMemory(const uint8_t *ram, size_t ram_size,
+                            const uint8_t *sram, size_t sram_size,
+                            const uint16_t *vram, size_t vram_words) {
+  char stamp[32];
+  time_t now = time(NULL);
+  struct tm *tm_now = now > 0 ? localtime(&now) : NULL;
+  if (tm_now) {
+    strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", tm_now);
+  } else {
+    snprintf(stamp, sizeof(stamp), "unknown-time");
+  }
+
+  char path[128];
+  snprintf(path, sizeof(path), "memdump-%s-ram.bin", stamp);
+  bool ok = WriteBlob(path, ram, ram_size);
+  snprintf(path, sizeof(path), "memdump-%s-sram.bin", stamp);
+  ok = WriteBlob(path, sram, sram_size) && ok;
+  snprintf(path, sizeof(path), "memdump-%s-vram.bin", stamp);
+  ok = WriteBlob(path, vram, vram_words * sizeof(*vram)) && ok;
+
+  snprintf(path, sizeof(path), "memdump-%s-info.txt", stamp);
+  FILE *info = fopen(path, "wb");
+  if (info) {
+    fprintf(info, "Zelda 3DS v%s memory dump\n", ZELDA3_3DS_VERSION);
+    fprintf(info, "RAM bytes: %lu\n", (unsigned long)ram_size);
+    fprintf(info, "SRAM bytes: %lu\n", (unsigned long)sram_size);
+    fprintf(info, "VRAM words: %lu\n", (unsigned long)vram_words);
+    fprintf(info, "Display mode: %d\n", (int)g_display_mode);
+    fprintf(info, "C-stick mode: %d\n", (int)g_cstick_mode);
+    fprintf(info, "Turbo multiplier: %d\n", g_turbo_multiplier);
+    if (fclose(info) != 0)
+      ok = false;
+  } else {
+    ok = false;
+  }
+
+  Platform3DS_LogRuntime("Memory dump %s: %s", stamp, ok ? "OK" : "FAILED");
+  return ok;
 }

@@ -37,6 +37,7 @@ static bool g_run_without_emu = 0;
 // Dual-screen UI (second_screen_sdl.c); stubbed on Android
 bool SecondScreenSDL_Init(SDL_Window *main_window);
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e);
+void SecondScreenSDL_Handle3DSTouch(void);
 void SecondScreenSDL_Update(void);
 void SecondScreenSDL_Shutdown(void);
 
@@ -400,6 +401,21 @@ int ZeldaGetSnesHeight(void) {
   return g_snes_height;
 }
 
+static void ZeldaApplyRendererSize(void) {
+  if (g_renderer) {
+    if (g_config.ignore_aspect_ratio)
+      SDL_RenderSetLogicalSize(g_renderer, 0, 0);
+    else
+      SDL_RenderSetLogicalSize(g_renderer, g_snes_width, g_snes_height);
+  }
+  if (g_texture) {
+    SDL_DestroyTexture(g_texture);
+    int tex_mult = (g_ppu_render_flags & kPpuRenderFlags_4x4Mode7) ? 4 : 1;
+    g_texture = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                  g_snes_width * tex_mult, g_snes_height * tex_mult);
+  }
+}
+
 // Toggle the extended aspect ratio while running (game thread).
 void ZeldaSetWidescreen(bool enable) {
 #ifdef __3DS__
@@ -412,15 +428,29 @@ void ZeldaSetWidescreen(bool enable) {
   if (!enable)
     PpuSetExtraSideSpace(g_zenv.ppu, 0, 0, 0);
   g_snes_width = extra * 2 + 256;
-  if (g_renderer && !g_config.ignore_aspect_ratio)
-    SDL_RenderSetLogicalSize(g_renderer, g_snes_width, g_snes_height);
-  if (g_texture) {
-    SDL_DestroyTexture(g_texture);
-    int tex_mult = (g_ppu_render_flags & kPpuRenderFlags_4x4Mode7) ? 4 : 1;
-    g_texture = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-                                  g_snes_width * tex_mult, g_snes_height * tex_mult);
-  }
+  ZeldaApplyRendererSize();
 }
+
+#ifdef __3DS__
+void ZeldaSet3DSDisplayMode(int mode) {
+  enum Platform3DSDisplayMode display_mode = (enum Platform3DSDisplayMode)mode;
+  bool wide = display_mode == kPlatform3DSDisplayUltraWideMod;
+  int extra = wide ? (g_snes_height * 5 / 3 - 256) / 2 : 0;
+  uint32 ws_features = kFeatures0_ExtendScreen64 | kFeatures0_WidescreenVisualFixes;
+
+  g_config.ignore_aspect_ratio = display_mode == kPlatform3DSDisplayStretch;
+  g_config.extended_aspect_ratio = extra;
+  g_config.features0 = wide ? (g_config.features0 | ws_features) :
+                               (g_config.features0 & ~ws_features);
+  g_wanted_zelda_features = g_config.features0;
+  g_zenv.ppu->extraLeftRight = UintMin(extra, kPpuExtraLeftRight);
+  if (!wide)
+    PpuSetExtraSideSpace(g_zenv.ppu, 0, 0, 0);
+  g_snes_width = extra * 2 + 256;
+  ZeldaApplyRendererSize();
+  Platform3DS_SetDisplayMode(display_mode);
+}
+#endif
 
 static const struct RendererFuncs kSdlRendererFuncs  = {
   &SdlRenderer_Init,
@@ -450,7 +480,7 @@ int main(int argc, char** argv) {
   ParseConfigFile(config_file);
 #ifdef __3DS__
   Platform3DS_ApplyConfig(&g_config);
-  Platform3DS_LogRuntime("Configuration loaded: %dx%d, software renderer, 5:3",
+  Platform3DS_LogRuntime("Configuration loaded: %dx%d, software renderer",
                          g_config.window_width, g_config.window_height);
 #endif
   LoadAssets();
@@ -673,24 +703,38 @@ int main(int argc, char** argv) {
       continue;
     }
 
-    // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
     int inputs;
+    bool is_replay = false;
 #ifdef __3DS__
     bool turbo_held;
-    inputs = Platform3DS_ReadInput(&turbo_held);
+    int turbo_multiplier;
+    inputs = Platform3DS_ReadInput(&turbo_held, &turbo_multiplier);
+    SecondScreenSDL_Handle3DSTouch();
     g_turbo = turbo_held;
+    int frames_to_run = g_turbo ? turbo_multiplier : 1;
+    if (frames_to_run < 1) frames_to_run = 1;
+    if (frames_to_run > 5) frames_to_run = 5;
+    for (int i = 0; i < frames_to_run; i++) {
+      extern void SecondScreen_RunFrameHook(void);
+      SecondScreen_RunFrameHook();
+
+      SDL_LockMutex(g_audio_mutex);
+      is_replay |= ZeldaRunFrame(inputs);
+      SDL_UnlockMutex(g_audio_mutex);
+      frameCtr++;
+    }
 #else
+    // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
     inputs = g_input1_state;
     if (g_input1_state & 0xf0)
       g_gamepad_buttons = 0;
     inputs |= g_gamepad_buttons;
-#endif
 
     extern void SecondScreen_RunFrameHook(void);
     SecondScreen_RunFrameHook();
 
     SDL_LockMutex(g_audio_mutex);
-    bool is_replay = ZeldaRunFrame(inputs);
+    is_replay = ZeldaRunFrame(inputs);
     SDL_UnlockMutex(g_audio_mutex);
 
     frameCtr++;
@@ -698,6 +742,7 @@ int main(int argc, char** argv) {
     if ((g_turbo ^ (is_replay & g_replay_turbo)) && (frameCtr & (g_turbo ? 0xf : 0x7f)) != 0) {
       continue;
     }
+#endif
 
     DrawPpuFrameWithPerf();
     SecondScreenSDL_Update();

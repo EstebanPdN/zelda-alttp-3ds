@@ -430,6 +430,8 @@ static volatile int g_pending_hide_hud = -1;
 static volatile int g_pending_controls_set;
 static uint8 g_pending_controls[12];
 static volatile int g_pending_saveload;  // 0 idle, 1 save, 2 load
+static volatile int g_pending_memory_dump;
+static volatile int g_pending_display_mode = -1;
 // Save-state slot picker: kSaveLoad_Save/kSaveLoad_Load, -1 when idle.
 static volatile int g_pending_state_cmd = -1;
 static volatile int g_pending_state_slot;
@@ -454,6 +456,10 @@ void SS_AssignSlotX(int slot) {
 }
 
 void SS_SetWidescreen(bool on) { g_pending_widescreen = on ? 1 : 0; }
+
+void SS_Set3DSDisplayMode(int mode) { g_pending_display_mode = mode; }
+
+void SS_RequestMemoryDump(void) { g_pending_memory_dump = 1; }
 
 bool SS_IsWidescreen(void) {
   int pending = g_pending_widescreen;
@@ -591,6 +597,17 @@ void SecondScreen_RunFrameHook(void) {
     extern void ZeldaSetWidescreen(bool enable);
     ZeldaSetWidescreen(ws != 0);
   }
+  int display_mode = g_pending_display_mode;
+  if (display_mode >= 0) {
+    g_pending_display_mode = -1;
+#ifdef __3DS__
+    extern void ZeldaSet3DSDisplayMode(int mode);
+    ZeldaSet3DSDisplayMode(display_mode);
+#else
+    extern void ZeldaSetWidescreen(bool enable);
+    ZeldaSetWidescreen(display_mode != 0);
+#endif
+  }
   int crt = g_pending_crt_filter;
   if (crt >= 0) {
     g_pending_crt_filter = -1;
@@ -610,6 +627,16 @@ void SecondScreen_RunFrameHook(void) {
   if (g_pending_controls_set) {
     g_pending_controls_set = 0;
     GamepadMap_SetControls(g_pending_controls);
+  }
+  if (g_pending_memory_dump) {
+    g_pending_memory_dump = 0;
+#ifdef __3DS__
+    extern bool Platform3DS_DumpMemory(const uint8 *ram, size_t ram_size,
+                                       const uint8 *sram, size_t sram_size,
+                                       const uint16 *vram, size_t vram_words);
+    Platform3DS_DumpMemory(g_ram, 131072, g_zenv.sram, 8192,
+                           g_zenv.vram, 32768);
+#endif
   }
   int state_cmd = g_pending_state_cmd;
   if (state_cmd >= 0) {
