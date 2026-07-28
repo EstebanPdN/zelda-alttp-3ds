@@ -151,10 +151,11 @@ static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
   c->rep_count--;
 }
 
-static void ConfigurePpuSideSpace() {
+static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
   // Let PPU impl know about the maximum allowed extra space on the sides and bottom
   int extra_right = 0, extra_left = 0, extra_bottom = 0;
 //  printf("main %d, sub %d  (%d, %d, %d)\n", main_module_index, submodule_index, BG2HOFS_copy2, room_bounds_x.v[2 | (quadrant_fullsize_x >> 1)], quadrant_fullsize_x >> 1);
+  int bg2_hofs = use_camera_x ? camera_x : BG2HOFS_copy2;
   int mod = main_module_index;
   if (mod == 14)
     mod = saved_module_for_menu;
@@ -169,16 +170,16 @@ static void ConfigurePpuSideSpace() {
       extra_bottom = 16;
     } else {
       // outdoors
-      extra_left = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
-      extra_right = ow_scroll_vars0.xend - BG2HOFS_copy2;
+      extra_left = bg2_hofs - ow_scroll_vars0.xstart;
+      extra_right = ow_scroll_vars0.xend - bg2_hofs;
       extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
     }
   } else if (mod == 7) {
     // indoors, except when the light cone is in use
     if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
       int qm = quadrant_fullsize_x >> 1;
-      extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
-      extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
+      extra_left = IntMax(bg2_hofs - room_bounds_x.v[qm], 0);
+      extra_right = IntMax(room_bounds_x.v[qm + 2] - bg2_hofs, 0);
     }
 
     int qy = quadrant_fullsize_y >> 1;
@@ -205,6 +206,8 @@ int ZeldaGetWidescreenFixedCameraMargin(void) {
       !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
       (main_module_index != 7 && main_module_index != 9))
     return 0;
+  if (submodule_index != 0)
+    return 0;
   if (main_module_index == 7 && hdr_dungeon_dark_with_lantern && TS_copy != 0)
     return 0;
   return g_zenv.ppu->extraLeftRight;
@@ -212,10 +215,7 @@ int ZeldaGetWidescreenFixedCameraMargin(void) {
 
 typedef struct FixedCameraRenderState {
   bool active;
-  uint16 bg1_hofs_copy2;
-  uint16 bg2_hofs_copy2;
-  uint16 bg1_hofs_copy;
-  uint16 bg2_hofs_copy;
+  uint16 visual_x;
   uint16 ppu_bg1_hscroll;
   uint16 ppu_bg2_hscroll;
   uint16 oam[0x110];
@@ -270,19 +270,12 @@ static FixedCameraRenderState BeginFixedCameraRender(void) {
     return state;
 
   state.active = true;
-  state.bg1_hofs_copy2 = BG1HOFS_copy2;
-  state.bg2_hofs_copy2 = BG2HOFS_copy2;
-  state.bg1_hofs_copy = BG1HOFS_copy;
-  state.bg2_hofs_copy = BG2HOFS_copy;
+  state.visual_x = visual_x;
   state.ppu_bg1_hscroll = g_zenv.ppu->bgLayer[0].hScroll;
   state.ppu_bg2_hscroll = g_zenv.ppu->bgLayer[1].hScroll;
   memcpy(state.oam, g_zenv.ppu->oam, sizeof(state.oam));
 
   int delta = (int)BG2HOFS_copy2 - (int)visual_x;
-  BG1HOFS_copy2 -= delta;
-  BG2HOFS_copy2 = visual_x;
-  BG1HOFS_copy -= delta;
-  BG2HOFS_copy = visual_x;
   g_zenv.ppu->bgLayer[0].hScroll =
       (state.ppu_bg1_hscroll - delta) & 0x3ff;
   g_zenv.ppu->bgLayer[1].hScroll = visual_x & 0x3ff;
@@ -293,10 +286,6 @@ static FixedCameraRenderState BeginFixedCameraRender(void) {
 static void EndFixedCameraRender(const FixedCameraRenderState *state) {
   if (!state->active)
     return;
-  BG1HOFS_copy2 = state->bg1_hofs_copy2;
-  BG2HOFS_copy2 = state->bg2_hofs_copy2;
-  BG1HOFS_copy = state->bg1_hofs_copy;
-  BG2HOFS_copy = state->bg2_hofs_copy;
   g_zenv.ppu->bgLayer[0].hScroll = state->ppu_bg1_hscroll;
   g_zenv.ppu->bgLayer[1].hScroll = state->ppu_bg2_hscroll;
   memcpy(g_zenv.ppu->oam, state->oam, sizeof(state->oam));
@@ -477,7 +466,8 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   FixedCameraRenderState fixed_camera_state = BeginFixedCameraRender();
 
   if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240)
-    ConfigurePpuSideSpace();
+    ConfigurePpuSideSpace(fixed_camera_state.visual_x,
+                          fixed_camera_state.active);
 
   PpuSetWindow1Ext(g_zenv.ppu, g_spotlight_ext_active ? g_spotlight_ext_left : NULL,
                    g_spotlight_ext_active ? g_spotlight_ext_right : NULL);
