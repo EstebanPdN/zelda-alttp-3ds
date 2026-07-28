@@ -1003,14 +1003,25 @@ static void draw_remap_panel(RectFS r) {
   }
 }
 
-static const char *screen_mode_label(void) {
+static const char *display_mode_label(void) {
 #ifdef __3DS__
-  if (Platform3DS_GetDisplayMode() != kPlatform3DSDisplayUltraWideMod)
-    return "STANDARD";
-  return Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeLogicWide ?
-         "FORCE WIDE" : "WIDE";
+  switch (Platform3DS_GetDisplayMode()) {
+  case kPlatform3DSDisplayOriginal: return "ORIGINAL";
+  case kPlatform3DSDisplayStretch: return "STRETCH";
+  case kPlatform3DSDisplayUltraWideMod:
+  default: return "WIDE";
+  }
 #else
   return SS_IsWidescreen() ? "WIDE MOD" : "ORIGINAL";
+#endif
+}
+
+static const char *wide_mode_label(void) {
+#ifdef __3DS__
+  return Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeLogicWide ?
+         "FORCE" : "NORMAL";
+#else
+  return "NORMAL";
 #endif
 }
 
@@ -1022,11 +1033,11 @@ static void draw_screen_panel(RectFS r) {
   draw_text("BACK", screen_back_r.x + screen_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
             screen_back_r.y + screen_back_r.h / 2 - 9 * u, 2.2f * u);
 
-  static const char *const labels[1] = {"SCREEN MODE"};
-  const char *values[1] = {screen_mode_label()};
+  static const char *const labels[2] = {"DISPLAY MODE", "WIDE MODE"};
+  const char *values[2] = {display_mode_label(), wide_mode_label()};
   float row_h = 58 * u, gap = 14 * u;
   float y0 = r.y + 82 * u;
-  for (int i = 0; i < 1; i++) {
+  for (int i = 0; i < 2; i++) {
     RectFS *row = &screen_row_r[i];
     *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
     draw_settings_row(row, false);
@@ -1301,32 +1312,42 @@ static void handle_tap(float x, float y) {
       if (in_rect(&screen_back_r, x, y)) {
         screen_mode = false;
       } else if (in_rect(&screen_row_r[0], x, y)) {
-        enum Platform3DSDisplayMode display_mode = kPlatform3DSDisplayStretch;
+        enum Platform3DSDisplayMode display_mode = kPlatform3DSDisplayUltraWideMod;
         enum Platform3DSWideEdgeMode edge_mode = kPlatform3DSWideEdgeSafeCamera;
 #ifdef __3DS__
-        if (Platform3DS_GetDisplayMode() != kPlatform3DSDisplayUltraWideMod) {
-          display_mode = kPlatform3DSDisplayUltraWideMod;
-          edge_mode = kPlatform3DSWideEdgeSafeCamera;
-        } else if (Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeSafeCamera) {
-          display_mode = kPlatform3DSDisplayUltraWideMod;
-          edge_mode = kPlatform3DSWideEdgeLogicWide;
-        } else {
+        switch (Platform3DS_GetDisplayMode()) {
+        case kPlatform3DSDisplayOriginal:
           display_mode = kPlatform3DSDisplayStretch;
-          edge_mode = kPlatform3DSWideEdgeSafeCamera;
+          break;
+        case kPlatform3DSDisplayStretch:
+          display_mode = kPlatform3DSDisplayUltraWideMod;
+          break;
+        case kPlatform3DSDisplayUltraWideMod:
+        default:
+          display_mode = kPlatform3DSDisplayOriginal;
+          break;
         }
+        edge_mode = Platform3DS_GetWideEdgeMode();
 #else
-        display_mode = SS_IsWidescreen() ? kPlatform3DSDisplayStretch :
+        display_mode = SS_IsWidescreen() ? kPlatform3DSDisplayOriginal :
                        kPlatform3DSDisplayUltraWideMod;
 #endif
         SS_Set3DSDisplayMode((int)display_mode);
         SS_Set3DSWideEdgeMode((int)edge_mode);
 #ifdef __3DS__
-        Platform3DS_SetWideEdgeMode(edge_mode);
         Platform3DS_SetDisplayMode(display_mode);
 #endif
         update_ini("[General]", "DisplayMode",
-                   display_mode != kPlatform3DSDisplayUltraWideMod ? "Standard" :
-                   edge_mode == kPlatform3DSWideEdgeLogicWide ? "ForceWide" : "Wide");
+                   display_mode == kPlatform3DSDisplayOriginal ? "Original" :
+                   display_mode == kPlatform3DSDisplayStretch ? "Stretch" : "Wide");
+      } else if (in_rect(&screen_row_r[1], x, y)) {
+        enum Platform3DSWideEdgeMode edge_mode = kPlatform3DSWideEdgeSafeCamera;
+#ifdef __3DS__
+        edge_mode = Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeSafeCamera ?
+                    kPlatform3DSWideEdgeLogicWide : kPlatform3DSWideEdgeSafeCamera;
+        Platform3DS_SetWideEdgeMode(edge_mode);
+#endif
+        SS_Set3DSWideEdgeMode((int)edge_mode);
         update_ini("[General]", "WideEdgeMode",
                    edge_mode == kPlatform3DSWideEdgeLogicWide ? "LogicWide" : "SafeCamera");
       }

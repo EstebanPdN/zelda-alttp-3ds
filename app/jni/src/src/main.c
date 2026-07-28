@@ -756,6 +756,9 @@ int main(int argc, char** argv) {
 #endif
   uint32 frameCtr = 0;
   bool audiopaused = true;
+#ifdef __3DS__
+  bool system_exit_requested = false;
+#endif
 
   if (g_config.autosave)
     HandleCommand(kKeys_Load + 0, true);
@@ -763,6 +766,7 @@ int main(int argc, char** argv) {
   while(running) {
 #ifdef __3DS__
     if (Platform3DS_ShouldExit()) {
+      system_exit_requested = true;
       running = false;
       break;
     }
@@ -805,6 +809,9 @@ int main(int argc, char** argv) {
         HandleInput(event.key.keysym.sym, event.key.keysym.mod, false);
         break;
       case SDL_QUIT:
+#ifdef __3DS__
+        system_exit_requested = true;
+#endif
         running = false;
         break;
       }
@@ -975,11 +982,21 @@ int main(int argc, char** argv) {
     }
 #endif
   }
-  if (g_config.autosave)
+  if (g_config.autosave) {
+#ifdef __3DS__
+    Platform3DS_LogRuntime("Shutdown: autosave");
+#endif
     HandleCommand(kKeys_Save + 0, true);
+  }
 
 #ifdef __3DS__
   Platform3DS_LogRuntime("Leaving main loop");
+  if (system_exit_requested) {
+    if (device)
+      SDL_PauseAudioDevice(device, 1);
+    Platform3DS_LogRuntime("Shutdown: fast exit after system close");
+    Platform3DS_FastExit();
+  }
 #endif
 
   // clean sdl

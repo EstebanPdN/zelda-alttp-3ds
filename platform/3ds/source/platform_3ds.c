@@ -256,6 +256,11 @@ bool Platform3DS_ShouldExit(void) {
   return !aptMainLoop();
 }
 
+void Platform3DS_FastExit(void) {
+  Platform3DS_LogRuntime("Fast process exit requested");
+  svcExitProcess();
+}
+
 enum Platform3DSCStickMode Platform3DS_GetCStickMode(void) {
   return g_cstick_mode;
 }
