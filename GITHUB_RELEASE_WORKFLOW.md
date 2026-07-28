@@ -85,6 +85,7 @@ Every release must update the visible 3DS HOME Menu metadata:
 - `platform/3ds/CMakeLists.txt`
 - `platform/3ds/build.sh`
 - project README/version references
+- `platform/3ds/cia/zelda3.rsf` when a new HOME Menu entry is needed
 
 The long HOME Menu name should include the version, for example:
 
@@ -92,8 +93,13 @@ The long HOME Menu name should include the version, for example:
 A Link to the Past 3DS vX.Y
 ```
 
-After building, parse the generated SMDH to confirm the new long name is
-present. Do not rely only on filenames.
+After building, parse both generated icon metadata files and the final CIA to
+confirm the new long name is present and any old HOME Menu name is absent. Do
+not rely only on filenames.
+
+If hardware still shows an older HOME Menu name after installing a new CIA, bump
+the RSF `UniqueId` for the next release so the 3DS creates a fresh title entry
+instead of reusing cached metadata from an older install.
 
 ## Changelog Rules
 
