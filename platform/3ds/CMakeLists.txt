@@ -72,6 +72,8 @@ target_link_options(zelda3-3ds PRIVATE -O3 -flto)
 target_link_libraries(zelda3-3ds PRIVATE
   SDL2::SDL2main
   SDL2::SDL2-static
+  citro2d
+  citro3d
   ctru
   m
 )

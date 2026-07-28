@@ -31,11 +31,24 @@ bool Platform3DS_TakeQuickDumpRequest(void);
 int Platform3DS_GetTurboMultiplier(void);
 void Platform3DS_SetTurboMultiplier(int multiplier);
 bool Platform3DS_InitTopPresenter(void);
+void Platform3DS_ShutdownTopPresenter(void);
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
                                  int width, int height);
-void Platform3DS_WaitForVBlank(void);
-void Platform3DS_RecordFrameTiming(uint32_t top_work_us,
-                                   uint32_t total_work_us);
+void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
+                                    int width, int height);
+void Platform3DS_EndFrame(void);
+uint32_t Platform3DS_WaitForVBlank(void);
+void Platform3DS_RecordFrameTiming(uint32_t logic_work_us,
+                                   uint32_t top_draw_us,
+                                   uint32_t ppu_draw_us,
+                                   uint32_t capture_us,
+                                   uint32_t present_us,
+                                   uint32_t top_work_us,
+                                   uint32_t bottom_work_us,
+                                   uint32_t total_work_us,
+                                   uint32_t render_interval_us,
+                                   int scheduled_logic_frames,
+                                   int executed_logic_frames);
 bool Platform3DS_CreateDumpDirectory(char *out, size_t out_size);
 bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8_t *pixels,
                                  int pitch, int width, int height);

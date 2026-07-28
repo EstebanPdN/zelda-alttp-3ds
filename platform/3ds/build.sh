@@ -22,9 +22,9 @@ if [[ ! -f "${SDL_PREFIX}/lib/cmake/SDL2/SDL2Config.cmake" ]]; then
     -DSDL_SHARED=OFF \
     -DSDL_STATIC=ON \
     -DSDL_TEST=OFF
-  cmake --build "${SDL_BUILD}" --parallel
-  cmake --install "${SDL_BUILD}"
 fi
+cmake --build "${SDL_BUILD}" --parallel
+cmake --install "${SDL_BUILD}"
 
 cmake \
   -S "${ROOT}/platform/3ds" \

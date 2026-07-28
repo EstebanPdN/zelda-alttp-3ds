@@ -34,6 +34,11 @@ typedef struct PpuPixelPrioBufs {
   PpuZbufType data[kPpuXPixels];
 } PpuPixelPrioBufs;
 
+typedef struct PpuTileCache {
+  uint32_t keys[0x8000];
+  uint32_t pixels[0x8000];
+} PpuTileCache;
+
 enum {
   kPpuRenderFlags_NewRenderer = 1,
   // Render mode7 upsampled by 4x4
@@ -52,6 +57,7 @@ struct Ppu {
   uint8_t renderFlags;
   uint32_t renderPitch;
   uint8_t *renderBuffer;
+  PpuTileCache *tileCache;
   uint8_t extraLeftCur, extraRightCur, extraLeftRight, extraBottomCur;
   float mode7PerspectiveLow, mode7PerspectiveHigh;
 

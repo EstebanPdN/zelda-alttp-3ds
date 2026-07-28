@@ -1077,29 +1077,41 @@ static void draw_tab_bar(float tab_h) {
 
 // public API
 
+static SDL_Window *main_win;
+static bool ss_enabled;
+#ifdef __3DS__
+static uint8_t *ss_present_pixels[2];
+static int ss_front_buffer = -1;
+static int ss_worker_buffer;
+static bool ss_worker_busy;
+static bool ss_frame_ready;
+static bool ss_worker_running;
+static Thread ss_worker_thread;
+static LightEvent ss_worker_start;
+static LightEvent ss_worker_done;
+static int ss_worker_logic_frames;
+enum {
+  k3DSBottomTextureWidth = 512,
+  k3DSBottomTextureHeight = 256,
+};
+static void draw_second_screen(int logic_frames);
+#endif
+
 static void request_dump_now(void) {
   char dump_dir[160] = {0};
 #ifdef __3DS__
-  if (Platform3DS_CreateDumpDirectory(dump_dir, sizeof(dump_dir)) && ss_r) {
-    int bw = W, bh = H, pitch = bw * 4;
-    uint8_t *pixels = malloc((size_t)pitch * (size_t)bh);
-    if (pixels) {
-      if (SDL_RenderReadPixels(ss_r, NULL, SDL_PIXELFORMAT_ARGB8888,
-                               pixels, pitch) == 0) {
-        char path[192];
-        snprintf(path, sizeof(path), "%s/bottom-screen.bmp", dump_dir);
-        Platform3DS_SaveARGB8888Bmp(path, pixels, pitch, bw, bh);
-      }
-      free(pixels);
-    }
+  if (Platform3DS_CreateDumpDirectory(dump_dir, sizeof(dump_dir)) &&
+      ss_front_buffer >= 0 && ss_present_pixels[ss_front_buffer]) {
+    char path[192];
+    snprintf(path, sizeof(path), "%s/bottom-screen.bmp", dump_dir);
+    Platform3DS_SaveARGB8888Bmp(
+      path, ss_present_pixels[ss_front_buffer],
+      k3DSBottomTextureWidth * 4, W, H);
   }
 #endif
   SS_RequestMemoryDump(dump_dir);
   dump_flash_until = SDL_GetTicks() + 1200;
 }
-
-static SDL_Window *main_win;
-static bool ss_enabled;
 
 bool SecondScreenSDL_Init(SDL_Window *main_window) {
 #ifdef __3DS__
@@ -1175,6 +1187,27 @@ static bool ensure_window(void) {
   ss_winid = SDL_GetWindowID(ss_win);
   SDL_GetRendererOutputSize(ss_r, &W, &H);
   if (W <= 0 || H <= 0) { W = 640; H = 480; }
+#ifdef __3DS__
+  for (int i = 0; i < 2; i++) {
+    ss_present_pixels[i] = linearMemAlign(
+      k3DSBottomTextureWidth * k3DSBottomTextureHeight * 4, 64);
+    if (ss_present_pixels[i]) {
+      memset(ss_present_pixels[i], 0,
+             k3DSBottomTextureWidth * k3DSBottomTextureHeight * 4);
+    }
+  }
+  if (!ss_present_pixels[0] || !ss_present_pixels[1]) {
+    Platform3DS_LogRuntime("ERROR bottom GPU upload buffer allocation");
+    for (int i = 0; i < 2; i++) {
+      linearFree(ss_present_pixels[i]);
+      ss_present_pixels[i] = NULL;
+    }
+    SDL_DestroyRenderer(ss_r); ss_r = NULL;
+    SDL_DestroyWindow(ss_win); ss_win = NULL;
+    ss_enabled = false;
+    return false;
+  }
+#endif
   u = unit_for_size(W, H);
   printf("second screen: display %d of %d, %dx%d (u=%.2f)\n", target, n, W, H, u);
 #ifdef __3DS__
@@ -1182,6 +1215,18 @@ static bool ensure_window(void) {
                          target, n, W, H);
 #endif
   return true;
+}
+
+static void present_second_screen(void) {
+#ifdef __3DS__
+  if (!ss_present_pixels[ss_worker_buffer])
+    return;
+  SDL_RenderReadPixels(
+    ss_r, NULL, SDL_PIXELFORMAT_ARGB8888,
+    ss_present_pixels[ss_worker_buffer], k3DSBottomTextureWidth * 4);
+#else
+  SDL_RenderPresent(ss_r);
+#endif
 }
 
 static void handle_tap(float x, float y) {
@@ -1336,18 +1381,15 @@ void SecondScreenSDL_Handle3DSTouch(void) {
 #endif
 }
 
-void SecondScreenSDL_Update(int logic_frames) {
+static void draw_second_screen(int logic_frames) {
   if (!ss_enabled) return;
+#ifndef __3DS__
   static uint32_t frame_no;
   frame_no++;
   if (!ss_win) {
     if (frame_no < 3) return;      // let the game settle its first GL frames
     if (!ensure_window()) return;  // disables itself on failure
   }
-#ifdef __3DS__
-  int divisor = logic_frames <= 1 ? 2 : 6;  // 30fps when caught up, 10fps when catching up.
-  if (frame_no % divisor) return;
-#else
   (void)logic_frames;
   if (frame_no & 1) return;   // UI renders at 30fps
 #endif
@@ -1374,7 +1416,7 @@ void SecondScreenSDL_Update(int logic_frames) {
       // engine still booting: quiet dark frame
       set_color(COL_BOX);
       SDL_RenderClear(ss_r);
-      SDL_RenderPresent(ss_r);
+      present_second_screen();
       return;
     }
   }
@@ -1406,7 +1448,7 @@ void SecondScreenSDL_Update(int logic_frames) {
   if ((in_house || special) && !has_last_outdoor && !have_exit) ui_mode = MODE_CINEMA;
   if (ui_mode != MODE_GAME) {
     draw_cinema();
-    SDL_RenderPresent(ss_r);
+    present_second_screen();
     return;
   }
   if (!indoors && area < 0x80 && (module == 0x09 || module == 0x0B)) {
@@ -1443,8 +1485,91 @@ void SecondScreenSDL_Update(int logic_frames) {
     draw_sidebar(W - side_w + 4 * u, 10 * u, side_w - 14 * u, H - tab_h - 14 * u, dungeon_mode);
   draw_tab_bar(tab_h);
 
-  SDL_RenderPresent(ss_r);
+  present_second_screen();
 }
+
+#ifdef __3DS__
+static void second_screen_worker_main(void *unused) {
+  (void)unused;
+  for (;;) {
+    LightEvent_Wait(&ss_worker_start);
+    if (!ss_worker_running)
+      break;
+    draw_second_screen(ss_worker_logic_frames);
+    LightEvent_Signal(&ss_worker_done);
+  }
+}
+
+static bool ensure_second_screen_worker(void) {
+  if (ss_worker_thread)
+    return true;
+  LightEvent_Init(&ss_worker_start, RESET_ONESHOT);
+  LightEvent_Init(&ss_worker_done, RESET_ONESHOT);
+  s32 priority = 0x30;
+  svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
+  if (priority < 0x3f)
+    priority++;
+  ss_worker_running = true;
+  ss_worker_thread = threadCreate(
+    second_screen_worker_main, NULL, 48 * 1024, priority, 0, false);
+  if (!ss_worker_thread) {
+    ss_worker_running = false;
+    Platform3DS_LogRuntime(
+      "Bottom worker: asynchronous thread unavailable, using synchronous redraws");
+    return false;
+  }
+  Platform3DS_LogRuntime(
+    "Bottom worker: asynchronous low-priority Core 0 renderer enabled");
+  return true;
+}
+
+void SecondScreenSDL_BeginFrame(int logic_frames) {
+  if (!ss_enabled)
+    return;
+  static uint32_t frame_no;
+  frame_no++;
+  if (!ss_win) {
+    if (frame_no < 3 || !ensure_window())
+      return;
+  }
+
+  if (!ensure_second_screen_worker()) {
+    ss_worker_buffer = ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer;
+    draw_second_screen(logic_frames);
+    ss_front_buffer = ss_worker_buffer;
+    ss_frame_ready = true;
+    return;
+  }
+
+  if (ss_worker_busy && LightEvent_TryWait(&ss_worker_done)) {
+    ss_front_buffer = ss_worker_buffer;
+    ss_worker_busy = false;
+    ss_frame_ready = true;
+  }
+
+  int divisor = logic_frames <= 1 ? 2 : 6;
+  if (!ss_worker_busy && frame_no % divisor == 0) {
+    ss_worker_buffer = ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer;
+    ss_worker_logic_frames = logic_frames;
+    ss_worker_busy = true;
+    LightEvent_Signal(&ss_worker_start);
+  }
+}
+
+void SecondScreenSDL_Update(int logic_frames) {
+  (void)logic_frames;
+  if (!ss_frame_ready || ss_front_buffer < 0)
+    return;
+  Platform3DS_PresentBottomFrame(
+    ss_present_pixels[ss_front_buffer],
+    k3DSBottomTextureWidth * 4, W, H);
+  ss_frame_ready = false;
+}
+#else
+void SecondScreenSDL_Update(int logic_frames) {
+  draw_second_screen(logic_frames);
+}
+#endif
 
 static void destroy_textures(void) {
   SDL_Texture **texes[] = {&tex_map[0], &tex_map[1], &tex_icons, &tex_glyphs,
@@ -1477,6 +1602,19 @@ static void rebuild_renderer(int w2, int h2) {
 
 void SecondScreenSDL_Shutdown(void) {
   ss_enabled = false;
+#ifdef __3DS__
+  if (ss_worker_thread) {
+    ss_worker_running = false;
+    LightEvent_Signal(&ss_worker_start);
+    threadJoin(ss_worker_thread, U64_MAX);
+    threadFree(ss_worker_thread);
+    ss_worker_thread = NULL;
+  }
+  for (int i = 0; i < 2; i++) {
+    linearFree(ss_present_pixels[i]);
+    ss_present_pixels[i] = NULL;
+  }
+#endif
   if (!ss_win) return;
   destroy_textures();
   SDL_DestroyRenderer(ss_r); ss_r = NULL;

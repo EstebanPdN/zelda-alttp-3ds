@@ -256,9 +256,14 @@ static void N3DSAUDIO_ThreadInit(_THIS)
 {
     s32 current_priority;
     svcGetThreadPriority(&current_priority, CUR_THREAD_HANDLE);
-    current_priority--;
+    /*
+     * Keep audio just below the game thread. NDSP is triple-buffered, so the
+     * mixer can run between frame-pacing intervals without preempting the
+     * top-screen scanline renderer mid-frame.
+     */
+    current_priority++;
     /* 0x18 is reserved for video, 0x30 is the default for main thread */
-    current_priority = SDL_clamp(current_priority, 0x19, 0x2F);
+    current_priority = SDL_clamp(current_priority, 0x19, 0x31);
     svcSetThreadPriority(CUR_THREAD_HANDLE, current_priority);
 }
 

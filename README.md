@@ -24,8 +24,12 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 - New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
 - Quick diagnostics: press `L + R + A` to create a dump with memory files plus
   top and bottom screenshots.
-- Native RGB565 top-screen presentation synchronized to the 3DS VBlank, with
-  frame-time diagnostics included in quick dumps.
+- PICA200/Citro2D presentation for both screens with nearest-neighbor sampling
+  and RGB565 display output.
+- Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making
+  game speed depend on when a VBlank wait returns.
+- Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
+  with persistent tile-row caches and frame-time diagnostics in quick dumps.
 - HOME Menu metadata is versioned for each build. v1.7 appears as
   `Zelda ALttP 3DS` / `Zelda A Link to the Past 3DS v1.7`.
 - HOME Menu banner uses a lightweight CGFX 3D box model with the supplied

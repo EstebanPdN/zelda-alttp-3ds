@@ -49,7 +49,7 @@ AccessControlInfo:
   SystemModeExt: Legacy
   CpuSpeed: 804MHz
   EnableL2Cache: true
-  CanAccessCore2: false
+  CanAccessCore2: true
 
   IORegisterMapping:
     - 1ff00000-1ff7ffff

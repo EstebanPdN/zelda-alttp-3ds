@@ -1,6 +1,7 @@
 #include "platform_3ds.h"
 
 #include <3ds.h>
+#include <citro2d.h>
 #include <dirent.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -16,6 +17,7 @@
 #include "features.h"
 #include "types.h"
 #include "util.h"
+#include "zelda_rtl.h"
 
 static const char kStorageDirectory[] = "sdmc:/3ds/Zelda 3DS";
 static const char kAssetsFilename[] = "zelda3_assets.dat";
@@ -24,7 +26,7 @@ static const char kBundledPatch[] = "romfs:/zelda3_assets.bps";
 static const char kBundledConfig[] = "romfs:/zelda3.ini";
 
 static enum Platform3DSDisplayMode g_display_mode =
-  kPlatform3DSDisplayUltraWideMod;
+  kPlatform3DSDisplayStretch;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_quick_dump_requested;
@@ -33,10 +35,42 @@ static bool g_core1_time_enabled;
 static uint64_t g_frame_timing_samples;
 static uint64_t g_top_work_total_us;
 static uint64_t g_total_work_total_us;
+static uint64_t g_logic_work_total_us;
+static uint64_t g_top_draw_total_us;
+static uint64_t g_ppu_draw_total_us;
+static uint64_t g_capture_total_us;
+static uint64_t g_present_total_us;
+static uint64_t g_bottom_work_total_us;
 static uint64_t g_top_frames_over_budget;
 static uint64_t g_total_frames_over_budget;
+static uint32_t g_logic_work_max_us;
+static uint32_t g_top_draw_max_us;
+static uint32_t g_ppu_draw_max_us;
+static uint32_t g_capture_max_us;
+static uint32_t g_present_max_us;
+static uint32_t g_bottom_work_max_us;
 static uint32_t g_top_work_max_us;
 static uint32_t g_total_work_max_us;
+static uint64_t g_render_interval_samples;
+static uint64_t g_render_interval_total_us;
+static uint64_t g_scheduled_logic_frames;
+static uint64_t g_timed_scheduled_logic_frames;
+static uint64_t g_executed_logic_frames;
+static uint64_t g_catchup_presentations;
+static uint32_t g_max_scheduled_logic_frames;
+static bool g_gpu_presenter_initialized;
+static bool g_gpu_frame_active;
+static C3D_RenderTarget *g_top_target;
+static C3D_RenderTarget *g_bottom_target;
+static C3D_Tex g_top_texture;
+static C3D_Tex g_bottom_texture;
+static Tex3DS_SubTexture g_top_subtexture;
+static Tex3DS_SubTexture g_bottom_subtexture;
+
+enum {
+  kTopTextureWidth = 512,
+  kTopTextureHeight = 256,
+};
 
 static void LogSetup(const char *format, ...) {
   FILE *log = fopen("setup-progress.txt", "ab");
@@ -174,8 +208,7 @@ enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void) {
 }
 
 void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode) {
-  if (mode < kPlatform3DSDisplayOriginal ||
-      mode > kPlatform3DSDisplayStretch)
+  if (mode > kPlatform3DSDisplayStretch)
     mode = kPlatform3DSDisplayUltraWideMod;
   g_display_mode = mode;
   Platform3DS_LogRuntime("Display mode set: %d", (int)g_display_mode);
@@ -186,8 +219,7 @@ enum Platform3DSCStickMode Platform3DS_GetCStickMode(void) {
 }
 
 void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode) {
-  if (mode < kPlatform3DSCStickTurbo ||
-      mode > kPlatform3DSCStickDisabled)
+  if (mode > kPlatform3DSCStickDisabled)
     mode = kPlatform3DSCStickTurbo;
   g_cstick_mode = mode;
   Platform3DS_LogRuntime("C-stick mode set: %d", (int)g_cstick_mode);
@@ -223,105 +255,351 @@ bool Platform3DS_InitTopPresenter(void) {
   // on New 3DS. CIA builds also request the faster clock in their exheader.
   osSetSpeedupEnable(true);
 
-  // Give SDL's audio worker access to a small share of the system core. Its
-  // 3DS thread backend uses an all-core affinity, so this reduces contention
-  // with game logic and PPU rendering on the application core.
-  g_core1_time_enabled = R_SUCCEEDED(APT_SetAppCpuTimeLimit(20));
+  // Reserve part of the system core for a parallel PPU segment.
+  g_core1_time_enabled = R_SUCCEEDED(APT_SetAppCpuTimeLimit(30));
 
   // Zelda's source image is derived from the SNES 15-bit palette. RGB565 keeps
   // that detail while halving the top framebuffer bandwidth versus RGBA8.
   gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);
+  gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
   gfxSetDoubleBuffering(GFX_TOP, true);
+  gfxSetDoubleBuffering(GFX_BOTTOM, true);
+
+  if (!C3D_Init(C3D_DEFAULT_CMDBUF_SIZE)) {
+    Platform3DS_LogRuntime("ERROR: unable to initialize Citro2D presenter");
+    return false;
+  }
+  if (!C2D_Init(64)) {
+    C3D_Fini();
+    Platform3DS_LogRuntime("ERROR: unable to initialize Citro2D presenter");
+    return false;
+  }
+  C2D_Prepare();
+  if (!C3D_TexInitVRAM(&g_top_texture, kTopTextureWidth,
+                       kTopTextureHeight, GPU_RGBA8)) {
+    C2D_Fini();
+    C3D_Fini();
+    Platform3DS_LogRuntime("ERROR: unable to allocate top GPU texture");
+    return false;
+  }
+  C3D_TexSetFilter(&g_top_texture, GPU_NEAREST, GPU_NEAREST);
+  C3D_TexSetWrap(&g_top_texture, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+  if (!C3D_TexInitVRAM(&g_bottom_texture, kTopTextureWidth,
+                       kTopTextureHeight, GPU_RGBA8)) {
+    C3D_TexDelete(&g_top_texture);
+    C2D_Fini();
+    C3D_Fini();
+    Platform3DS_LogRuntime("ERROR: unable to allocate bottom GPU texture");
+    return false;
+  }
+  C3D_TexSetFilter(&g_bottom_texture, GPU_NEAREST, GPU_NEAREST);
+  C3D_TexSetWrap(&g_bottom_texture, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+
+  g_top_target = C3D_RenderTargetCreate(
+    GSP_SCREEN_WIDTH, GSP_SCREEN_HEIGHT_TOP,
+    GPU_RB_RGBA8, GPU_RB_DEPTH16);
+  if (!g_top_target) {
+    C3D_TexDelete(&g_bottom_texture);
+    C3D_TexDelete(&g_top_texture);
+    C2D_Fini();
+    C3D_Fini();
+    Platform3DS_LogRuntime("ERROR: unable to allocate top GPU target");
+    return false;
+  }
+  C3D_RenderTargetSetOutput(
+    g_top_target, GFX_TOP, GFX_LEFT,
+    GX_TRANSFER_FLIP_VERT(0) |
+      GX_TRANSFER_OUT_TILED(0) |
+      GX_TRANSFER_RAW_COPY(0) |
+      GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+      GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
+      GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+  g_bottom_target = C3D_RenderTargetCreate(
+    GSP_SCREEN_WIDTH, GSP_SCREEN_HEIGHT_BOTTOM,
+    GPU_RB_RGBA8, GPU_RB_DEPTH16);
+  if (!g_bottom_target) {
+    C3D_RenderTargetDelete(g_top_target);
+    g_top_target = NULL;
+    C3D_TexDelete(&g_bottom_texture);
+    C3D_TexDelete(&g_top_texture);
+    C2D_Fini();
+    C3D_Fini();
+    Platform3DS_LogRuntime("ERROR: unable to allocate bottom GPU target");
+    return false;
+  }
+  C3D_RenderTargetSetOutput(
+    g_bottom_target, GFX_BOTTOM, GFX_LEFT,
+    GX_TRANSFER_FLIP_VERT(0) |
+      GX_TRANSFER_OUT_TILED(0) |
+      GX_TRANSFER_RAW_COPY(0) |
+      GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+      GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
+      GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+  g_gpu_presenter_initialized = true;
 
   g_frame_timing_samples = 0;
   g_top_work_total_us = 0;
   g_total_work_total_us = 0;
+  g_logic_work_total_us = 0;
+  g_top_draw_total_us = 0;
+  g_ppu_draw_total_us = 0;
+  g_capture_total_us = 0;
+  g_present_total_us = 0;
+  g_bottom_work_total_us = 0;
   g_top_frames_over_budget = 0;
   g_total_frames_over_budget = 0;
+  g_logic_work_max_us = 0;
+  g_top_draw_max_us = 0;
+  g_ppu_draw_max_us = 0;
+  g_capture_max_us = 0;
+  g_present_max_us = 0;
+  g_bottom_work_max_us = 0;
   g_top_work_max_us = 0;
   g_total_work_max_us = 0;
+  g_render_interval_samples = 0;
+  g_render_interval_total_us = 0;
+  g_scheduled_logic_frames = 0;
+  g_timed_scheduled_logic_frames = 0;
+  g_executed_logic_frames = 0;
+  g_catchup_presentations = 0;
+  g_max_scheduled_logic_frames = 0;
   Platform3DS_LogRuntime(
-    "Top presenter: native RGB565, New 3DS=%s, Core 1 audio budget=%s",
+    "Top presenter: PICA200 RGB565, 60 Hz timer pacing, New 3DS=%s, "
+    "Core 1 PPU budget=%s",
     g_is_new_3ds ? "yes" : "no",
-    g_core1_time_enabled ? "20%" : "unavailable");
+    g_core1_time_enabled ? "30%" : "unavailable");
   return gfxGetScreenFormat(GFX_TOP) == GSP_RGB565_OES;
 }
 
-static inline uint16_t ARGB8888ToRGB565(uint32_t color) {
-  return (uint16_t)(((color >> 8) & 0xf800) |
-                    ((color >> 5) & 0x07e0) |
-                    ((color >> 3) & 0x001f));
+void Platform3DS_ShutdownTopPresenter(void) {
+  if (!g_gpu_presenter_initialized)
+    return;
+  Platform3DS_EndFrame();
+  C3D_FrameSync();
+  C3D_RenderTargetDelete(g_bottom_target);
+  g_bottom_target = NULL;
+  C3D_RenderTargetDelete(g_top_target);
+  g_top_target = NULL;
+  C3D_TexDelete(&g_bottom_texture);
+  C3D_TexDelete(&g_top_texture);
+  C2D_Fini();
+  C3D_Fini();
+  g_gpu_presenter_initialized = false;
+}
+
+static void ConfigureArgbTextureEnv(void) {
+  C3D_TexEnv *env = C3D_GetTexEnv(0);
+  C3D_TexEnvInit(env);
+  C3D_TexEnvSrc(env, C3D_RGB, GPU_TEXTURE0, GPU_CONSTANT, GPU_PREVIOUS);
+  C3D_TexEnvOpRgb(env, GPU_TEVOP_RGB_SRC_G,
+                  GPU_TEVOP_RGB_SRC_COLOR,
+                  GPU_TEVOP_RGB_SRC_COLOR);
+  C3D_TexEnvFunc(env, C3D_RGB, GPU_MODULATE);
+  C3D_TexEnvSrc(env, C3D_Alpha, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
+  C3D_TexEnvFunc(env, C3D_Alpha, GPU_REPLACE);
+  C3D_TexEnvColor(env, C2D_Color32(255, 0, 0, 255));
+
+  env = C3D_GetTexEnv(1);
+  C3D_TexEnvInit(env);
+  C3D_TexEnvSrc(env, C3D_RGB, GPU_TEXTURE0, GPU_CONSTANT, GPU_PREVIOUS);
+  C3D_TexEnvOpRgb(env, GPU_TEVOP_RGB_SRC_B,
+                  GPU_TEVOP_RGB_SRC_COLOR,
+                  GPU_TEVOP_RGB_SRC_COLOR);
+  C3D_TexEnvFunc(env, C3D_RGB, GPU_MULTIPLY_ADD);
+  C3D_TexEnvColor(env, C2D_Color32(0, 255, 0, 255));
+
+  env = C3D_GetTexEnv(2);
+  C3D_TexEnvInit(env);
+  C3D_TexEnvSrc(env, C3D_RGB, GPU_TEXTURE0, GPU_CONSTANT, GPU_PREVIOUS);
+  C3D_TexEnvOpRgb(env, GPU_TEVOP_RGB_SRC_ALPHA,
+                  GPU_TEVOP_RGB_SRC_COLOR,
+                  GPU_TEVOP_RGB_SRC_COLOR);
+  C3D_TexEnvFunc(env, C3D_RGB, GPU_MULTIPLY_ADD);
+  C3D_TexEnvColor(env, C2D_Color32(0, 0, 255, 255));
 }
 
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
                                  int width, int height) {
-  if (!pixels || pitch < width * 4 || width <= 0 || height <= 0)
+  if (!g_gpu_presenter_initialized || !pixels ||
+      pitch != kTopTextureWidth * 4 ||
+      width <= 0 || width > kTopTextureWidth ||
+      height <= 0 || height > kTopTextureHeight)
     return;
 
-  u16 native_width = 0;
-  u16 native_height = 0;
-  uint16_t *framebuffer = (uint16_t *)gfxGetFramebuffer(
-    GFX_TOP, GFX_LEFT, &native_width, &native_height);
-  if (!framebuffer || native_width == 0 || native_height == 0)
+  if (!C3D_FrameBegin(0))
+    return;
+  g_gpu_frame_active = true;
+  GSPGPU_FlushDataCache(pixels,
+                        kTopTextureWidth * kTopTextureHeight * 4);
+  C3D_SyncDisplayTransfer(
+    (u32 *)pixels, GX_BUFFER_DIM(kTopTextureWidth, kTopTextureHeight),
+    (u32 *)g_top_texture.data,
+    GX_BUFFER_DIM(kTopTextureWidth, kTopTextureHeight),
+    GX_TRANSFER_FLIP_VERT(0) |
+      GX_TRANSFER_OUT_TILED(1) |
+      GX_TRANSFER_RAW_COPY(0) |
+      GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+      GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+      GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+
+  const bool stretch = g_display_mode == kPlatform3DSDisplayStretch;
+  const float draw_width = stretch ? (float)GSP_SCREEN_HEIGHT_TOP :
+                                     (float)width;
+  const float draw_height =
+    height < GSP_SCREEN_WIDTH ? (float)height : (float)GSP_SCREEN_WIDTH;
+  g_top_subtexture = (Tex3DS_SubTexture){
+    .width = (u16)width,
+    .height = (u16)height,
+    .left = 0.0f,
+    .top = 1.0f,
+    .right = (float)width / kTopTextureWidth,
+    .bottom = 1.0f - (float)height / kTopTextureHeight,
+  };
+  C2D_Image image = {
+    .tex = &g_top_texture,
+    .subtex = &g_top_subtexture,
+  };
+  C2D_DrawParams params = {
+    .pos = {
+      .x = (GSP_SCREEN_HEIGHT_TOP - draw_width) * 0.5f,
+      .y = (GSP_SCREEN_WIDTH - draw_height) * 0.5f,
+      .w = draw_width,
+      .h = draw_height,
+    },
+    .center = { 0.0f, 0.0f },
+    .depth = 0.0f,
+    .angle = 0.0f,
+  };
+
+  C2D_TargetClear(g_top_target, C2D_Color32(0, 0, 0, 255));
+  C2D_SceneBegin(g_top_target);
+  C2D_DrawImage(image, &params, NULL);
+  ConfigureArgbTextureEnv();
+}
+
+void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
+                                    int width, int height) {
+  if (!g_gpu_frame_active || !pixels ||
+      pitch != kTopTextureWidth * 4 ||
+      width <= 0 || width > kTopTextureWidth ||
+      height <= 0 || height > kTopTextureHeight)
     return;
 
-  const int output_width = native_height;
-  const int output_height = native_width;
-  const int copy_height = height < output_height ? height : output_height;
-  const int y_offset = (output_height - copy_height) / 2;
-  const enum Platform3DSDisplayMode mode = g_display_mode;
-  const int x_offset = (output_width - width) / 2;
+  GSPGPU_FlushDataCache(pixels,
+                        kTopTextureWidth * kTopTextureHeight * 4);
+  C3D_SyncDisplayTransfer(
+    (u32 *)pixels, GX_BUFFER_DIM(kTopTextureWidth, kTopTextureHeight),
+    (u32 *)g_bottom_texture.data,
+    GX_BUFFER_DIM(kTopTextureWidth, kTopTextureHeight),
+    GX_TRANSFER_FLIP_VERT(0) |
+      GX_TRANSFER_OUT_TILED(1) |
+      GX_TRANSFER_RAW_COPY(0) |
+      GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+      GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+      GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
 
-  for (int x = 0; x < output_width; x++) {
-    int source_x = -1;
-    if (mode == kPlatform3DSDisplayStretch) {
-      source_x = x * width / output_width;
-    } else if (x >= x_offset && x < x_offset + width) {
-      source_x = x - x_offset;
-    }
-
-    uint16_t *destination = framebuffer + x * output_height;
-    if (source_x < 0 || source_x >= width) {
-      memset(destination, 0, (size_t)output_height * sizeof(*destination));
-      continue;
-    }
-
-    if (y_offset > 0) {
-      memset(destination, 0, (size_t)y_offset * sizeof(*destination));
-      memset(destination + y_offset + copy_height, 0,
-             (size_t)(output_height - y_offset - copy_height) *
-               sizeof(*destination));
-    }
-
-    const uint8_t *source = pixels + source_x * 4;
-    uint16_t *out = destination + output_height - y_offset - 1;
-    for (int y = 0; y < copy_height; y++, source += pitch)
-      *out-- = ARGB8888ToRGB565(*(const uint32_t *)source);
-  }
-
-  GSPGPU_FlushDataCache(framebuffer,
-                        (size_t)output_width * output_height *
-                          sizeof(*framebuffer));
-  gfxScreenSwapBuffers(GFX_TOP, false);
+  g_bottom_subtexture = (Tex3DS_SubTexture){
+    .width = (u16)width,
+    .height = (u16)height,
+    .left = 0.0f,
+    .top = 1.0f,
+    .right = (float)width / kTopTextureWidth,
+    .bottom = 1.0f - (float)height / kTopTextureHeight,
+  };
+  C2D_Image image = {
+    .tex = &g_bottom_texture,
+    .subtex = &g_bottom_subtexture,
+  };
+  C2D_DrawParams params = {
+    .pos = {
+      .x = (GSP_SCREEN_HEIGHT_BOTTOM - width) * 0.5f,
+      .y = (GSP_SCREEN_WIDTH - height) * 0.5f,
+      .w = (float)width,
+      .h = (float)height,
+    },
+    .center = { 0.0f, 0.0f },
+    .depth = 0.0f,
+    .angle = 0.0f,
+  };
+  C2D_TargetClear(g_bottom_target, C2D_Color32(0, 0, 0, 255));
+  C2D_SceneBegin(g_bottom_target);
+  C2D_DrawImage(image, &params, NULL);
+  ConfigureArgbTextureEnv();
 }
 
-void Platform3DS_WaitForVBlank(void) {
-  gspWaitForVBlank();
+void Platform3DS_EndFrame(void) {
+  if (!g_gpu_frame_active)
+    return;
+  C3D_FrameEnd(0);
+  g_gpu_frame_active = false;
 }
 
-void Platform3DS_RecordFrameTiming(uint32_t top_work_us,
-                                   uint32_t total_work_us) {
+uint32_t Platform3DS_WaitForVBlank(void) {
+  uint64_t before = svcGetSystemTick();
+  // Consume an already-signaled VBlank when rendering crossed the refresh
+  // boundary. Waiting for an additional refresh here turns a small miss into
+  // a full-frame stutter; Citro3D serializes framebuffer transfers itself.
+  gspWaitForEvent(GSPGPU_EVENT_VBlank0, false);
+  uint64_t elapsed = svcGetSystemTick() - before;
+  return (uint32_t)(elapsed * 1000000ull / SYSCLOCK_ARM11);
+}
+
+void Platform3DS_RecordFrameTiming(uint32_t logic_work_us,
+                                   uint32_t top_draw_us,
+                                   uint32_t ppu_draw_us,
+                                   uint32_t capture_us,
+                                   uint32_t present_us,
+                                   uint32_t top_work_us,
+                                   uint32_t bottom_work_us,
+                                   uint32_t total_work_us,
+                                   uint32_t render_interval_us,
+                                   int scheduled_logic_frames,
+                                   int executed_logic_frames) {
   g_frame_timing_samples++;
+  g_logic_work_total_us += logic_work_us;
+  g_top_draw_total_us += top_draw_us;
+  g_ppu_draw_total_us += ppu_draw_us;
+  g_capture_total_us += capture_us;
+  g_present_total_us += present_us;
   g_top_work_total_us += top_work_us;
+  g_bottom_work_total_us += bottom_work_us;
   g_total_work_total_us += total_work_us;
+  if (logic_work_us > g_logic_work_max_us)
+    g_logic_work_max_us = logic_work_us;
+  if (top_draw_us > g_top_draw_max_us)
+    g_top_draw_max_us = top_draw_us;
+  if (ppu_draw_us > g_ppu_draw_max_us)
+    g_ppu_draw_max_us = ppu_draw_us;
+  if (capture_us > g_capture_max_us)
+    g_capture_max_us = capture_us;
+  if (present_us > g_present_max_us)
+    g_present_max_us = present_us;
   if (top_work_us > g_top_work_max_us)
     g_top_work_max_us = top_work_us;
+  if (bottom_work_us > g_bottom_work_max_us)
+    g_bottom_work_max_us = bottom_work_us;
   if (total_work_us > g_total_work_max_us)
     g_total_work_max_us = total_work_us;
   if (top_work_us > 16667)
     g_top_frames_over_budget++;
   if (total_work_us > 16667)
     g_total_frames_over_budget++;
+  if (render_interval_us != 0) {
+    g_render_interval_samples++;
+    g_render_interval_total_us += render_interval_us;
+    if (scheduled_logic_frames > 0)
+      g_timed_scheduled_logic_frames +=
+        (uint32_t)scheduled_logic_frames;
+  }
+  if (scheduled_logic_frames > 0) {
+    g_scheduled_logic_frames += (uint32_t)scheduled_logic_frames;
+    if (scheduled_logic_frames > 1)
+      g_catchup_presentations++;
+    if ((uint32_t)scheduled_logic_frames > g_max_scheduled_logic_frames)
+      g_max_scheduled_logic_frames = (uint32_t)scheduled_logic_frames;
+  }
+  if (executed_logic_frames > 0)
+    g_executed_logic_frames += (uint32_t)executed_logic_frames;
 }
 
 static bool HasExtension(const char *name, const char *extension) {
@@ -625,7 +903,8 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->crt_filter = false;
   config->enhanced_mode7 = false;
   config->new_renderer = true;
-  config->extend_y = true;
+  config->no_sprite_limits = false;
+  config->extend_y = false;
   config->extended_aspect_ratio =
     g_display_mode == kPlatform3DSDisplayUltraWideMod ? 72 : 0;
   config->features0 &= ~(kFeatures0_ExtendScreen64 |
@@ -774,14 +1053,56 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "SRAM bytes: %lu\n", (unsigned long)sram_size);
     fprintf(info, "VRAM words: %lu\n", (unsigned long)vram_words);
     fprintf(info, "Display mode: %d\n", (int)g_display_mode);
-    fprintf(info, "Top presenter: native RGB565\n");
+    fprintf(info, "Top presenter: PICA200 RGB565\n");
+    fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",
             g_is_new_3ds ? "yes" : "no");
-    fprintf(info, "Core 1 audio budget: %s\n",
-            g_core1_time_enabled ? "20%" : "unavailable");
+    fprintf(info, "Core 1 PPU budget: %s\n",
+            g_core1_time_enabled ? "30%" : "unavailable");
+    int ppu_split_line = 0;
+    uint32 ppu_main_time_us = 0;
+    uint32 ppu_worker_time_us = 0;
+    bool ppu_worker_enabled =
+      ZeldaGetPpuWorkerStats(&ppu_split_line,
+                             &ppu_main_time_us,
+                             &ppu_worker_time_us);
+    fprintf(info, "Parallel PPU renderer: %s\n",
+            ppu_worker_enabled ? "enabled" : "unavailable");
+    if (ppu_worker_enabled) {
+      fprintf(info, "PPU split line: %d\n", ppu_split_line);
+      fprintf(info, "Last main PPU segment: %lu us\n",
+              (unsigned long)ppu_main_time_us);
+      fprintf(info, "Last slowest PPU worker: %lu us\n",
+              (unsigned long)ppu_worker_time_us);
+    }
     fprintf(info, "Frame timing samples: %llu\n",
             (unsigned long long)g_frame_timing_samples);
     if (g_frame_timing_samples != 0) {
+      fprintf(info, "Average logic work: %llu us\n",
+              (unsigned long long)(g_logic_work_total_us /
+                                   g_frame_timing_samples));
+      fprintf(info, "Maximum logic work: %lu us\n",
+              (unsigned long)g_logic_work_max_us);
+      fprintf(info, "Average top draw/present: %llu us\n",
+              (unsigned long long)(g_top_draw_total_us /
+                                   g_frame_timing_samples));
+      fprintf(info, "Maximum top draw/present: %lu us\n",
+              (unsigned long)g_top_draw_max_us);
+      fprintf(info, "Average PPU draw: %llu us\n",
+              (unsigned long long)(g_ppu_draw_total_us /
+                                   g_frame_timing_samples));
+      fprintf(info, "Maximum PPU draw: %lu us\n",
+              (unsigned long)g_ppu_draw_max_us);
+      fprintf(info, "Average capture hooks: %llu us\n",
+              (unsigned long long)(g_capture_total_us /
+                                   g_frame_timing_samples));
+      fprintf(info, "Maximum capture hooks: %lu us\n",
+              (unsigned long)g_capture_max_us);
+      fprintf(info, "Average native present: %llu us\n",
+              (unsigned long long)(g_present_total_us /
+                                   g_frame_timing_samples));
+      fprintf(info, "Maximum native present: %lu us\n",
+              (unsigned long)g_present_max_us);
       fprintf(info, "Average top frame work: %llu us\n",
               (unsigned long long)(g_top_work_total_us /
                                    g_frame_timing_samples));
@@ -789,6 +1110,11 @@ bool Platform3DS_DumpMemory(const char *directory,
               (unsigned long)g_top_work_max_us);
       fprintf(info, "Top frames over 16.67 ms: %llu\n",
               (unsigned long long)g_top_frames_over_budget);
+      fprintf(info, "Average bottom work: %llu us\n",
+              (unsigned long long)(g_bottom_work_total_us /
+                                   g_frame_timing_samples));
+      fprintf(info, "Maximum bottom work: %lu us\n",
+              (unsigned long)g_bottom_work_max_us);
       fprintf(info, "Average total frame work: %llu us\n",
               (unsigned long long)(g_total_work_total_us /
                                    g_frame_timing_samples));
@@ -796,6 +1122,32 @@ bool Platform3DS_DumpMemory(const char *directory,
               (unsigned long)g_total_work_max_us);
       fprintf(info, "Total frames over 16.67 ms: %llu\n",
               (unsigned long long)g_total_frames_over_budget);
+      if (g_render_interval_samples != 0 &&
+          g_render_interval_total_us != 0) {
+        uint64_t presentation_rate_x100 =
+          g_render_interval_samples * 100000000ull /
+          g_render_interval_total_us;
+        uint64_t logic_rate_x100 =
+          g_timed_scheduled_logic_frames * 100000000ull /
+          g_render_interval_total_us;
+        fprintf(info, "Average presentation interval: %llu us\n",
+                (unsigned long long)(g_render_interval_total_us /
+                                     g_render_interval_samples));
+        fprintf(info, "Measured presentation rate: %llu.%02llu Hz\n",
+                (unsigned long long)(presentation_rate_x100 / 100),
+                (unsigned long long)(presentation_rate_x100 % 100));
+        fprintf(info, "Measured normal logic rate: %llu.%02llu Hz\n",
+                (unsigned long long)(logic_rate_x100 / 100),
+                (unsigned long long)(logic_rate_x100 % 100));
+      }
+      fprintf(info, "Scheduled normal logic frames: %llu\n",
+              (unsigned long long)g_scheduled_logic_frames);
+      fprintf(info, "Executed logic frames including turbo: %llu\n",
+              (unsigned long long)g_executed_logic_frames);
+      fprintf(info, "Catch-up presentations: %llu\n",
+              (unsigned long long)g_catchup_presentations);
+      fprintf(info, "Maximum scheduled frames per presentation: %lu\n",
+              (unsigned long)g_max_scheduled_logic_frames);
     }
     if (g_turbo_multiplier > 0)
       fprintf(info, "Turbo speed: x%d\n", g_turbo_multiplier);

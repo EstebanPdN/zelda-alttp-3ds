@@ -6,6 +6,7 @@
 #include <math.h>
 #include <SDL.h>
 #ifdef __3DS__
+#include <3ds.h>
 #include <malloc.h>
 #endif
 #ifdef _WIN32
@@ -42,6 +43,9 @@ bool SecondScreenSDL_Init(SDL_Window *main_window);
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e);
 void SecondScreenSDL_Handle3DSTouch(void);
 void SecondScreenSDL_Update(int logic_frames);
+#ifdef __3DS__
+void SecondScreenSDL_BeginFrame(int logic_frames);
+#endif
 void SecondScreenSDL_RequestDump(void);
 void SecondScreenSDL_Shutdown(void);
 
@@ -91,6 +95,17 @@ static int g_sdl_audio_mixer_volume = SDL_MIX_MAXVOLUME;
 static struct RendererFuncs g_renderer_funcs;
 static uint32 g_gamepad_modifiers;
 static uint16 g_gamepad_last_cmd[kGamepadBtn_Count];
+#ifdef __3DS__
+static uint32 g_3ds_last_ppu_draw_us;
+static uint32 g_3ds_last_capture_us;
+static uint32 g_3ds_last_present_us;
+
+static uint32 TicksToMicroseconds(uint64 ticks) {
+  uint64 frequency = SDL_GetPerformanceFrequency();
+  return frequency != 0 ?
+    (uint32)(ticks * 1000000ull / frequency) : 0;
+}
+#endif
 
 void NORETURN Die(const char *error) {
 #if defined(NDEBUG) && defined(_WIN32)
@@ -174,10 +189,19 @@ static void DrawPpuFrameWithPerf() {
   int render_scale = PpuGetCurrentRenderScale(g_zenv.ppu, g_ppu_render_flags);
   uint8 *pixel_buffer = 0;
   int pitch = 0;
+#ifdef __3DS__
+  uint64 section_start;
+  g_3ds_last_ppu_draw_us = 0;
+  g_3ds_last_capture_us = 0;
+  g_3ds_last_present_us = 0;
+#endif
 
   g_renderer_funcs.BeginDraw(g_snes_width * render_scale,
                              g_snes_height * render_scale,
                              &pixel_buffer, &pitch);
+#ifdef __3DS__
+  section_start = SDL_GetPerformanceCounter();
+#endif
   if (g_display_perf || g_config.display_perf_title) {
     static float history[64], average;
     static int history_pos;
@@ -192,6 +216,11 @@ static void DrawPpuFrameWithPerf() {
   } else {
     ZeldaDrawPpuFrame(pixel_buffer, pitch, g_ppu_render_flags);
   }
+#ifdef __3DS__
+  g_3ds_last_ppu_draw_us =
+    TicksToMicroseconds(SDL_GetPerformanceCounter() - section_start);
+  section_start = SDL_GetPerformanceCounter();
+#endif
   if (g_display_perf)
     RenderNumber(pixel_buffer + pitch * render_scale, pitch, g_curr_fps, render_scale == 4);
   // the second screen's save-state picker grabs a thumbnail off this frame
@@ -201,7 +230,16 @@ static void DrawPpuFrameWithPerf() {
   extern void SecondScreen_CaptureDumpTopHook(const uint8 *px, int pitch, int width, int height);
   SecondScreen_CaptureDumpTopHook(pixel_buffer, pitch,
                                   g_snes_width * render_scale, g_snes_height * render_scale);
+#ifdef __3DS__
+  g_3ds_last_capture_us =
+    TicksToMicroseconds(SDL_GetPerformanceCounter() - section_start);
+  section_start = SDL_GetPerformanceCounter();
+#endif
   g_renderer_funcs.EndDraw();
+#ifdef __3DS__
+  g_3ds_last_present_us =
+    TicksToMicroseconds(SDL_GetPerformanceCounter() - section_start);
+#endif
 }
 
 static SDL_mutex *g_audio_mutex;
@@ -242,6 +280,8 @@ static uint8 *g_3ds_top_pixels;
 enum {
   k3DSTopWidth = 400,
   k3DSTopHeight = 240,
+  k3DSTopTextureWidth = 512,
+  k3DSTopTextureHeight = 256,
 };
 #endif
 
@@ -351,13 +391,16 @@ static bool SdlRenderer_Init(SDL_Window *window) {
 
 #ifdef __3DS__
   (void)window;
-  g_3ds_top_pixels = memalign(64, k3DSTopWidth * k3DSTopHeight * 4);
+  g_3ds_top_pixels =
+    linearMemAlign(k3DSTopTextureWidth * k3DSTopTextureHeight * 4, 64);
   if (!g_3ds_top_pixels) {
     SDL_SetError("Unable to allocate native 3DS top framebuffer");
     return false;
   }
+  memset(g_3ds_top_pixels, 0,
+         k3DSTopTextureWidth * k3DSTopTextureHeight * 4);
   if (!Platform3DS_InitTopPresenter()) {
-    free(g_3ds_top_pixels);
+    linearFree(g_3ds_top_pixels);
     g_3ds_top_pixels = NULL;
     SDL_SetError("Unable to initialize native 3DS top presenter");
     return false;
@@ -400,7 +443,8 @@ static bool SdlRenderer_Init(SDL_Window *window) {
 
 static void SdlRenderer_Destroy() {
 #ifdef __3DS__
-  free(g_3ds_top_pixels);
+  Platform3DS_ShutdownTopPresenter();
+  linearFree(g_3ds_top_pixels);
   g_3ds_top_pixels = NULL;
 #else
   CrtFilter_Free();
@@ -419,7 +463,7 @@ static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pi
     return;
   }
   *pixels = g_3ds_top_pixels;
-  *pitch = width * 4;
+  *pitch = k3DSTopTextureWidth * 4;
 #else
   if (SDL_LockTexture(g_texture, &g_sdl_renderer_rect, (void **)pixels, pitch) != 0) {
     printf("Failed to lock texture: %s\n", SDL_GetError());
@@ -432,7 +476,7 @@ static void SdlRenderer_EndDraw() {
 
 #ifdef __3DS__
   Platform3DS_PresentTopFrame(g_3ds_top_pixels,
-                              g_sdl_renderer_rect.w * 4,
+                              k3DSTopTextureWidth * 4,
                               g_sdl_renderer_rect.w,
                               g_sdl_renderer_rect.h);
 #else
@@ -491,7 +535,7 @@ void ZeldaSetWidescreen(bool enable) {
 void ZeldaSet3DSDisplayMode(int mode) {
   enum Platform3DSDisplayMode display_mode = (enum Platform3DSDisplayMode)mode;
   bool wide = display_mode == kPlatform3DSDisplayUltraWideMod;
-  int extra = wide ? (g_snes_height * 5 / 3 - 256) / 2 : 0;
+  int extra = wide ? 72 : 0;
   uint32 ws_features = kFeatures0_ExtendScreen64 | kFeatures0_WidescreenVisualFixes;
 
   g_config.ignore_aspect_ratio = display_mode == kPlatform3DSDisplayStretch;
@@ -699,6 +743,11 @@ int main(int argc, char** argv) {
 #ifndef __3DS__
   uint32 lastTick = SDL_GetTicks();
   uint32 curTick = 0;
+#else
+  const uint64 logic_frequency = SDL_GetPerformanceFrequency();
+  uint64 logic_last_counter = SDL_GetPerformanceCounter();
+  uint64 logic_accumulator = logic_frequency;
+  uint64 last_render_counter = 0;
 #endif
   uint32 frameCtr = 0;
   bool audiopaused = true;
@@ -766,6 +815,42 @@ int main(int argc, char** argv) {
     int rendered_logic_frames = 1;
 #ifdef __3DS__
     uint64 frame_work_start = SDL_GetPerformanceCounter();
+    uint64 elapsed_ticks = frame_work_start - logic_last_counter;
+    logic_last_counter = frame_work_start;
+    if (elapsed_ticks > logic_frequency / 4) {
+      logic_accumulator = logic_frequency;
+      last_render_counter = 0;
+    } else {
+      logic_accumulator += elapsed_ticks * 60;
+    }
+
+    int scheduled_logic_frames = (int)(logic_accumulator / logic_frequency);
+    if (scheduled_logic_frames == 0) {
+      uint64 remaining_ticks =
+        (logic_frequency - logic_accumulator + 59) / 60;
+      uint64 remaining_ns =
+        remaining_ticks * 1000000000ull / logic_frequency;
+      if (remaining_ns > 300000)
+        svcSleepThread((int64)(remaining_ns - 200000));
+      else
+        svcSleepThread(0);
+      continue;
+    }
+    if (scheduled_logic_frames > 5) {
+      scheduled_logic_frames = 5;
+      logic_accumulator = 0;
+    } else {
+      logic_accumulator -= (uint64)scheduled_logic_frames * logic_frequency;
+    }
+
+    uint32 render_interval_us = 0;
+    if (last_render_counter != 0) {
+      render_interval_us = (uint32)(
+        (frame_work_start - last_render_counter) * 1000000ull /
+        logic_frequency);
+    }
+    last_render_counter = frame_work_start;
+
     bool turbo_held;
     int turbo_multiplier;
     inputs = Platform3DS_ReadInput(&turbo_held, &turbo_multiplier);
@@ -773,11 +858,12 @@ int main(int argc, char** argv) {
     if (Platform3DS_TakeQuickDumpRequest())
       SecondScreenSDL_RequestDump();
     g_turbo = turbo_held;
-    int frames_to_run = g_turbo ? turbo_multiplier : 1;
+    int frames_to_run = scheduled_logic_frames *
+                        (g_turbo ? turbo_multiplier : 1);
     if (frames_to_run < 1)
       frames_to_run = 1;
-    if (frames_to_run > 5)
-      frames_to_run = 5;
+    if (frames_to_run > 20)
+      frames_to_run = 20;
     rendered_logic_frames = frames_to_run;
     for (int i = 0; i < frames_to_run; i++) {
       extern void SecondScreen_RunFrameHook(void);
@@ -788,6 +874,7 @@ int main(int argc, char** argv) {
       SDL_UnlockMutex(g_audio_mutex);
       frameCtr++;
     }
+    uint64 logic_work_ticks = SDL_GetPerformanceCounter() - frame_work_start;
 #else
     // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
     inputs = g_input1_state;
@@ -809,21 +896,42 @@ int main(int argc, char** argv) {
     }
 #endif
 
+#ifdef __3DS__
+    SecondScreenSDL_BeginFrame(rendered_logic_frames);
+    uint64 top_draw_start = SDL_GetPerformanceCounter();
+#endif
     DrawPpuFrameWithPerf();
 #ifdef __3DS__
+    uint64 top_draw_ticks = SDL_GetPerformanceCounter() - top_draw_start;
     uint64 top_work_ticks = SDL_GetPerformanceCounter() - frame_work_start;
+    uint64 bottom_work_start = SDL_GetPerformanceCounter();
 #endif
     SecondScreenSDL_Update(rendered_logic_frames);
 
 #ifdef __3DS__
+    Platform3DS_EndFrame();
+    uint64 bottom_work_ticks =
+      SDL_GetPerformanceCounter() - bottom_work_start;
     uint64 total_work_ticks = SDL_GetPerformanceCounter() - frame_work_start;
     uint64 performance_frequency = SDL_GetPerformanceFrequency();
+    uint32 logic_work_us = performance_frequency != 0 ?
+      (uint32)(logic_work_ticks * 1000000ull / performance_frequency) : 0;
+    uint32 top_draw_us = performance_frequency != 0 ?
+      (uint32)(top_draw_ticks * 1000000ull / performance_frequency) : 0;
     uint32 top_work_us = performance_frequency != 0 ?
       (uint32)(top_work_ticks * 1000000ull / performance_frequency) : 0;
+    uint32 bottom_work_us = performance_frequency != 0 ?
+      (uint32)(bottom_work_ticks * 1000000ull / performance_frequency) : 0;
     uint32 total_work_us = performance_frequency != 0 ?
       (uint32)(total_work_ticks * 1000000ull / performance_frequency) : 0;
-    Platform3DS_RecordFrameTiming(top_work_us, total_work_us);
-    Platform3DS_WaitForVBlank();
+    Platform3DS_RecordFrameTiming(logic_work_us, top_draw_us,
+                                  g_3ds_last_ppu_draw_us,
+                                  g_3ds_last_capture_us,
+                                  g_3ds_last_present_us,
+                                  top_work_us, bottom_work_us, total_work_us,
+                                  render_interval_us,
+                                  scheduled_logic_frames,
+                                  frames_to_run);
 #else
 
     if (g_config.display_perf_title) {
@@ -865,6 +973,7 @@ int main(int argc, char** argv) {
   SDL_DestroyMutex(g_audio_mutex);
   free(g_audiobuffer);
 
+  ZeldaShutdownPpuWorker();
   g_renderer_funcs.Destroy();
 
   SecondScreenSDL_Shutdown();

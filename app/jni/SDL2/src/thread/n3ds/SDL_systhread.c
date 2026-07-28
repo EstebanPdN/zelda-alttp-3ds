@@ -57,7 +57,7 @@ int SDL_SYS_CreateThread(SDL_Thread *thread)
                                   thread,
                                   stack_size,
                                   priority,
-                                  -1,
+                                  0,
                                   false);
 
     if (thread->handle == NULL) {

@@ -14,6 +14,10 @@
 #include "audio.h"
 #include "assets.h"
 #include "android_logging.h"
+#ifdef __3DS__
+#include <3ds.h>
+#include "platform_3ds.h"
+#endif
 /*
  * The saving functions have been rewritten in this file to support saving to external storage on android.
  */
@@ -34,7 +38,7 @@ typedef struct SimpleHdma {
   uint8 indir_bank;
 } SimpleHdma;
 static void SimpleHdma_Init(SimpleHdma *c, DmaChannel *dc);
-static void SimpleHdma_DoLine(SimpleHdma *c);
+static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu);
 
 static const uint8 bAdrOffsets[8][4] = {
   {0, 0, 0, 0},
@@ -119,7 +123,7 @@ static void SimpleHdma_Init(SimpleHdma *c, DmaChannel *dc) {
   c->indir_bank = dc->indBank;
 }
 
-static void SimpleHdma_DoLine(SimpleHdma *c) {
+static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
   if (c->table == NULL)
     return;
   bool do_transfer = false;
@@ -138,7 +142,9 @@ static void SimpleHdma_DoLine(SimpleHdma *c) {
   if(do_transfer || c->rep_count & 0x80) {
     for(int j = 0, j_end = transferLength[c->mode & 7]; j < j_end; j++) {
       uint8 v = c->mode & 0x40 ? *c->indir_ptr++ : *c->table++;
-      zelda_ppu_write(0x2100 + c->ppu_addr + bAdrOffsets[c->mode & 7][j], v);
+      ppu_write(ppu,
+                c->ppu_addr + bAdrOffsets[c->mode & 7][j],
+                v);
     }
   }
   c->rep_count--;
@@ -183,23 +189,173 @@ static void ConfigurePpuSideSpace() {
   PpuSetExtraSideSpace(g_zenv.ppu, extra_left, extra_right, extra_bottom);
 }
 
-void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
+static void ZeldaDrawPpuLines(Ppu *ppu, int height,
+                              int first_line, int last_line,
+                              uint8 irq_state) {
   SimpleHdma hdma_chans[2];
+  SimpleHdma_Init(&hdma_chans[0], &g_zenv.dma->channel[6]);
+  SimpleHdma_Init(&hdma_chans[1], &g_zenv.dma->channel[7]);
+
+  for (int i = 0; i <= height; i++) {
+    if (i == 128 && irq_state) {
+      ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8);
+      ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8 >> 8);
+      ppu_write(ppu, (uint8)BG3VOFS, 0);
+      ppu_write(ppu, (uint8)BG3VOFS, 0);
+    }
+    if (i >= first_line && i <= last_line)
+      ppu_runLine(ppu, i);
+    SimpleHdma_DoLine(&hdma_chans[0], ppu);
+    SimpleHdma_DoLine(&hdma_chans[1], ppu);
+  }
+}
+
+#ifdef __3DS__
+typedef struct PpuWorkerState {
+  Ppu ppu;
+  PpuTileCache tile_cache;
+  int height;
+  int first_line;
+  int last_line;
+  uint8 irq_state;
+  uint64 duration_ticks;
+  LightEvent done;
+  Thread thread;
+  bool running;
+  uint32 job_id;
+} PpuWorkerState;
+
+static PpuWorkerState g_ppu_system_worker;
+static PpuWorkerState g_ppu_new_worker;
+static bool g_ppu_worker_initialized;
+static int g_ppu_split_line = 112;
+static int g_ppu_last_split_line = 112;
+static uint64 g_ppu_main_duration_ticks;
+
+static void ZeldaPpuWorkerMain(void *argument) {
+  PpuWorkerState *state = (PpuWorkerState *)argument;
+  uint32 completed_job = 0;
+  while (__atomic_load_n(&state->running, __ATOMIC_ACQUIRE)) {
+    uint32 job = __atomic_load_n(&state->job_id, __ATOMIC_ACQUIRE);
+    if (job == completed_job) {
+      __asm__ volatile("yield");
+      continue;
+    }
+    uint64 start = svcGetSystemTick();
+    ZeldaDrawPpuLines(&state->ppu, state->height,
+                      state->first_line, state->last_line,
+                      state->irq_state);
+    state->duration_ticks = svcGetSystemTick() - start;
+    completed_job = job;
+    LightEvent_Signal(&state->done);
+  }
+}
+
+static bool ZeldaCreatePpuWorker(PpuWorkerState *state,
+                                 int core, s32 priority) {
+  LightEvent_Init(&state->done, RESET_ONESHOT);
+  state->running = true;
+  state->thread = threadCreate(
+    ZeldaPpuWorkerMain, state, 32 * 1024, priority, core, false);
+  if (!state->thread) {
+    state->running = false;
+    return false;
+  }
+  return true;
+}
+
+static int ZeldaEnsurePpuWorkers(void) {
+  if (g_ppu_worker_initialized)
+    return (g_ppu_system_worker.thread != NULL) +
+           (g_ppu_new_worker.thread != NULL);
+  g_ppu_worker_initialized = true;
+
+  bool is_new_3ds = false;
+  APT_CheckNew3DS(&is_new_3ds);
+  s32 priority = 0x30;
+  svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
+
+  bool system_worker =
+    ZeldaCreatePpuWorker(&g_ppu_system_worker, 1, priority);
+  bool new_worker = is_new_3ds &&
+    ZeldaCreatePpuWorker(&g_ppu_new_worker, 2, priority);
+  int count = system_worker + new_worker;
+  if (count == 0) {
+    Platform3DS_LogRuntime(
+      "PPU workers: unavailable, using sequential renderer");
+  } else {
+    Platform3DS_LogRuntime(
+      "PPU workers: Core 1=%s, Core 2=%s",
+      system_worker ? "enabled" : "unavailable",
+      new_worker ? "enabled" : "unavailable");
+  }
+  return count;
+}
+
+void ZeldaShutdownPpuWorker(void) {
+  PpuWorkerState *workers[] = {
+    &g_ppu_system_worker, &g_ppu_new_worker,
+  };
+  for (size_t i = 0; i < countof(workers); i++) {
+    PpuWorkerState *state = workers[i];
+    if (!state->thread)
+      continue;
+    __atomic_store_n(&state->running, false, __ATOMIC_RELEASE);
+    threadJoin(state->thread, U64_MAX);
+    threadFree(state->thread);
+    state->thread = NULL;
+  }
+}
+
+bool ZeldaGetPpuWorkerStats(int *split_line,
+                            uint32 *main_time_us,
+                            uint32 *worker_time_us) {
+  if (!g_ppu_system_worker.thread && !g_ppu_new_worker.thread)
+    return false;
+  if (split_line)
+    *split_line = g_ppu_last_split_line;
+  if (main_time_us) {
+    *main_time_us = (uint32)(
+      g_ppu_main_duration_ticks * 1000000ull / SYSCLOCK_ARM11);
+  }
+  if (worker_time_us) {
+    uint64 worker_ticks = g_ppu_system_worker.duration_ticks;
+    if (g_ppu_new_worker.duration_ticks > worker_ticks)
+      worker_ticks = g_ppu_new_worker.duration_ticks;
+    *worker_time_us = (uint32)(
+      worker_ticks * 1000000ull / SYSCLOCK_ARM11);
+  }
+  return true;
+}
+#else
+void ZeldaShutdownPpuWorker(void) {
+}
+
+bool ZeldaGetPpuWorkerStats(int *split_line,
+                            uint32 *main_time_us,
+                            uint32 *worker_time_us) {
+  (void)split_line;
+  (void)main_time_us;
+  (void)worker_time_us;
+  return false;
+}
+#endif
+
+void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
+  SimpleHdma hdma_probe;
 
   PpuBeginDrawing(g_zenv.ppu, pixel_buffer, pitch, render_flags);
 
   dma_startDma(g_zenv.dma, HDMAEN_copy, true);
-
-  SimpleHdma_Init(&hdma_chans[0], &g_zenv.dma->channel[6]);
-  SimpleHdma_Init(&hdma_chans[1], &g_zenv.dma->channel[7]);
+  SimpleHdma_Init(&hdma_probe, &g_zenv.dma->channel[6]);
 
   // Cheat: Let the PPU impl know about the hdma perspective correction so it can avoid guessing.
   if ((render_flags & kPpuRenderFlags_4x4Mode7) && g_zenv.ppu->mode == 7) {
-    if (hdma_chans[0].table == kMapModeHdma0)
+    if (hdma_probe.table == kMapModeHdma0)
       PpuSetMode7PerspectiveCorrection(g_zenv.ppu, kMapMode_Zooms1[0], kMapMode_Zooms1[223]);
-    else if (hdma_chans[0].table == kMapModeHdma1)
+    else if (hdma_probe.table == kMapModeHdma1)
       PpuSetMode7PerspectiveCorrection(g_zenv.ppu, kMapMode_Zooms2[0], kMapMode_Zooms2[223]);
-    else if (hdma_chans[0].table == kAttractIndirectHdmaTab)
+    else if (hdma_probe.table == kAttractIndirectHdmaTab)
       PpuSetMode7PerspectiveCorrection(g_zenv.ppu, hdma_table_dynamic[0], hdma_table_dynamic[223]);
     else
       PpuSetMode7PerspectiveCorrection(g_zenv.ppu, 0, 0);
@@ -212,21 +368,65 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
                    g_spotlight_ext_active ? g_spotlight_ext_right : NULL);
 
   int height = render_flags & kPpuRenderFlags_Height240 ? 240 : 224;
+  uint8 irq_state = irq_flag;
 
-  for (int i = 0; i <= height; i++) {
-    if (i == 128 && irq_flag) {
-      zelda_ppu_write(BG3HOFS, selectfile_var8);
-      zelda_ppu_write(BG3HOFS, selectfile_var8 >> 8);
-      zelda_ppu_write(BG3VOFS, 0);
-      zelda_ppu_write(BG3VOFS, 0);
-      if (irq_flag & 0x80) {
-        irq_flag = 0;
-        zelda_snes_dummy_write(NMITIMEN, 0x81);
-      }
+#ifdef __3DS__
+  if (ZeldaEnsurePpuWorkers()) {
+    PpuWorkerState *system_worker = &g_ppu_system_worker;
+    PpuWorkerState *new_worker = &g_ppu_new_worker;
+    int main_first = 1;
+    int main_last = height;
+
+    if (system_worker->thread && new_worker->thread) {
+      int system_last = height * 3 / 28;
+      main_first = system_last + 1;
+      main_last = (height + system_last) / 2;
+      system_worker->first_line = 1;
+      system_worker->last_line = system_last;
+      new_worker->first_line = main_last + 1;
+      new_worker->last_line = height;
+    } else if (new_worker->thread) {
+      main_last = IntMin(IntMax(g_ppu_split_line, 48), height - 48);
+      new_worker->first_line = main_last + 1;
+      new_worker->last_line = height;
+    } else {
+      int system_last = height * 3 / 13;
+      main_first = system_last + 1;
+      system_worker->first_line = 1;
+      system_worker->last_line = system_last;
     }
-    ppu_runLine(g_zenv.ppu, i);
-    SimpleHdma_DoLine(&hdma_chans[0]);
-    SimpleHdma_DoLine(&hdma_chans[1]);
+    g_ppu_last_split_line = main_last;
+
+    PpuWorkerState *workers[] = { system_worker, new_worker };
+    for (size_t i = 0; i < countof(workers); i++) {
+      PpuWorkerState *state = workers[i];
+      if (!state->thread)
+        continue;
+      memcpy(&state->ppu, g_zenv.ppu, sizeof(Ppu));
+      state->ppu.tileCache = &state->tile_cache;
+      state->height = height;
+      state->irq_state = irq_state;
+      uint32 job = state->job_id + 1;
+      __atomic_store_n(&state->job_id, job, __ATOMIC_RELEASE);
+    }
+
+    uint64 main_start = svcGetSystemTick();
+    ZeldaDrawPpuLines(g_zenv.ppu, height,
+                      main_first, main_last, irq_state);
+    g_ppu_main_duration_ticks = svcGetSystemTick() - main_start;
+    for (size_t i = 0; i < countof(workers); i++) {
+      if (workers[i]->thread)
+        LightEvent_Wait(&workers[i]->done);
+    }
+  } else
+#endif
+  {
+    ZeldaDrawPpuLines(g_zenv.ppu, height, 1, height, irq_state);
+  }
+
+  if (irq_state & 0x80) {
+    irq_flag = 0;
+    zelda_snes_dummy_write(NMITIMEN, 0x81);
   }
 }
 
