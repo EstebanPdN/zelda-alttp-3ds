@@ -1100,6 +1100,18 @@ bool Platform3DS_DumpMemory(const char *directory,
               ReadDumpRam16(ram, ram_size, 0x614),
               ReadDumpRam16(ram, ram_size, 0x616));
     }
+    if (ram_size >= 0x62c) {
+      fprintf(info, "Transition map flags: %u/%u\n",
+              ReadDumpRam16(ram, ram_size, 0x410),
+              ReadDumpRam16(ram, ram_size, 0x416));
+      fprintf(info, "Map16 loader source/destination/row: %04x/%u/%u\n",
+              ReadDumpRam16(ram, ram_size, 0x84),
+              ReadDumpRam16(ram, ram_size, 0x86),
+              ReadDumpRam16(ram, ram_size, 0x88));
+      fprintf(info, "Horizontal scroll phase: %u/%u\n",
+              ReadDumpRam16(ram, ram_size, 0x628),
+              ReadDumpRam16(ram, ram_size, 0x62a));
+    }
     fprintf(info, "Top presenter: PICA200 RGB565\n");
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",
