@@ -8185,7 +8185,13 @@ void DungeonTransition_ScrollRoom() {  // 82be03
       link_y_coord += kStaircaseTab3[i];
   }
 
-  if ((t & 0x1fc) == (&up_down_scroll_target)[i]) {
+  uint16 target = (&up_down_scroll_target)[i];
+  if (i >= 2) {
+    int margin = ZeldaGetWidescreenFixedCameraMargin();
+    // Mirror the vertical transition behavior at the wider horizontal edge.
+    target += (i == 2) ? margin : -margin;
+  }
+  if ((t & 0x1fc) == (target & 0x1fc)) {
     SetAndSaveVisitedQuadrantFlags();
     subsubmodule_index++;
     transition_counter = 0;

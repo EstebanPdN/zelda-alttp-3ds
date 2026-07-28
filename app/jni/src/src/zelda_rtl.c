@@ -204,7 +204,6 @@ int ZeldaGetWidescreenFixedCameraMargin(void) {
   if (g_widescreen_edge_mode != kZeldaWidescreenEdgeFixedCamera ||
       !(enhanced_features0 & kFeatures0_WidescreenVisualFixes) ||
       !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
-      submodule_index != 0 ||
       (main_module_index != 7 && main_module_index != 9))
     return 0;
   return g_zenv.ppu->extraLeftRight;

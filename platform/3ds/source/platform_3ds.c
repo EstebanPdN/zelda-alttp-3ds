@@ -1094,6 +1094,11 @@ bool Platform3DS_DumpMemory(const char *directory,
       fprintf(info, "Overworld bounds X: %u..%u\n",
               ReadDumpRam16(ram, ram_size, 0x604),
               ReadDumpRam16(ram, ram_size, 0x606));
+      fprintf(info, "Transition direction/counter: %u/%u\n",
+              ram[0x418], ram[0x126]);
+      fprintf(info, "Horizontal transition targets: %u..%u\n",
+              ReadDumpRam16(ram, ram_size, 0x614),
+              ReadDumpRam16(ram, ram_size, 0x616));
     }
     fprintf(info, "Top presenter: PICA200 RGB565\n");
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");

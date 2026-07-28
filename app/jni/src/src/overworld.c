@@ -1688,7 +1688,11 @@ int OverworldScrollTransition() {  // 82c001
       BG1HOFS_copy2 = BG2HOFS_copy2;
     if (transition_counter >= kOverworld_Func6B_Tab2[y])
       link_x_coord += d;
-    if (rv != (&up_down_scroll_target)[y])
+    uint16 target = (&up_down_scroll_target)[y];
+    int margin = ZeldaGetWidescreenFixedCameraMargin();
+    // End at the matching fixed edge of the destination area.
+    target += (y == 2) ? -margin : margin;
+    if (rv != target)
       return rv;
     link_x_coord &= ~7;
     camera_x_coord_scroll_hi = link_x_coord + kOverworld_Func6B_Tab3[y] + 11;
