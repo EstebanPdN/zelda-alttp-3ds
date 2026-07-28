@@ -43,6 +43,7 @@ Ppu* ppu_init() {
     return NULL;
   }
   ppu->extraLeftRight = kPpuExtraLeftRight;
+  ppu->extraSpriteClipRight = 256;
   return ppu;
 }
 
@@ -60,6 +61,8 @@ void ppu_reset(Ppu* ppu) {
   ppu->extraLeftCur = 0;
   ppu->extraRightCur = 0;
   ppu->extraBottomCur = 0;
+  ppu->extraSpriteClipLeft = 0;
+  ppu->extraSpriteClipRight = 256;
   ppu->windowExtLeft = ppu->windowExtRight = NULL;
   ppu->vramPointer = 0;
   ppu->vramIncrementOnHigh = false;
@@ -212,6 +215,18 @@ void ppu_runLine(Ppu *ppu, int line) {
     // evaluate sprites
     ClearBackdrop(ppu, &ppu->objBuffer);
     ppu->lineHasSprites = !ppu->forcedBlank && ppu_evaluateSprites(ppu, line - 1);
+    int sprite_clip_left = IntMax(ppu->extraSpriteClipLeft, -ppu->extraLeftCur);
+    int sprite_clip_right = IntMin(ppu->extraSpriteClipRight, 256 + ppu->extraRightCur);
+    if (sprite_clip_left > -ppu->extraLeftCur) {
+      PpuZbufType *dst = ppu->objBuffer.data + kPpuExtraLeftRight - ppu->extraLeftCur;
+      for (int x = -ppu->extraLeftCur; x < sprite_clip_left; x++)
+        *dst++ = 0x0500;
+    }
+    if (sprite_clip_right < 256 + ppu->extraRightCur) {
+      PpuZbufType *dst = ppu->objBuffer.data + kPpuExtraLeftRight + sprite_clip_right;
+      for (int x = sprite_clip_right; x < 256 + ppu->extraRightCur; x++)
+        *dst++ = 0x0500;
+    }
 
     // outside of visible range?
     if (line >= 225 + ppu->extraBottomCur) {
@@ -740,6 +755,13 @@ void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom) {
   ppu->extraLeftCur = UintMin(left, ppu->extraLeftRight);
   ppu->extraRightCur = UintMin(right, ppu->extraLeftRight);
   ppu->extraBottomCur = UintMin(bottom, 16);
+  ppu->extraSpriteClipLeft = -ppu->extraLeftCur;
+  ppu->extraSpriteClipRight = 256 + ppu->extraRightCur;
+}
+
+void PpuSetExtraSpriteClip(Ppu *ppu, int left, int right) {
+  ppu->extraSpriteClipLeft = left;
+  ppu->extraSpriteClipRight = right;
 }
 
 void PpuSetWindow1Ext(Ppu *ppu, const int16 *left, const int16 *right) {

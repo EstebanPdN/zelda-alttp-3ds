@@ -8084,7 +8084,39 @@ void Dungeon_AdjustQuadrant() {  // 82ba27
   composite_of_layout_and_quadrant = dung_layout_and_starting_quadrant | link_quadrant_y | link_quadrant_x;
 }
 
+static void Dungeon_ScrollCameraX(int amount) {
+  int step = amount < 0 ? -1 : 1;
+  while (amount != 0) {
+    BG2HOFS_copy2 += step;
+    if (dungeon_room_index != 0xffff) {
+      BG1HOFS_subpixel += 0x8000;
+      BG1HOFS_copy2 += (step >> 1) + ((BG1HOFS_subpixel & 0x8000) == 0);
+      camera_x_coord_scroll_low += step;
+      camera_x_coord_scroll_hi = camera_x_coord_scroll_low + 2;
+    }
+    amount -= step;
+  }
+}
+
+static void Dungeon_ClampFixedCameraX(void) {
+  int margin = ZeldaGetWidescreenFixedCameraMargin();
+  if (margin == 0)
+    return;
+
+  int qm = quadrant_fullsize_x >> 1;
+  int min_scroll = room_bounds_x.v[qm] + margin;
+  int max_scroll = room_bounds_x.v[qm + 2] - margin;
+  if (max_scroll < min_scroll)
+    return;
+
+  int current = BG2HOFS_copy2;
+  int target = current < min_scroll ? min_scroll :
+               current > max_scroll ? max_scroll : current;
+  Dungeon_ScrollCameraX(target - current);
+}
+
 void Dungeon_HandleCamera() {  // 82ba31
+  Dungeon_ClampFixedCameraX();
   if (link_y_vel) {
     int z = (allow_scroll_z && link_z_coord != 0xffff) ? link_z_coord : 0;
     int y = ((link_y_coord - z) & 0x1ff) + 12;
@@ -8129,15 +8161,10 @@ void Dungeon_HandleCamera() {  // 82ba31
       uint16 camera_limit = room_bounds_x.v[qm];
       int margin = ZeldaGetWidescreenFixedCameraMargin();
       camera_limit += (qm >= 2) ? -margin : margin;
-      if (BG2HOFS_copy2 == camera_limit)
+      if ((scrollamt < 0 && BG2HOFS_copy2 <= camera_limit) ||
+          (scrollamt > 0 && BG2HOFS_copy2 >= camera_limit))
         continue;
-      BG2HOFS_copy2 += scrollamt;
-      if (dungeon_room_index == 0xffff)
-        continue;
-      BG1HOFS_subpixel += 0x8000;
-      BG1HOFS_copy2 += (scrollamt >> 1) + ((BG1HOFS_subpixel & 0x8000) == 0);
-      camera_x_coord_scroll_low += scrollamt;
-      camera_x_coord_scroll_hi = camera_x_coord_scroll_low + 2;
+      Dungeon_ScrollCameraX(scrollamt);
     } while (--x_vel_abs);
   }
   if (dungeon_room_index != 0xffff) {

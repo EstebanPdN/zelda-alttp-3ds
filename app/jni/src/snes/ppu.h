@@ -59,6 +59,7 @@ struct Ppu {
   uint8_t *renderBuffer;
   PpuTileCache *tileCache;
   uint8_t extraLeftCur, extraRightCur, extraLeftRight, extraBottomCur;
+  int16_t extraSpriteClipLeft, extraSpriteClipRight;
   float mode7PerspectiveLow, mode7PerspectiveHigh;
 
   // TMW / TSW etc
@@ -150,6 +151,7 @@ int PpuGetCurrentRenderScale(Ppu *ppu, uint32_t render_flags);
 
 void PpuSetMode7PerspectiveCorrection(Ppu *ppu, int low, int high);
 void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom);
+void PpuSetExtraSpriteClip(Ppu *ppu, int left, int right);
 void PpuSetWindow1Ext(Ppu *ppu, const int16_t *left, const int16_t *right);
 
 #endif  // ZELDA3_SNES_PPU_H_

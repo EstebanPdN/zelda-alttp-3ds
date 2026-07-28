@@ -43,7 +43,7 @@ fi
 
 "${BANNERTOOL}" makesmdh \
   -s "Zelda ALttP 3DS" \
-  -l "Zelda A Link to the Past 3DS v1.9" \
+  -l "Zelda A Link to the Past 3DS v2.0" \
   -p "snesrev / samyost1 / 3DS port" \
   -i "${ROOT}/platform/3ds/assets/icon.png" \
   -f visible,nosavebackups \
@@ -65,7 +65,7 @@ fi
   cd "${ROOT}"
   "${MAKEROM}" \
     -f cia \
-    -o "${GAME_BUILD}/zelda3-3ds-v1.9.cia" \
+    -o "${GAME_BUILD}/zelda3-3ds-v2.0.cia" \
     -DAPP_ROMFS=build-3ds/game/romfs \
     -rsf platform/3ds/cia/zelda3.rsf \
     -target t \
@@ -76,5 +76,5 @@ fi
 )
 
 printf 'Listos:\n'
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.9.3dsx"
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.9.cia"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.0.3dsx"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.0.cia"

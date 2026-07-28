@@ -5,6 +5,7 @@
 #include "nmi.h"
 #include "poly.h"
 #include "attract.h"
+#include "overworld.h"
 #include "snes/ppu.h"
 #include "snes/snes_regs.h"
 #include "snes/dma.h"
@@ -164,7 +165,8 @@ static void ConfigurePpuSideSpace() {
     mod = player_is_indoors ? 7 : 9;
   bool preload_edges =
       (enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
-      g_widescreen_edge_mode == kZeldaWidescreenEdgePreload;
+      g_widescreen_edge_mode == kZeldaWidescreenEdgePreload &&
+      main_module_index == 9 && submodule_index == 0;
   if (mod == 9) {
     if (main_module_index == 14 && submodule_index == 7 && overworld_map_state >= 4) {
       // World map
@@ -184,15 +186,9 @@ static void ConfigurePpuSideSpace() {
   } else if (mod == 7) {
     // indoors, except when the light cone is in use
     if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
-      if (preload_edges) {
-        // Inter-room transitions upload incoming BG1/BG2 tiles into the same
-        // 64-column ring buffer. Expose those prepared columns early.
-        extra_left = extra_right = kPpuExtraLeftRight;
-      } else {
-        int qm = quadrant_fullsize_x >> 1;
-        extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
-        extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
-      }
+      int qm = quadrant_fullsize_x >> 1;
+      extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
+      extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
     }
 
     int qy = quadrant_fullsize_y >> 1;
@@ -215,7 +211,10 @@ int ZeldaGetWidescreenEdgeMode(void) {
 }
 
 int ZeldaGetWidescreenFixedCameraMargin(void) {
-  if (g_widescreen_edge_mode != kZeldaWidescreenEdgeFixedCamera ||
+  bool fixed_camera =
+      g_widescreen_edge_mode == kZeldaWidescreenEdgeFixedCamera ||
+      (g_widescreen_edge_mode == kZeldaWidescreenEdgePreload && player_is_indoors);
+  if (!fixed_camera ||
       !(enhanced_features0 & kFeatures0_WidescreenVisualFixes) ||
       !g_zenv.ppu || submodule_index != 0 ||
       (main_module_index != 7 && main_module_index != 9))
@@ -397,6 +396,9 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
 
   if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240)
     ConfigurePpuSideSpace();
+  if (g_widescreen_edge_mode == kZeldaWidescreenEdgePreload &&
+      main_module_index == 9 && submodule_index == 0)
+    Overworld_PreparePreloadedSideTiles(g_zenv.ppu);
 
   PpuSetWindow1Ext(g_zenv.ppu, g_spotlight_ext_active ? g_spotlight_ext_left : NULL,
                    g_spotlight_ext_active ? g_spotlight_ext_right : NULL);

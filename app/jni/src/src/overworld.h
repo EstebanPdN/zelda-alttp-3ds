@@ -2,6 +2,8 @@
 #include "zelda_rtl.h"
 #include "variables.h"
 
+struct Ppu;
+
 const uint8 *GetMap8toTileAttr();
 const uint16 *GetMap16toMap8Table();
 bool LookupInOwEntranceTab(uint16 r0, uint16 r2);
@@ -9,6 +11,7 @@ int LookupInOwEntranceTab2(uint16 pos);
 bool CanEnterWithTagalong(int e);
 int DirToEnum(int dir);
 void Overworld_ResetMosaicDown();
+void Overworld_PreparePreloadedSideTiles(struct Ppu *ppu);
 void Overworld_Func1D();
 void Overworld_Func1E();
 uint16 Overworld_GetSignText(int area);

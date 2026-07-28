@@ -10,6 +10,7 @@
 #include "messaging.h"
 #include "player_oam.h"
 #include "zelda_rtl.h"
+#include "snes/ppu.h"
 #include "snes/snes_regs.h"
 #include "assets.h"
 
@@ -1532,6 +1533,30 @@ void Module09_2A_00_ScrollToLand() {  // 82b532
     OverworldHandleMapScroll();
 }
 
+static int Overworld_ClampFixedCameraX(void) {
+  int margin = ZeldaGetWidescreenFixedCameraMargin();
+  if (margin == 0)
+    return 0;
+
+  int min_scroll = ow_scroll_vars0.xstart + margin;
+  int max_scroll = ow_scroll_vars0.xend - margin;
+  if (max_scroll < min_scroll)
+    return 0;
+
+  int current = BG2HOFS_copy2;
+  int target = current < min_scroll ? min_scroll :
+               current > max_scroll ? max_scroll : current;
+  int delta = target - current;
+  if (delta == 0)
+    return 0;
+
+  BG2HOFS_copy2 = target;
+  camera_x_coord_scroll_low += delta;
+  camera_x_coord_scroll_hi += delta;
+  (&overworld_unk1)[2] = (&overworld_unk1)[3] = 0;
+  return delta;
+}
+
 void Overworld_OperateCameraScroll() {  // 82bb90
   int z = (allow_scroll_z && link_z_coord != 0xffff) ? link_z_coord : 0;
   uint16 y = link_y_coord - z + 12;
@@ -1576,12 +1601,16 @@ void Overworld_OperateCameraScroll() {  // 82bb90
     }
   }
 
+  int fixed_camera_scroll = Overworld_ClampFixedCameraX();
   uint16 x = link_x_coord + 8;
-  if (link_x_vel != 0) {
-    int vx = sign8(link_x_vel) ? -1 : 1;
-    int ax = sign8(link_x_vel) ? (link_x_vel ^ 0xff) + 1 : link_x_vel;
-    uint16 r4 = 0, subp;
-    do {
+  if (link_x_vel != 0 || fixed_camera_scroll != 0) {
+    int vx = 0, ax = 0;
+    if (link_x_vel != 0) {
+      vx = sign8(link_x_vel) ? -1 : 1;
+      ax = sign8(link_x_vel) ? (link_x_vel ^ 0xff) + 1 : link_x_vel;
+    }
+    uint16 r4 = fixed_camera_scroll, subp;
+    while (ax-- != 0) {
       if (sign8(link_x_vel)) {
         if (x <= camera_x_coord_scroll_low)
           r4 += OverworldCameraBoundaryCheck(0, 4, vx, 4);
@@ -1589,7 +1618,7 @@ void Overworld_OperateCameraScroll() {  // 82bb90
         if (x >= camera_x_coord_scroll_hi)
           r4 += OverworldCameraBoundaryCheck(0, 6, vx, 4);
       }
-    } while (--ax);
+    }
     WORD(byte_7E069E[1]) = r4;
     uint8 oi = BYTE(overlay_index);
     if (oi != 0x97 && oi != 0x9d && r4 != 0) {
@@ -1641,7 +1670,8 @@ int OverworldCameraBoundaryCheck(int xa, int ya, int vd, int r8) {  // 82bd62
     int margin = ZeldaGetWidescreenFixedCameraMargin();
     camera_limit += (ya & 1) ? -margin : margin;
   }
-  if (*xp == camera_limit) {
+  if ((vd < 0 && *xp <= camera_limit) ||
+      (vd > 0 && *xp >= camera_limit)) {
     (&overworld_unk1)[ya] = 0;
     (&overworld_unk1)[ya ^ 1] = 0;
     return 0;
@@ -2460,6 +2490,133 @@ static const uint8 *GetOverworldHibytes(int i) {
 
 static const uint8 *GetOverworldLobytes(int i) {
   return kOverworld_Lobytes_Comp(i).ptr;
+}
+
+typedef struct OverworldPreloadCache {
+  int screen;
+  uint32 stamp;
+  uint16 map16[32 * 32];
+} OverworldPreloadCache;
+
+static OverworldPreloadCache g_preload_cache[4] = {
+  {.screen = -1}, {.screen = -1}, {.screen = -1}, {.screen = -1},
+};
+static uint32 g_preload_cache_stamp;
+
+static uint16 DecodePreloadMap16(const uint8 *table, uint16 input) {
+  int definition = input & ~7;
+  const uint8 *src = table + (definition >> 1) + (definition >> 2);
+  int variant = (input & 7) >> 1;
+  uint8 high_pair = src[4 + (variant >> 1)];
+  int high = (variant & 1) ? (high_pair & 0xf) : (high_pair >> 4);
+  return src[variant] | high << 8;
+}
+
+static bool DecodePreloadScreen(int screen, uint16 *dst) {
+  uint8 high[256], low[256];
+  if (Decompress_bank02(high, GetOverworldHibytes(screen)) != 256 ||
+      Decompress_bank02(low, GetOverworldLobytes(screen)) != 256)
+    return false;
+
+  for (int y = 0; y < 16; y++) {
+    for (int x = 0; x < 16; x++) {
+      int i = y * 16 + x;
+      uint16 input = (low[i] | high[i] << 8) * 2;
+      int out = y * 2 * 32 + x * 2;
+      dst[out] = DecodePreloadMap16(kMap32ToMap16_0, input);
+      dst[out + 1] = DecodePreloadMap16(kMap32ToMap16_1, input);
+      dst[out + 32] = DecodePreloadMap16(kMap32ToMap16_2, input);
+      dst[out + 33] = DecodePreloadMap16(kMap32ToMap16_3, input);
+    }
+  }
+  return true;
+}
+
+static const uint16 *GetPreloadScreen(int screen) {
+  OverworldPreloadCache *oldest = &g_preload_cache[0];
+  for (size_t i = 0; i < countof(g_preload_cache); i++) {
+    OverworldPreloadCache *cache = &g_preload_cache[i];
+    if (cache->screen == screen) {
+      cache->stamp = ++g_preload_cache_stamp;
+      return cache->map16;
+    }
+    if (cache->screen < 0 || cache->stamp < oldest->stamp)
+      oldest = cache;
+  }
+  if (!DecodePreloadScreen(screen, oldest->map16))
+    return NULL;
+  oldest->screen = screen;
+  oldest->stamp = ++g_preload_cache_stamp;
+  return oldest->map16;
+}
+
+static uint16 GetPreloadMap16(int world_x, int world_y) {
+  int base_x = overworld_offset_base_x << 3;
+  int base_y = overworld_offset_base_y;
+  int local_x = world_x - base_x;
+  int local_y = world_y - base_y;
+  if ((unsigned)local_x < 1024 && (unsigned)local_y < 1024)
+    return dung_bg2[(local_y >> 4) * 64 + (local_x >> 4)];
+
+  if ((unsigned)world_x >= 4096 || (unsigned)world_y >= 4096)
+    return 0xdc4;
+  int screen = ((world_y >> 9) << 3) | (world_x >> 9);
+  screen |= savegame_is_darkworld;
+  const uint16 *map16 = GetPreloadScreen(screen);
+  if (!map16)
+    return 0xdc4;
+  return map16[((world_y & 0x1ff) >> 4) * 32 +
+               ((world_x & 0x1ff) >> 4)];
+}
+
+static void WritePreloadTile(Ppu *ppu, int layer, int x, int y, uint16 tile) {
+  BgLayer *bg = &ppu->bgLayer[layer];
+  int addr = bg->tilemapAdr + (((y >> 3) & 0x1f) << 5) +
+             ((x >> 3) & 0x1f);
+  if ((x & 0x100) && bg->tilemapWider)
+    addr += 0x400;
+  if ((y & 0x100) && bg->tilemapHigher)
+    addr += bg->tilemapWider ? 0x800 : 0x400;
+  ppu->vram[addr & 0x7fff] = tile;
+}
+
+void Overworld_PreparePreloadedSideTiles(Ppu *ppu) {
+  int valid_left = ow_scroll_vars0.xstart;
+  int valid_right = ow_scroll_vars0.xend + 256;
+  int clip_left = valid_left - BG2HOFS_copy2;
+  int clip_right = valid_right - BG2HOFS_copy2;
+  PpuSetExtraSpriteClip(ppu, clip_left, clip_right);
+
+  const uint16 *map8 = GetMap16toMap8Table();
+  for (int layer = 0; layer < 2; layer++) {
+    BgLayer *bg = &ppu->bgLayer[layer];
+    int x_start = (bg->hScroll - ppu->extraLeftCur) & ~7;
+    int x_end = bg->hScroll + 256 + ppu->extraRightCur;
+    int y_start = bg->vScroll & ~7;
+    int y_end = bg->vScroll + 224 + ppu->extraBottomCur;
+    for (int x = x_start; x < x_end; x += 8) {
+      int screen_x = x - bg->hScroll;
+      int world_x = BG2HOFS_copy2 + screen_x;
+      if (world_x >= valid_left && world_x + 7 < valid_right)
+        continue;
+      for (int y = y_start; y < y_end; y += 8) {
+        uint16 map16;
+        int map_x, map_y;
+        if (layer == 1) {
+          int screen_y = y - bg->vScroll;
+          map_x = world_x;
+          map_y = BG2VOFS_copy2 + screen_y;
+          map16 = GetPreloadMap16(map_x, map_y);
+        } else {
+          map_x = x;
+          map_y = y;
+          map16 = 0xdc4;
+        }
+        int subtile = ((map_y >> 3) & 1) * 2 + ((map_x >> 3) & 1);
+        WritePreloadTile(ppu, layer, x, y, map8[map16 * 4 + subtile]);
+      }
+    }
+  }
 }
 
 
