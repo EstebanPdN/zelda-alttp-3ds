@@ -53,6 +53,9 @@ void ZeldaShutdownPpuWorker(void);
 bool ZeldaGetPpuWorkerStats(int *split_line,
                             uint32 *main_time_us,
                             uint32 *worker_time_us);
+void ZeldaSetWidescreenEdgeMode(int mode);
+int ZeldaGetWidescreenEdgeMode(void);
+int ZeldaGetWidescreenFixedCameraMargin(void);
 void ZeldaRunFrameInternal(uint16 input, int run_what);
 bool ZeldaRunFrame(int input_state);
 void LoadSongBank(const uint8 *p);

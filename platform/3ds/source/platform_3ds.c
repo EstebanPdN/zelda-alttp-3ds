@@ -27,6 +27,8 @@ static const char kBundledConfig[] = "romfs:/zelda3.ini";
 
 static enum Platform3DSDisplayMode g_display_mode =
   kPlatform3DSDisplayStretch;
+static enum Platform3DSWideEdgeMode g_wide_edge_mode =
+  kPlatform3DSWideEdgeFixedCamera;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_quick_dump_requested;
@@ -154,6 +156,11 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
       g_display_mode = kPlatform3DSDisplayStretch;
     else
       g_display_mode = kPlatform3DSDisplayUltraWideMod;
+  } else if (strcasecmp(key, "WideEdgeMode") == 0) {
+    if (strcasecmp(value, "FixedCamera") == 0)
+      g_wide_edge_mode = kPlatform3DSWideEdgeFixedCamera;
+    else
+      g_wide_edge_mode = kPlatform3DSWideEdgeStandard;
   } else if (strcasecmp(key, "CStickMode") == 0) {
     if (strcasecmp(value, "Disabled") == 0 ||
         strcasecmp(value, "Off") == 0) {
@@ -212,6 +219,18 @@ void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode) {
     mode = kPlatform3DSDisplayUltraWideMod;
   g_display_mode = mode;
   Platform3DS_LogRuntime("Display mode set: %d", (int)g_display_mode);
+}
+
+enum Platform3DSWideEdgeMode Platform3DS_GetWideEdgeMode(void) {
+  return g_wide_edge_mode;
+}
+
+void Platform3DS_SetWideEdgeMode(enum Platform3DSWideEdgeMode mode) {
+  if (mode > kPlatform3DSWideEdgeFixedCamera)
+    mode = kPlatform3DSWideEdgeFixedCamera;
+  g_wide_edge_mode = mode;
+  ZeldaSetWidescreenEdgeMode((int)g_wide_edge_mode);
+  Platform3DS_LogRuntime("Wide edge mode set: %d", (int)g_wide_edge_mode);
 }
 
 enum Platform3DSCStickMode Platform3DS_GetCStickMode(void) {

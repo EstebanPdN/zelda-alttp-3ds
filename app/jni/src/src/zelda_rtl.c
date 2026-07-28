@@ -26,6 +26,7 @@ ZeldaEnv g_zenv;
 uint8 g_ram[131072];
 
 uint32 g_wanted_zelda_features;
+static int g_widescreen_edge_mode;
 
 static void Startup_InitializeMemory();
 
@@ -187,6 +188,118 @@ static void ConfigurePpuSideSpace() {
     extra_bottom = 16;
   }
   PpuSetExtraSideSpace(g_zenv.ppu, extra_left, extra_right, extra_bottom);
+}
+
+void ZeldaSetWidescreenEdgeMode(int mode) {
+  g_widescreen_edge_mode =
+      mode == 1 ? 1 : 0;
+}
+
+int ZeldaGetWidescreenEdgeMode(void) {
+  return g_widescreen_edge_mode;
+}
+
+int ZeldaGetWidescreenFixedCameraMargin(void) {
+  if (g_widescreen_edge_mode != 1 ||
+      !(enhanced_features0 & kFeatures0_WidescreenVisualFixes) ||
+      !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
+      (main_module_index != 7 && main_module_index != 9))
+    return 0;
+  if (main_module_index == 7 && hdr_dungeon_dark_with_lantern && TS_copy != 0)
+    return 0;
+  return g_zenv.ppu->extraLeftRight;
+}
+
+typedef struct FixedCameraRenderState {
+  bool active;
+  uint16 bg1_hofs_copy2;
+  uint16 bg2_hofs_copy2;
+  uint16 bg1_hofs_copy;
+  uint16 bg2_hofs_copy;
+  uint16 ppu_bg1_hscroll;
+  uint16 ppu_bg2_hscroll;
+  uint16 oam[0x110];
+} FixedCameraRenderState;
+
+static void ShiftRenderOamX(Ppu *ppu, int delta) {
+  for (int i = 0; i < 128; i++) {
+    int word_index = i * 2;
+    int ext_index = 0x100 + (word_index >> 4);
+    int shift = word_index & 15;
+    int high = (ppu->oam[ext_index] >> shift) & 1;
+    int x = (ppu->oam[word_index] & 0xff) + high * 256;
+    if (x >= 256 + ppu->extraLeftRight)
+      x -= 512;
+    x += delta;
+    int encoded = x & 0x1ff;
+    ppu->oam[word_index] = (ppu->oam[word_index] & 0xff00) | (encoded & 0xff);
+    ppu->oam[ext_index] =
+        (ppu->oam[ext_index] & ~(1u << shift)) |
+        (((encoded >> 8) & 1) << shift);
+  }
+}
+
+static uint16 ClampHorizontalCameraForRender(void) {
+  int margin = ZeldaGetWidescreenFixedCameraMargin();
+  if (!margin)
+    return BG2HOFS_copy2;
+
+  int left, right;
+  if (main_module_index == 7) {
+    int qm = quadrant_fullsize_x >> 1;
+    left = room_bounds_x.v[qm] + margin;
+    right = room_bounds_x.v[qm + 2] - margin;
+  } else {
+    left = ow_scroll_vars0.xstart + margin;
+    right = ow_scroll_vars0.xend - margin;
+  }
+  int current = BG2HOFS_copy2;
+  if (right < left)
+    return BG2HOFS_copy2;
+  if (current < left)
+    return (uint16)left;
+  if (current > right)
+    return (uint16)right;
+  return BG2HOFS_copy2;
+}
+
+static FixedCameraRenderState BeginFixedCameraRender(void) {
+  FixedCameraRenderState state = {0};
+  uint16 visual_x = ClampHorizontalCameraForRender();
+  if (visual_x == BG2HOFS_copy2)
+    return state;
+
+  state.active = true;
+  state.bg1_hofs_copy2 = BG1HOFS_copy2;
+  state.bg2_hofs_copy2 = BG2HOFS_copy2;
+  state.bg1_hofs_copy = BG1HOFS_copy;
+  state.bg2_hofs_copy = BG2HOFS_copy;
+  state.ppu_bg1_hscroll = g_zenv.ppu->bgLayer[0].hScroll;
+  state.ppu_bg2_hscroll = g_zenv.ppu->bgLayer[1].hScroll;
+  memcpy(state.oam, g_zenv.ppu->oam, sizeof(state.oam));
+
+  int delta = (int)BG2HOFS_copy2 - (int)visual_x;
+  BG1HOFS_copy2 -= delta;
+  BG2HOFS_copy2 = visual_x;
+  BG1HOFS_copy -= delta;
+  BG2HOFS_copy = visual_x;
+  g_zenv.ppu->bgLayer[0].hScroll =
+      (state.ppu_bg1_hscroll - delta) & 0x3ff;
+  g_zenv.ppu->bgLayer[1].hScroll = visual_x & 0x3ff;
+  ShiftRenderOamX(g_zenv.ppu, delta);
+  return state;
+}
+
+static void EndFixedCameraRender(const FixedCameraRenderState *state) {
+  if (!state->active)
+    return;
+  BG1HOFS_copy2 = state->bg1_hofs_copy2;
+  BG2HOFS_copy2 = state->bg2_hofs_copy2;
+  BG1HOFS_copy = state->bg1_hofs_copy;
+  BG2HOFS_copy = state->bg2_hofs_copy;
+  g_zenv.ppu->bgLayer[0].hScroll = state->ppu_bg1_hscroll;
+  g_zenv.ppu->bgLayer[1].hScroll = state->ppu_bg2_hscroll;
+  memcpy(g_zenv.ppu->oam, state->oam, sizeof(state->oam));
 }
 
 static void ZeldaDrawPpuLines(Ppu *ppu, int height,
@@ -361,6 +474,8 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       PpuSetMode7PerspectiveCorrection(g_zenv.ppu, 0, 0);
   }
 
+  FixedCameraRenderState fixed_camera_state = BeginFixedCameraRender();
+
   if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240)
     ConfigurePpuSideSpace();
 
@@ -428,6 +543,7 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
     irq_flag = 0;
     zelda_snes_dummy_write(NMITIMEN, 0x81);
   }
+  EndFixedCameraRender(&fixed_camera_state);
 }
 
 void HdmaSetup(uint32 addr6, uint32 addr7, uint8 transfer_unit, uint8 reg6, uint8 reg7, uint8 indirect_bank) {

@@ -27,6 +27,11 @@ enum Platform3DSDisplayMode {
   kPlatform3DSDisplayStretch,
 };
 
+enum Platform3DSWideEdgeMode {
+  kPlatform3DSWideEdgeStandard,
+  kPlatform3DSWideEdgeFixedCamera,
+};
+
 enum Platform3DSCStickMode {
   kPlatform3DSCStickTurbo,
   kPlatform3DSCStickWalk,
@@ -62,6 +67,7 @@ void SS_EquipSlot(int slot);
 void SS_SetWidescreen(bool on);
 bool SS_IsWidescreen(void);
 void SS_Set3DSDisplayMode(int mode);
+void SS_Set3DSWideEdgeMode(int mode);
 void SS_SetHudHidden(bool hide);
 bool SS_IsHudHidden(void);
 void SS_RequestMemoryDump(const char *dump_dir);
@@ -179,9 +185,11 @@ static bool ss_needs_rebuild;
 // touch rects recomputed every draw, used by the tap handler
 static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_ring_r;
 static RectFS settings_row_r[6], remap_row_r[12], remap_back_r;
+static RectFS screen_row_r[2], screen_back_r;
 
 // settings / remap state
 static bool remap_mode;
+static bool screen_mode;
 static int  remap_arm = -1;         // row currently waiting for a button press
 static uint32_t remap_arm_at;
 static int  pad_controls[12];
@@ -934,6 +942,11 @@ static void leave_remap(void) {
   remap_mode = false;
 }
 
+static void leave_settings_submenu(void) {
+  leave_remap();
+  screen_mode = false;
+}
+
 static void draw_cog(float cx, float cy, float r) {
   for (int i = 0; i < 8; i++) {
     float a = (float)M_PI / 4 * i;
@@ -990,24 +1003,62 @@ static void draw_remap_panel(RectFS r) {
   }
 }
 
+static const char *display_mode_label(void) {
+#ifdef __3DS__
+  switch (Platform3DS_GetDisplayMode()) {
+  case kPlatform3DSDisplayOriginal: return "ORIGINAL";
+  case kPlatform3DSDisplayStretch: return "STRETCH";
+  case kPlatform3DSDisplayUltraWideMod:
+  default: return "WIDE MOD";
+  }
+#else
+  return SS_IsWidescreen() ? "WIDE MOD" : "ORIGINAL";
+#endif
+}
+
+static void draw_screen_panel(RectFS r) {
+  draw_text("SCREEN", r.x + r.w / 2 - text_width("SCREEN", 3 * u) / 2,
+            r.y + 18 * u, 3 * u);
+  screen_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
+  draw_settings_row(&screen_back_r, false);
+  draw_text("BACK", screen_back_r.x + screen_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
+            screen_back_r.y + screen_back_r.h / 2 - 9 * u, 2.2f * u);
+
+  const char *edge_value = "FIXED CAMERA";
+#ifdef __3DS__
+  if (Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeStandard)
+    edge_value = "STANDARD";
+#endif
+  static const char *const labels[2] = {"DISPLAY MODE", "EDGE MODE"};
+  const char *values[2] = {display_mode_label(), edge_value};
+  float row_h = 58 * u, gap = 14 * u;
+  float y0 = r.y + 82 * u;
+  for (int i = 0; i < 2; i++) {
+    RectFS *row = &screen_row_r[i];
+    *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
+    draw_settings_row(row, false);
+    float ty = row->y + row->h / 2 - 8 * u;
+    draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
+    draw_text(values[i], row->x + row->w - 16 * u - text_width(values[i], 2 * u),
+              ty, 2 * u);
+  }
+}
+
 static void draw_settings(RectFS r) {
   menu_box(r, COL_BOX_BORDER);
   if (remap_mode) {
     draw_remap_panel(r);
     return;
   }
+  if (screen_mode) {
+    draw_screen_panel(r);
+    return;
+  }
   draw_text("SETTINGS", r.x + r.w / 2 - text_width("SETTINGS", 3 * u) / 2, r.y + 18 * u, 3 * u);
 
   bool hud_hidden = SS_IsHudHidden();
-  const char *display_value = SS_IsWidescreen() ? "WIDE MOD" : "ORIGINAL";
   char turbo_value[12];
 #ifdef __3DS__
-  switch (Platform3DS_GetDisplayMode()) {
-  case kPlatform3DSDisplayOriginal: display_value = "ORIGINAL"; break;
-  case kPlatform3DSDisplayStretch: display_value = "STRETCH"; break;
-  case kPlatform3DSDisplayUltraWideMod:
-  default: display_value = "WIDE MOD"; break;
-  }
   int turbo_multiplier = Platform3DS_GetTurboMultiplier();
   if (turbo_multiplier <= 0)
     snprintf(turbo_value, sizeof(turbo_value), "OFF");
@@ -1017,11 +1068,11 @@ static void draw_settings(RectFS r) {
   snprintf(turbo_value, sizeof(turbo_value), "X5");
 #endif
   static const char *const labels[6] = {
-    "TOP SCREEN", "TURBO SPEED", "TOP HUD",
+    "SCREEN", "TURBO SPEED", "TOP HUD",
     "REMAP BUTTONS", "MEM DUMP", "RESTART",
   };
   const char *values[6] = {
-    display_value, turbo_value, hud_hidden ? "OFF" : "ON",
+    "", turbo_value, hud_hidden ? "OFF" : "ON",
     "", SDL_GetTicks() < dump_flash_until ? "DONE" : "WRITE", "GO",
   };
   float row_h = 44 * u, gap = 8 * u;
@@ -1033,7 +1084,6 @@ static void draw_settings(RectFS r) {
     float ty = row->y + row->h / 2 - 8 * u;
     draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
     if (values[i][0] == 0) {
-      // chevron for the remap sub-screen
       float ax = row->x + row->w - 26 * u, ay = row->y + row->h / 2;
       for (float d = 0; d < 10 * u; d += 1.0f) {
         fill_rect(ax - 6 * u + d, ay - 8 * u + d * 0.8f, 4 * u, 2 * u, COL_GOLD);
@@ -1233,10 +1283,10 @@ static void handle_tap(float x, float y) {
   int module = SS_GetModule() & 0xFF;
   if (mode_for_module(module) != MODE_GAME || !art_ready) return;
 
-  if (in_rect(&tab_items_r, x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leave_remap(); return; }
-  if (in_rect(&tab_map_r, x, y))   { tab = TAB_MAP; leave_remap(); return; }
-  if (in_rect(&tab_gear_r, x, y))  { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leave_remap(); return; }
-  if (in_rect(&tab_settings_r, x, y)) { tab = (tab == TAB_SETTINGS) ? TAB_MAP : TAB_SETTINGS; leave_remap(); return; }
+  if (in_rect(&tab_items_r, x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leave_settings_submenu(); return; }
+  if (in_rect(&tab_map_r, x, y))   { tab = TAB_MAP; leave_settings_submenu(); return; }
+  if (in_rect(&tab_gear_r, x, y))  { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leave_settings_submenu(); return; }
+  if (in_rect(&tab_settings_r, x, y)) { tab = (tab == TAB_SETTINGS) ? TAB_MAP : TAB_SETTINGS; leave_settings_submenu(); return; }
 
   if (tab == TAB_SETTINGS) {
     if (remap_mode) {
@@ -1254,8 +1304,10 @@ static void handle_tap(float x, float y) {
           return;
         }
       }
-    } else {
-      if (in_rect(&settings_row_r[0], x, y)) {
+    } else if (screen_mode) {
+      if (in_rect(&screen_back_r, x, y)) {
+        screen_mode = false;
+      } else if (in_rect(&screen_row_r[0], x, y)) {
         enum Platform3DSDisplayMode mode = kPlatform3DSDisplayUltraWideMod;
 #ifdef __3DS__
         mode = Platform3DS_GetDisplayMode();
@@ -1272,6 +1324,20 @@ static void handle_tap(float x, float y) {
         update_ini("[General]", "DisplayMode",
                    mode == kPlatform3DSDisplayOriginal ? "Original" :
                    mode == kPlatform3DSDisplayStretch ? "Stretch" : "UltraWideMod");
+      } else if (in_rect(&screen_row_r[1], x, y)) {
+        enum Platform3DSWideEdgeMode mode = kPlatform3DSWideEdgeFixedCamera;
+#ifdef __3DS__
+        mode = Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeStandard ?
+               kPlatform3DSWideEdgeFixedCamera : kPlatform3DSWideEdgeStandard;
+        Platform3DS_SetWideEdgeMode(mode);
+#endif
+        SS_Set3DSWideEdgeMode((int)mode);
+        update_ini("[General]", "WideEdgeMode",
+                   mode == kPlatform3DSWideEdgeStandard ? "Standard" : "FixedCamera");
+      }
+    } else {
+      if (in_rect(&settings_row_r[0], x, y)) {
+        screen_mode = true;
       } else if (in_rect(&settings_row_r[1], x, y)) {
         int multiplier = 5;
 #ifdef __3DS__
