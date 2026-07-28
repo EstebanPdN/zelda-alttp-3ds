@@ -151,6 +151,27 @@ static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
   c->rep_count--;
 }
 
+static bool IsOverworldScrollTransitionSubmodule(void) {
+  return main_module_index == 9 &&
+      ((submodule_index >= 5 && submodule_index <= 7) ||
+       (submodule_index >= 19 && submodule_index <= 21));
+}
+
+static bool IsOverworldHorizontalScrollTransition(void) {
+  return IsOverworldScrollTransitionSubmodule() &&
+      overworld_screen_transition >= 2 && overworld_screen_transition < 4;
+}
+
+static bool IsOverworldVerticalScrollTransition(void) {
+  return IsOverworldScrollTransitionSubmodule() &&
+      overworld_screen_transition < 2;
+}
+
+static bool IsOverworldSpecialBg1Area(void) {
+  return main_module_index == 9 &&
+      (BYTE(overworld_screen_index) & 0x3f) == 0x1b;
+}
+
 static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
   // Let PPU impl know about the maximum allowed extra space on the sides and bottom
   int extra_right = 0, extra_left = 0, extra_bottom = 0;
@@ -173,6 +194,12 @@ static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
       extra_left = bg2_hofs - ow_scroll_vars0.xstart;
       extra_right = ow_scroll_vars0.xend - bg2_hofs;
       extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
+      if (IsOverworldHorizontalScrollTransition()) {
+        if (overworld_screen_transition == 2)
+          extra_left = kPpuExtraLeftRight;
+        else
+          extra_right = kPpuExtraLeftRight;
+      }
     }
   } else if (mod == 7) {
     // indoors, except when the light cone is in use
@@ -206,7 +233,7 @@ int ZeldaGetWidescreenFixedCameraMargin(void) {
       !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
       (main_module_index != 7 && main_module_index != 9))
     return 0;
-  if (submodule_index != 0)
+  if (submodule_index != 0 && !IsOverworldVerticalScrollTransition())
     return 0;
   if (main_module_index == 7 && hdr_dungeon_dark_with_lantern && TS_copy != 0)
     return 0;
@@ -276,8 +303,13 @@ static FixedCameraRenderState BeginFixedCameraRender(void) {
   memcpy(state.oam, g_zenv.ppu->oam, sizeof(state.oam));
 
   int delta = (int)BG2HOFS_copy2 - (int)visual_x;
-  g_zenv.ppu->bgLayer[0].hScroll =
-      (state.ppu_bg1_hscroll - delta) & 0x3ff;
+  if (IsOverworldSpecialBg1Area()) {
+    int16 y = (int16)(visual_x - 0x778) >> 1;
+    g_zenv.ppu->bgLayer[0].hScroll = (visual_x - y) & 0x3ff;
+  } else {
+    g_zenv.ppu->bgLayer[0].hScroll =
+        (state.ppu_bg1_hscroll - delta) & 0x3ff;
+  }
   g_zenv.ppu->bgLayer[1].hScroll = visual_x & 0x3ff;
   ShiftRenderOamX(g_zenv.ppu, delta);
   return state;
@@ -406,7 +438,9 @@ void ZeldaShutdownPpuWorker(void) {
     threadJoin(state->thread, U64_MAX);
     threadFree(state->thread);
     state->thread = NULL;
+    state->job_id = 0;
   }
+  g_ppu_worker_initialized = false;
 }
 
 bool ZeldaGetPpuWorkerStats(int *split_line,
