@@ -543,7 +543,7 @@ void ZeldaSet3DSDisplayMode(int mode) {
   g_config.features0 &= ~ws_features;
   if (wide) {
     g_config.features0 |= kFeatures0_WidescreenVisualFixes;
-    if (Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeLogicWide)
+    if (Platform3DS_GetWideMode() == kPlatform3DSWideForce)
       g_config.features0 |= kFeatures0_ExtendScreen64;
   }
   g_wanted_zelda_features = g_config.features0;
@@ -553,6 +553,11 @@ void ZeldaSet3DSDisplayMode(int mode) {
   g_snes_width = extra * 2 + 256;
   ZeldaApplyRendererSize();
   Platform3DS_SetDisplayMode(display_mode);
+}
+
+void ZeldaSet3DSWideMode(int mode) {
+  Platform3DS_SetWideMode((enum Platform3DSWideMode)mode);
+  ZeldaSet3DSDisplayMode((int)Platform3DS_GetDisplayMode());
 }
 #endif
 
@@ -595,7 +600,6 @@ int main(int argc, char** argv) {
 
   ZeldaInitialize();
 #ifdef __3DS__
-  ZeldaSetWidescreenEdgeMode(Platform3DS_GetWideEdgeMode());
   Platform3DS_LogRuntime("Game engine initialized");
 #endif
   g_zenv.ppu->extraLeftRight = UintMin(g_config.extended_aspect_ratio, kPpuExtraLeftRight);
@@ -984,16 +988,15 @@ int main(int argc, char** argv) {
   }
   if (g_config.autosave) {
 #ifdef __3DS__
+    if (system_exit_requested && device)
+      SDL_PauseAudioDevice(device, 1);
     Platform3DS_LogRuntime("Shutdown: autosave");
 #endif
     HandleCommand(kKeys_Save + 0, true);
   }
 
 #ifdef __3DS__
-  Platform3DS_LogRuntime("Leaving main loop");
   if (system_exit_requested) {
-    if (device)
-      SDL_PauseAudioDevice(device, 1);
     Platform3DS_LogRuntime("Shutdown: fast exit after system close");
     Platform3DS_FastExit();
   }

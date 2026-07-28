@@ -27,11 +27,14 @@ static const char kBundledConfig[] = "romfs:/zelda3.ini";
 
 static enum Platform3DSDisplayMode g_display_mode =
   kPlatform3DSDisplayStretch;
-static enum Platform3DSWideEdgeMode g_wide_edge_mode =
-  kPlatform3DSWideEdgeSafeCamera;
+static enum Platform3DSWideMode g_wide_mode = kPlatform3DSWideNormal;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_quick_dump_requested;
+static aptHookCookie g_apt_hook_cookie;
+static bool g_apt_hook_registered;
+static volatile bool g_system_exit_requested;
+static bool g_irrst_initialized;
 static bool g_is_new_3ds;
 static bool g_core1_time_enabled;
 static uint64_t g_frame_timing_samples;
@@ -98,9 +101,30 @@ void Platform3DS_LogRuntime(const char *format, ...) {
   fclose(log);
 }
 
+static void Platform3DS_AptHook(APT_HookType hook, void *param) {
+  (void)param;
+  if (hook == APTHOOK_ONEXIT)
+    g_system_exit_requested = true;
+}
+
+static void Platform3DS_RegisterAptHook(void) {
+  if (g_apt_hook_registered)
+    return;
+  aptHook(&g_apt_hook_cookie, Platform3DS_AptHook, NULL);
+  g_apt_hook_registered = true;
+}
+
 static bool CStickIsHeld(u32 keys) {
-  return (keys & (KEY_CSTICK_UP | KEY_CSTICK_DOWN |
-                  KEY_CSTICK_LEFT | KEY_CSTICK_RIGHT)) != 0;
+  if (keys & (KEY_CSTICK_UP | KEY_CSTICK_DOWN |
+              KEY_CSTICK_LEFT | KEY_CSTICK_RIGHT))
+    return true;
+
+  if (g_irrst_initialized) {
+    circlePosition cstick = {0};
+    hidCstickRead(&cstick);
+    return abs((int)cstick.dx) > 24 || abs((int)cstick.dy) > 24;
+  }
+  return false;
 }
 
 uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
@@ -130,7 +154,7 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   if (keys & KEY_L) input |= 1u << 10;
   if (keys & KEY_R) input |= 1u << 11;
   *turbo_held = g_turbo_multiplier > 0 &&
-                ((keys & KEY_ZL) != 0 || CStickIsHeld(keys));
+                ((keys & (KEY_ZL | KEY_ZR)) != 0 || CStickIsHeld(keys));
   *turbo_multiplier = g_turbo_multiplier > 0 ? g_turbo_multiplier : 1;
   return input;
 }
@@ -149,32 +173,30 @@ static char *Trim(char *text) {
 
 static void LoadRuntimeSetting(const char *key, const char *value) {
   if (strcasecmp(key, "DisplayMode") == 0) {
-    if (strcasecmp(value, "ForceWide") == 0 ||
-        strcasecmp(value, "Force Wide") == 0) {
-      g_display_mode = kPlatform3DSDisplayUltraWideMod;
-      g_wide_edge_mode = kPlatform3DSWideEdgeLogicWide;
-    } else if (strcasecmp(value, "Wide") == 0 ||
-               strcasecmp(value, "UltraWideMod") == 0) {
-      g_display_mode = kPlatform3DSDisplayUltraWideMod;
-      g_wide_edge_mode = kPlatform3DSWideEdgeSafeCamera;
-    } else if (strcasecmp(value, "Original") == 0) {
+    if (strcasecmp(value, "Original") == 0) {
       g_display_mode = kPlatform3DSDisplayOriginal;
-    } else if (strcasecmp(value, "Standard") == 0 ||
-               strcasecmp(value, "Stretch") == 0 ||
+    } else if (strcasecmp(value, "Stretch") == 0 ||
+               strcasecmp(value, "Standard") == 0 ||
                strcasecmp(value, "UltraWideStretch") == 0) {
       g_display_mode = kPlatform3DSDisplayStretch;
-      g_wide_edge_mode = kPlatform3DSWideEdgeSafeCamera;
+    } else if (strcasecmp(value, "ForceWide") == 0 ||
+               strcasecmp(value, "Force Wide") == 0 ||
+               strcasecmp(value, "UltraWideMod") == 0) {
+      g_display_mode = kPlatform3DSDisplayUltraWideMod;
+      g_wide_mode = kPlatform3DSWideForce;
     } else {
       g_display_mode = kPlatform3DSDisplayUltraWideMod;
-      g_wide_edge_mode = kPlatform3DSWideEdgeSafeCamera;
     }
-  } else if (strcasecmp(key, "WideEdgeMode") == 0) {
-    if (strcasecmp(value, "LogicWide") == 0 ||
+  } else if (strcasecmp(key, "WideMode") == 0 ||
+             strcasecmp(key, "WideEdgeMode") == 0) {
+    if (strcasecmp(value, "Force") == 0 ||
+        strcasecmp(value, "ForceWide") == 0 ||
+        strcasecmp(value, "LogicWide") == 0 ||
         strcasecmp(value, "Logic") == 0 ||
         strcasecmp(value, "ExtendedSprites") == 0)
-      g_wide_edge_mode = kPlatform3DSWideEdgeLogicWide;
+      g_wide_mode = kPlatform3DSWideForce;
     else
-      g_wide_edge_mode = kPlatform3DSWideEdgeSafeCamera;
+      g_wide_mode = kPlatform3DSWideNormal;
   } else if (strcasecmp(key, "CStickMode") == 0) {
     if (strcasecmp(value, "Disabled") == 0 ||
         strcasecmp(value, "Off") == 0) {
@@ -235,25 +257,24 @@ void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode) {
   Platform3DS_LogRuntime("Display mode set: %d", (int)g_display_mode);
 }
 
-enum Platform3DSWideEdgeMode Platform3DS_GetWideEdgeMode(void) {
-  return g_wide_edge_mode;
+enum Platform3DSWideMode Platform3DS_GetWideMode(void) {
+  return g_wide_mode;
 }
 
-void Platform3DS_SetWideEdgeMode(enum Platform3DSWideEdgeMode mode) {
-  if (mode > kPlatform3DSWideEdgeLogicWide)
-    mode = kPlatform3DSWideEdgeLogicWide;
-  g_wide_edge_mode = mode;
+void Platform3DS_SetWideMode(enum Platform3DSWideMode mode) {
+  if (mode > kPlatform3DSWideForce)
+    mode = kPlatform3DSWideNormal;
+  g_wide_mode = mode;
   g_config.features0 &= ~kFeatures0_ExtendScreen64;
   if (g_display_mode == kPlatform3DSDisplayUltraWideMod &&
-      g_wide_edge_mode == kPlatform3DSWideEdgeLogicWide)
+      g_wide_mode == kPlatform3DSWideForce)
     g_config.features0 |= kFeatures0_ExtendScreen64;
   g_wanted_zelda_features = g_config.features0;
-  ZeldaSetWidescreenEdgeMode((int)g_wide_edge_mode);
-  Platform3DS_LogRuntime("Wide edge mode set: %d", (int)g_wide_edge_mode);
+  Platform3DS_LogRuntime("Wide mode set: %d", (int)g_wide_mode);
 }
 
 bool Platform3DS_ShouldExit(void) {
-  return !aptMainLoop();
+  return g_system_exit_requested;
 }
 
 void Platform3DS_FastExit(void) {
@@ -294,6 +315,8 @@ void Platform3DS_SetTurboMultiplier(int multiplier) {
 }
 
 bool Platform3DS_InitTopPresenter(void) {
+  Platform3DS_RegisterAptHook();
+
   bool is_new_3ds = false;
   if (R_SUCCEEDED(APT_CheckNew3DS(&is_new_3ds)))
     g_is_new_3ds = is_new_3ds;
@@ -301,6 +324,7 @@ bool Platform3DS_InitTopPresenter(void) {
   // This is a no-op on Old 3DS and enables 804 MHz operation for 3DSX builds
   // on New 3DS. CIA builds also request the faster clock in their exheader.
   osSetSpeedupEnable(true);
+  g_irrst_initialized = R_SUCCEEDED(irrstInit());
 
   // Reserve part of the system core for a parallel PPU segment.
   g_core1_time_enabled = R_SUCCEEDED(APT_SetAppCpuTimeLimit(30));
@@ -432,6 +456,14 @@ void Platform3DS_ShutdownTopPresenter(void) {
   C2D_Fini();
   C3D_Fini();
   g_gpu_presenter_initialized = false;
+  if (g_apt_hook_registered) {
+    aptUnhook(&g_apt_hook_cookie);
+    g_apt_hook_registered = false;
+  }
+  if (g_irrst_initialized) {
+    irrstExit();
+    g_irrst_initialized = false;
+  }
 }
 
 static void ConfigureArgbTextureEnv(void) {
@@ -958,7 +990,7 @@ void Platform3DS_ApplyConfig(struct Config *config) {
                          kFeatures0_WidescreenVisualFixes);
   if (g_display_mode == kPlatform3DSDisplayUltraWideMod) {
     config->features0 |= kFeatures0_WidescreenVisualFixes;
-    if (g_wide_edge_mode == kPlatform3DSWideEdgeLogicWide)
+    if (g_wide_mode == kPlatform3DSWideForce)
       config->features0 |= kFeatures0_ExtendScreen64;
   }
   config->audio_freq = 32000;
@@ -966,8 +998,9 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->audio_samples = 1024;
   config->enable_msu = 0;
   config->disable_frame_delay = true;
-  Platform3DS_LogRuntime("Runtime settings: display=%d, turbo=%d",
+  Platform3DS_LogRuntime("Runtime settings: display=%d, wide=%d, turbo=%d",
                          (int)g_display_mode,
+                         (int)g_wide_mode,
                          g_turbo_multiplier);
 }
 

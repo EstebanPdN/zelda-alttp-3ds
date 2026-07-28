@@ -736,16 +736,10 @@ void PpuSetMode7PerspectiveCorrection(Ppu *ppu, int low, int high) {
   ppu->mode7PerspectiveHigh = 1.0f / high;
 }
 
-static uint8 ClampExtraSideSpace(int value, int max_value) {
-  if (value <= 0)
-    return 0;
-  return UintMin((uint)value, (uint)max_value);
-}
-
 void PpuSetExtraSideSpace(Ppu *ppu, int left, int right, int bottom) {
-  ppu->extraLeftCur = ClampExtraSideSpace(left, ppu->extraLeftRight);
-  ppu->extraRightCur = ClampExtraSideSpace(right, ppu->extraLeftRight);
-  ppu->extraBottomCur = ClampExtraSideSpace(bottom, 16);
+  ppu->extraLeftCur = UintMin(left, ppu->extraLeftRight);
+  ppu->extraRightCur = UintMin(right, ppu->extraLeftRight);
+  ppu->extraBottomCur = UintMin(bottom, 16);
 }
 
 void PpuSetWindow1Ext(Ppu *ppu, const int16 *left, const int16 *right) {

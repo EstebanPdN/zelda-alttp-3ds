@@ -19,7 +19,8 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 - Bottom screen: 320x240 live map, dungeon map, gear view, item selection and
   touch settings.
 - First launch extracts `zelda3_assets.dat` locally from the user's ROM.
-- Display modes: wide mod, stretched original and original aspect.
+- Screen menu: `ORIGINAL`, `STRETCH`, and `WIDE` display modes, plus
+  `NORMAL`/`FORCE` wide mode when using `WIDE`.
 - Turbo speed: off, x2, x3, x4 or x5.
 - New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
 - Quick diagnostics: press `L + R + A` to create a dump with memory files plus
@@ -28,14 +29,14 @@ user must provide their own legally obtained USA, unheadered ROM on their own
   and RGB565 display output.
 - Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making
   game speed depend on when a VBlank wait returns.
+- 240-line top-screen rendering is enabled on 3DS so the image can use the
+  full top-screen height.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
   with persistent tile-row caches and frame-time diagnostics in quick dumps.
-- HOME Menu metadata is versioned for each build. v3.1 appears as
-  `A Link to the Past 3DS v3.1`.
+- HOME Menu metadata is versioned for each build. v3.2 appears as
+  `A Link to the Past 3DS v3.2`.
 - HOME Menu banner uses a lightweight CGFX 3D box model with the supplied
   hover sound converted to a short PCM WAV.
-- Screen menu display modes are `ORIGINAL`, `STRETCH`, and `WIDE`. In `WIDE`,
-  the separate wide mode can be `NORMAL` or experimental `FORCE`.
 
 ## Installation
 
@@ -71,7 +72,6 @@ Every GitHub release includes:
 GitHub supplies automatic source-code archives for each tag.
 The release page itself shows the QR code, legal notice and a short changelog.
 Detailed development notes are preserved inside the source snapshot.
-The exact publishing protocol is documented in `GITHUB_RELEASE_WORKFLOW.md`.
 
 Latest release:
 

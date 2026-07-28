@@ -111,11 +111,14 @@ instead of reusing cached metadata from an older install.
   do not enable `kFeatures0_ExtendScreen64`.
 - `Wide` + `Force` enables `kFeatures0_ExtendScreen64`; this intentionally
   changes widescreen sprite spawn/despawn behavior and is experimental.
-- The bundled default should be `DisplayMode = Wide` plus
-  `WideEdgeMode = SafeCamera` unless the user explicitly asks for the
-  experimental logic-changing mode by default.
+- A rollback/rebuild release based on v1.8 may use the conservative bundled
+  default `DisplayMode = Stretch` plus `WideMode = Normal`; do not silently
+  default to the experimental logic-changing mode.
 - The 3DS build should use `extend_y` / 240-line rendering so the top screen
   does not leave unused black rows at the top and bottom.
+- Do not reintroduce the post-v1.8 fixed-camera/OAM-shift renderer path unless
+  it is explicitly redesigned and tested; `Wide` + `Force` should preserve the
+  old v1.8 widescreen logic path.
 
 ## Changelog Rules
 

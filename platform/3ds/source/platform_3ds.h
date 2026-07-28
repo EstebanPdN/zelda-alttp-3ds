@@ -12,9 +12,9 @@ enum Platform3DSDisplayMode {
   kPlatform3DSDisplayStretch,
 };
 
-enum Platform3DSWideEdgeMode {
-  kPlatform3DSWideEdgeSafeCamera,
-  kPlatform3DSWideEdgeLogicWide,
+enum Platform3DSWideMode {
+  kPlatform3DSWideNormal,
+  kPlatform3DSWideForce,
 };
 
 enum Platform3DSCStickMode {
@@ -30,8 +30,8 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier);
 void Platform3DS_LoadRuntimeSettings(void);
 enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void);
 void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode);
-enum Platform3DSWideEdgeMode Platform3DS_GetWideEdgeMode(void);
-void Platform3DS_SetWideEdgeMode(enum Platform3DSWideEdgeMode mode);
+enum Platform3DSWideMode Platform3DS_GetWideMode(void);
+void Platform3DS_SetWideMode(enum Platform3DSWideMode mode);
 bool Platform3DS_ShouldExit(void);
 void Platform3DS_FastExit(void);
 enum Platform3DSCStickMode Platform3DS_GetCStickMode(void);

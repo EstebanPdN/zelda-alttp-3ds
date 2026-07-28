@@ -434,7 +434,7 @@ static volatile int g_pending_saveload;  // 0 idle, 1 save, 2 load
 static volatile int g_pending_memory_dump;
 static volatile int g_pending_restart;
 static volatile int g_pending_display_mode = -1;
-static volatile int g_pending_wide_edge_mode = -1;
+static volatile int g_pending_wide_mode = -1;
 static char g_pending_dump_dir[160];
 static char g_top_screenshot_dir[160];
 static volatile int g_pending_top_screenshot;
@@ -464,7 +464,7 @@ void SS_AssignSlotX(int slot) {
 void SS_SetWidescreen(bool on) { g_pending_widescreen = on ? 1 : 0; }
 
 void SS_Set3DSDisplayMode(int mode) { g_pending_display_mode = mode; }
-void SS_Set3DSWideEdgeMode(int mode) { g_pending_wide_edge_mode = mode; }
+void SS_Set3DSWideMode(int mode) { g_pending_wide_mode = mode; }
 
 void SS_RequestMemoryDump(const char *dump_dir) {
   if (dump_dir && dump_dir[0]) {
@@ -638,10 +638,13 @@ void SecondScreen_RunFrameHook(void) {
     ZeldaSetWidescreen(display_mode != 0);
 #endif
   }
-  int wide_edge_mode = g_pending_wide_edge_mode;
-  if (wide_edge_mode >= 0) {
-    g_pending_wide_edge_mode = -1;
-    ZeldaSetWidescreenEdgeMode(wide_edge_mode);
+  int wide_mode = g_pending_wide_mode;
+  if (wide_mode >= 0) {
+    g_pending_wide_mode = -1;
+#ifdef __3DS__
+    extern void ZeldaSet3DSWideMode(int mode);
+    ZeldaSet3DSWideMode(wide_mode);
+#endif
   }
   int crt = g_pending_crt_filter;
   if (crt >= 0) {
