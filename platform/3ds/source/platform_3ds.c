@@ -28,7 +28,7 @@ static const char kBundledConfig[] = "romfs:/zelda3.ini";
 static enum Platform3DSDisplayMode g_display_mode =
   kPlatform3DSDisplayStretch;
 static enum Platform3DSWideEdgeMode g_wide_edge_mode =
-  kPlatform3DSWideEdgeFixedCamera;
+  kPlatform3DSWideEdgeSafeCamera;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_quick_dump_requested;
@@ -149,18 +149,32 @@ static char *Trim(char *text) {
 
 static void LoadRuntimeSetting(const char *key, const char *value) {
   if (strcasecmp(key, "DisplayMode") == 0) {
-    if (strcasecmp(value, "Original") == 0)
-      g_display_mode = kPlatform3DSDisplayOriginal;
-    else if (strcasecmp(value, "Stretch") == 0 ||
-             strcasecmp(value, "UltraWideStretch") == 0)
-      g_display_mode = kPlatform3DSDisplayStretch;
-    else
+    if (strcasecmp(value, "ForceWide") == 0 ||
+        strcasecmp(value, "Force Wide") == 0) {
       g_display_mode = kPlatform3DSDisplayUltraWideMod;
+      g_wide_edge_mode = kPlatform3DSWideEdgeLogicWide;
+    } else if (strcasecmp(value, "Wide") == 0 ||
+               strcasecmp(value, "UltraWideMod") == 0) {
+      g_display_mode = kPlatform3DSDisplayUltraWideMod;
+      g_wide_edge_mode = kPlatform3DSWideEdgeSafeCamera;
+    } else if (strcasecmp(value, "Original") == 0) {
+      g_display_mode = kPlatform3DSDisplayOriginal;
+    } else if (strcasecmp(value, "Standard") == 0 ||
+               strcasecmp(value, "Stretch") == 0 ||
+               strcasecmp(value, "UltraWideStretch") == 0) {
+      g_display_mode = kPlatform3DSDisplayStretch;
+      g_wide_edge_mode = kPlatform3DSWideEdgeSafeCamera;
+    } else {
+      g_display_mode = kPlatform3DSDisplayUltraWideMod;
+      g_wide_edge_mode = kPlatform3DSWideEdgeSafeCamera;
+    }
   } else if (strcasecmp(key, "WideEdgeMode") == 0) {
-    if (strcasecmp(value, "FixedCamera") == 0)
-      g_wide_edge_mode = kPlatform3DSWideEdgeFixedCamera;
+    if (strcasecmp(value, "LogicWide") == 0 ||
+        strcasecmp(value, "Logic") == 0 ||
+        strcasecmp(value, "ExtendedSprites") == 0)
+      g_wide_edge_mode = kPlatform3DSWideEdgeLogicWide;
     else
-      g_wide_edge_mode = kPlatform3DSWideEdgeStandard;
+      g_wide_edge_mode = kPlatform3DSWideEdgeSafeCamera;
   } else if (strcasecmp(key, "CStickMode") == 0) {
     if (strcasecmp(value, "Disabled") == 0 ||
         strcasecmp(value, "Off") == 0) {
@@ -226,11 +240,20 @@ enum Platform3DSWideEdgeMode Platform3DS_GetWideEdgeMode(void) {
 }
 
 void Platform3DS_SetWideEdgeMode(enum Platform3DSWideEdgeMode mode) {
-  if (mode > kPlatform3DSWideEdgeFixedCamera)
-    mode = kPlatform3DSWideEdgeFixedCamera;
+  if (mode > kPlatform3DSWideEdgeLogicWide)
+    mode = kPlatform3DSWideEdgeLogicWide;
   g_wide_edge_mode = mode;
+  g_config.features0 &= ~kFeatures0_ExtendScreen64;
+  if (g_display_mode == kPlatform3DSDisplayUltraWideMod &&
+      g_wide_edge_mode == kPlatform3DSWideEdgeLogicWide)
+    g_config.features0 |= kFeatures0_ExtendScreen64;
+  g_wanted_zelda_features = g_config.features0;
   ZeldaSetWidescreenEdgeMode((int)g_wide_edge_mode);
   Platform3DS_LogRuntime("Wide edge mode set: %d", (int)g_wide_edge_mode);
+}
+
+bool Platform3DS_ShouldExit(void) {
+  return !aptMainLoop();
 }
 
 enum Platform3DSCStickMode Platform3DS_GetCStickMode(void) {
@@ -923,14 +946,15 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->enhanced_mode7 = false;
   config->new_renderer = true;
   config->no_sprite_limits = false;
-  config->extend_y = false;
+  config->extend_y = true;
   config->extended_aspect_ratio =
     g_display_mode == kPlatform3DSDisplayUltraWideMod ? 72 : 0;
   config->features0 &= ~(kFeatures0_ExtendScreen64 |
                          kFeatures0_WidescreenVisualFixes);
   if (g_display_mode == kPlatform3DSDisplayUltraWideMod) {
-    config->features0 |= kFeatures0_ExtendScreen64 |
-                         kFeatures0_WidescreenVisualFixes;
+    config->features0 |= kFeatures0_WidescreenVisualFixes;
+    if (g_wide_edge_mode == kPlatform3DSWideEdgeLogicWide)
+      config->features0 |= kFeatures0_ExtendScreen64;
   }
   config->audio_freq = 32000;
   config->audio_channels = 2;

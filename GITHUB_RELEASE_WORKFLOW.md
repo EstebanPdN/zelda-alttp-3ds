@@ -101,6 +101,21 @@ If hardware still shows an older HOME Menu name after installing a new CIA, bump
 the RSF `UniqueId` for the next release so the 3DS creates a fresh title entry
 instead of reusing cached metadata from an older install.
 
+## 3DS Screen Mode Rules
+
+- Keep the Screen menu as one simple three-state cycle:
+  - `Standard`: no widescreen expansion.
+  - `Wide`: widescreen display with native sprite spawn/despawn/gameplay logic
+    preserved; do not enable `kFeatures0_ExtendScreen64`.
+  - `ForceWide`: widescreen display with `kFeatures0_ExtendScreen64` enabled;
+    this intentionally changes widescreen sprite spawn/despawn behavior and is
+    experimental.
+- The bundled default should be `DisplayMode = Wide` plus
+  `WideEdgeMode = SafeCamera` unless the user explicitly asks for the
+  experimental logic-changing mode by default.
+- The 3DS build should use `extend_y` / 240-line rendering so the top screen
+  does not leave unused black rows at the top and bottom.
+
 ## Changelog Rules
 
 - Compare the new release against the previous release.

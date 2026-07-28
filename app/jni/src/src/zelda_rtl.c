@@ -28,6 +28,11 @@ uint8 g_ram[131072];
 uint32 g_wanted_zelda_features;
 static int g_widescreen_edge_mode;
 
+enum {
+  kWideEdgeSafeCamera = 0,
+  kWideEdgeLogicWide = 1,
+};
+
 static void Startup_InitializeMemory();
 
 typedef struct SimpleHdma {
@@ -152,7 +157,8 @@ static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
 }
 
 static bool IsFixedCameraHorizontalTransition(int mod) {
-  if (g_widescreen_edge_mode != 1 || overworld_screen_transition < 2)
+  if (g_widescreen_edge_mode != kWideEdgeSafeCamera ||
+      overworld_screen_transition < 2)
     return false;
   if (main_module_index == 9 && mod == 9)
     return submodule_index >= 1 && submodule_index <= 8;
@@ -262,7 +268,10 @@ static void ShiftRenderOamX(Ppu *ppu, int delta) {
 
     if (y >= 0xf0)
       continue;
-    if (x >= 256 + ppu->extraLeftRight)
+    // SafeCamera does not enable the game's widescreen sprite logic.
+    // Treat high-bit OAM coordinates as native wrapped/offscreen sprites so
+    // stale pieces do not appear on the opposite widescreen edge.
+    if (high)
       x -= 512;
 
     x += delta;
@@ -321,7 +330,7 @@ static void EndFixedCameraRender(const FixedCameraRenderState *state) {
 
 void ZeldaSetWidescreenEdgeMode(int mode) {
   g_widescreen_edge_mode =
-      mode == 1 ? 1 : 0;
+      mode == kWideEdgeLogicWide ? kWideEdgeLogicWide : kWideEdgeSafeCamera;
 }
 
 int ZeldaGetWidescreenEdgeMode(void) {
@@ -329,7 +338,7 @@ int ZeldaGetWidescreenEdgeMode(void) {
 }
 
 int ZeldaGetWidescreenFixedCameraMargin(void) {
-  if (g_widescreen_edge_mode != 1 ||
+  if (g_widescreen_edge_mode != kWideEdgeSafeCamera ||
       !(enhanced_features0 & kFeatures0_WidescreenVisualFixes) ||
       !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
       (main_module_index != 7 && main_module_index != 9))
@@ -451,7 +460,10 @@ void ZeldaShutdownPpuWorker(void) {
     if (!state->thread)
       continue;
     __atomic_store_n(&state->running, false, __ATOMIC_RELEASE);
-    threadJoin(state->thread, U64_MAX);
+    Result join_result = threadJoin(state->thread, 2000000000ull);
+    if (join_result)
+      Platform3DS_LogRuntime("PPU worker join timeout/result: 0x%08lx",
+                             (unsigned long)join_result);
     threadFree(state->thread);
     state->thread = NULL;
     state->job_id = 0;

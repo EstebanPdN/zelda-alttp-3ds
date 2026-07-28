@@ -540,8 +540,12 @@ void ZeldaSet3DSDisplayMode(int mode) {
 
   g_config.ignore_aspect_ratio = display_mode == kPlatform3DSDisplayStretch;
   g_config.extended_aspect_ratio = extra;
-  g_config.features0 = wide ? (g_config.features0 | ws_features) :
-                               (g_config.features0 & ~ws_features);
+  g_config.features0 &= ~ws_features;
+  if (wide) {
+    g_config.features0 |= kFeatures0_WidescreenVisualFixes;
+    if (Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeLogicWide)
+      g_config.features0 |= kFeatures0_ExtendScreen64;
+  }
   g_wanted_zelda_features = g_config.features0;
   g_zenv.ppu->extraLeftRight = UintMin(extra, kPpuExtraLeftRight);
   if (!wide)
@@ -757,6 +761,12 @@ int main(int argc, char** argv) {
     HandleCommand(kKeys_Load + 0, true);
 
   while(running) {
+#ifdef __3DS__
+    if (Platform3DS_ShouldExit()) {
+      running = false;
+      break;
+    }
+#endif
     while(SDL_PollEvent(&event)) {
       if (SecondScreenSDL_HandleEvent(&event))
         continue;
@@ -799,6 +809,9 @@ int main(int argc, char** argv) {
         break;
       }
     }
+
+    if (!running)
+      break;
 
     if (g_paused != audiopaused) {
       audiopaused = g_paused;
