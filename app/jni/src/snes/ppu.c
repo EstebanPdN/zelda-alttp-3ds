@@ -169,8 +169,10 @@ static inline void ClearBackdrop(Ppu *ppu, PpuPixelPrioBufs *buf) {
   size_t count = 256 + ppu->extraLeftCur + ppu->extraRightCur;
   PpuZbufType *data = &buf->data[first];
   size_t i = 0;
-  for (; i + 4 <= count; i += 4)
-    *(uint64 *)&data[i] = 0x0500050005000500;
+  if (((uintptr_t)data & 2) && i < count)
+    data[i++] = 0x0500;
+  for (; i + 2 <= count; i += 2)
+    *(uint32 *)&data[i] = 0x05000500;
   for (; i < count; i++)
     data[i] = 0x0500;
 }
