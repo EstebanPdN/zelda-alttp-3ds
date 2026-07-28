@@ -151,25 +151,20 @@ static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
   c->rep_count--;
 }
 
-static bool IsOverworldSpecialBg1Area(void) {
-  return main_module_index == 9 &&
-      (BYTE(overworld_screen_index) & 0x3f) == 0x1b;
+static bool IsFixedCameraHorizontalTransition(int mod) {
+  if (g_widescreen_edge_mode != 1 || overworld_screen_transition < 2)
+    return false;
+  if (main_module_index == 9 && mod == 9)
+    return submodule_index >= 1 && submodule_index <= 8;
+  if (main_module_index == 7 && mod == 7)
+    return submodule_index == 2;
+  return false;
 }
 
-static uint16 GetOverworldSpecialBg1HScroll(uint16 bg2_hofs,
-                                            uint16 bg1_hofs) {
-  int16 parallax = (int16)(BG2HOFS_copy2 - 0x778) >> 1;
-  uint16 expected_current = BG2HOFS_copy2 - parallax;
-  uint16 offset = (bg1_hofs - expected_current) & 0x3ff;
-  parallax = (int16)(bg2_hofs - 0x778) >> 1;
-  return (uint16)(bg2_hofs - parallax + offset) & 0x3ff;
-}
-
-static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
+static void ConfigurePpuSideSpace() {
   // Let PPU impl know about the maximum allowed extra space on the sides and bottom
   int extra_right = 0, extra_left = 0, extra_bottom = 0;
 //  printf("main %d, sub %d  (%d, %d, %d)\n", main_module_index, submodule_index, BG2HOFS_copy2, room_bounds_x.v[2 | (quadrant_fullsize_x >> 1)], quadrant_fullsize_x >> 1);
-  int bg2_hofs = use_camera_x ? camera_x : BG2HOFS_copy2;
   int mod = main_module_index;
   if (mod == 14)
     mod = saved_module_for_menu;
@@ -184,16 +179,16 @@ static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
       extra_bottom = 16;
     } else {
       // outdoors
-      extra_left = bg2_hofs - ow_scroll_vars0.xstart;
-      extra_right = ow_scroll_vars0.xend - bg2_hofs;
+      extra_left = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
+      extra_right = ow_scroll_vars0.xend - BG2HOFS_copy2;
       extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
     }
   } else if (mod == 7) {
     // indoors, except when the light cone is in use
     if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
       int qm = quadrant_fullsize_x >> 1;
-      extra_left = IntMax(bg2_hofs - room_bounds_x.v[qm], 0);
-      extra_right = IntMax(room_bounds_x.v[qm + 2] - bg2_hofs, 0);
+      extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
+      extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
     }
 
     int qy = quadrant_fullsize_y >> 1;
@@ -202,6 +197,12 @@ static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
     extra_left = kPpuExtraLeftRight, extra_right = kPpuExtraLeftRight;
     extra_bottom = 16;
   }
+  // During a real horizontal room/map transition both neighboring tilemaps
+  // are resident. Keep the entire widescreen viewport enabled while the
+  // native camera crosses between them instead of blanking the side that is
+  // temporarily outside the old area's bounds.
+  if (IsFixedCameraHorizontalTransition(mod))
+    extra_left = extra_right = kPpuExtraLeftRight;
   PpuSetExtraSideSpace(g_zenv.ppu, extra_left, extra_right, extra_bottom);
 }
 
@@ -220,95 +221,9 @@ int ZeldaGetWidescreenFixedCameraMargin(void) {
       !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
       (main_module_index != 7 && main_module_index != 9))
     return 0;
-  if (main_module_index == 7 && submodule_index != 0)
-    return 0;
   if (main_module_index == 7 && hdr_dungeon_dark_with_lantern && TS_copy != 0)
     return 0;
   return g_zenv.ppu->extraLeftRight;
-}
-
-typedef struct FixedCameraRenderState {
-  bool active;
-  uint16 visual_x;
-  uint16 ppu_bg1_hscroll;
-  uint16 ppu_bg2_hscroll;
-  uint16 oam[0x110];
-} FixedCameraRenderState;
-
-static void ShiftRenderOamX(Ppu *ppu, int delta) {
-  for (int i = 0; i < 128; i++) {
-    int word_index = i * 2;
-    int ext_index = 0x100 + (word_index >> 4);
-    int shift = word_index & 15;
-    int high = (ppu->oam[ext_index] >> shift) & 1;
-    int x = (ppu->oam[word_index] & 0xff) + high * 256;
-    if (x >= 256 + ppu->extraLeftRight)
-      x -= 512;
-    x += delta;
-    int encoded = x & 0x1ff;
-    ppu->oam[word_index] = (ppu->oam[word_index] & 0xff00) | (encoded & 0xff);
-    ppu->oam[ext_index] =
-        (ppu->oam[ext_index] & ~(1u << shift)) |
-        (((encoded >> 8) & 1) << shift);
-  }
-}
-
-static uint16 ClampHorizontalCameraForRender(void) {
-  int margin = ZeldaGetWidescreenFixedCameraMargin();
-  if (!margin)
-    return BG2HOFS_copy2;
-
-  int left, right;
-  if (main_module_index == 7) {
-    int qm = quadrant_fullsize_x >> 1;
-    left = room_bounds_x.v[qm] + margin;
-    right = room_bounds_x.v[qm + 2] - margin;
-  } else {
-    left = ow_scroll_vars0.xstart + margin;
-    right = ow_scroll_vars0.xend - margin;
-  }
-  int current = BG2HOFS_copy2;
-  if (right < left)
-    return BG2HOFS_copy2;
-  if (current < left)
-    return (uint16)left;
-  if (current > right)
-    return (uint16)right;
-  return BG2HOFS_copy2;
-}
-
-static FixedCameraRenderState BeginFixedCameraRender(void) {
-  FixedCameraRenderState state = {0};
-  uint16 visual_x = ClampHorizontalCameraForRender();
-  if (visual_x == BG2HOFS_copy2)
-    return state;
-
-  state.active = true;
-  state.visual_x = visual_x;
-  state.ppu_bg1_hscroll = g_zenv.ppu->bgLayer[0].hScroll;
-  state.ppu_bg2_hscroll = g_zenv.ppu->bgLayer[1].hScroll;
-  memcpy(state.oam, g_zenv.ppu->oam, sizeof(state.oam));
-
-  int delta = (int)BG2HOFS_copy2 - (int)visual_x;
-  if (IsOverworldSpecialBg1Area()) {
-    g_zenv.ppu->bgLayer[0].hScroll =
-        GetOverworldSpecialBg1HScroll(visual_x,
-                                      state.ppu_bg1_hscroll);
-  } else {
-    g_zenv.ppu->bgLayer[0].hScroll =
-        (state.ppu_bg1_hscroll - delta) & 0x3ff;
-  }
-  g_zenv.ppu->bgLayer[1].hScroll = visual_x & 0x3ff;
-  ShiftRenderOamX(g_zenv.ppu, delta);
-  return state;
-}
-
-static void EndFixedCameraRender(const FixedCameraRenderState *state) {
-  if (!state->active)
-    return;
-  g_zenv.ppu->bgLayer[0].hScroll = state->ppu_bg1_hscroll;
-  g_zenv.ppu->bgLayer[1].hScroll = state->ppu_bg2_hscroll;
-  memcpy(g_zenv.ppu->oam, state->oam, sizeof(state->oam));
 }
 
 static void ZeldaDrawPpuLines(Ppu *ppu, int height,
@@ -485,11 +400,8 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       PpuSetMode7PerspectiveCorrection(g_zenv.ppu, 0, 0);
   }
 
-  FixedCameraRenderState fixed_camera_state = BeginFixedCameraRender();
-
   if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240)
-    ConfigurePpuSideSpace(fixed_camera_state.visual_x,
-                          fixed_camera_state.active);
+    ConfigurePpuSideSpace();
 
   PpuSetWindow1Ext(g_zenv.ppu, g_spotlight_ext_active ? g_spotlight_ext_left : NULL,
                    g_spotlight_ext_active ? g_spotlight_ext_right : NULL);
@@ -555,7 +467,6 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
     irq_flag = 0;
     zelda_snes_dummy_write(NMITIMEN, 0x81);
   }
-  EndFixedCameraRender(&fixed_camera_state);
 }
 
 void HdmaSetup(uint32 addr6, uint32 addr7, uint8 transfer_unit, uint8 reg6, uint8 reg7, uint8 indirect_bank) {
