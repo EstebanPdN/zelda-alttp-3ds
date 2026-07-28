@@ -26,6 +26,7 @@ ZeldaEnv g_zenv;
 uint8 g_ram[131072];
 
 uint32 g_wanted_zelda_features;
+static int g_widescreen_edge_mode = kZeldaWidescreenEdgeFixedCamera;
 
 static void Startup_InitializeMemory();
 
@@ -187,6 +188,26 @@ static void ConfigurePpuSideSpace() {
     extra_bottom = 16;
   }
   PpuSetExtraSideSpace(g_zenv.ppu, extra_left, extra_right, extra_bottom);
+}
+
+void ZeldaSetWidescreenEdgeMode(int mode) {
+  g_widescreen_edge_mode =
+      mode == kZeldaWidescreenEdgeFixedCamera ?
+      kZeldaWidescreenEdgeFixedCamera : kZeldaWidescreenEdgeStandard;
+}
+
+int ZeldaGetWidescreenEdgeMode(void) {
+  return g_widescreen_edge_mode;
+}
+
+int ZeldaGetWidescreenFixedCameraMargin(void) {
+  if (g_widescreen_edge_mode != kZeldaWidescreenEdgeFixedCamera ||
+      !(enhanced_features0 & kFeatures0_WidescreenVisualFixes) ||
+      !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
+      submodule_index != 0 ||
+      (main_module_index != 7 && main_module_index != 9))
+    return 0;
+  return g_zenv.ppu->extraLeftRight;
 }
 
 static void ZeldaDrawPpuLines(Ppu *ppu, int height,

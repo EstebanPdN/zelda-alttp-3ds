@@ -20,6 +20,8 @@ user must provide their own legally obtained USA, unheadered ROM on their own
   touch settings.
 - First launch extracts `zelda3_assets.dat` locally from the user's ROM.
 - Display modes: wide mod, stretched original and original aspect.
+- The `SCREEN` submenu offers `FIXED CAMERA` for safe wide-mode boundaries and
+  `STANDARD` for the original v1.8 camera behavior.
 - Turbo speed: off, x2, x3, x4 or x5.
 - New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
 - Quick diagnostics: press `L + R + A` to create a dump with memory files plus
@@ -30,8 +32,8 @@ user must provide their own legally obtained USA, unheadered ROM on their own
   game speed depend on when a VBlank wait returns.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
   with persistent tile-row caches and frame-time diagnostics in quick dumps.
-- HOME Menu metadata is versioned for each build. v1.8 appears as
-  `Zelda ALttP 3DS` / `Zelda A Link to the Past 3DS v1.8`.
+- HOME Menu metadata is versioned for each build. v2.1 appears as
+  `Zelda ALttP 3DS` / `Zelda A Link to the Past 3DS v2.1`.
 - HOME Menu banner uses a lightweight CGFX 3D box model with the supplied
   hover sound converted to a short PCM WAV.
 

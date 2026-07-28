@@ -8126,7 +8126,14 @@ void Dungeon_HandleCamera() {  // 82ba31
           continue;
         qm += 2;
       }
-      if (BG2HOFS_copy2 == room_bounds_x.v[qm])
+      uint16 camera_limit = room_bounds_x.v[qm];
+      int margin = ZeldaGetWidescreenFixedCameraMargin();
+      int left_bound = room_bounds_x.v[quadrant_fullsize_x >> 1];
+      int right_bound = room_bounds_x.v[(quadrant_fullsize_x >> 1) + 2];
+      if (right_bound - left_bound > margin * 2)
+        camera_limit += (qm >= 2) ? -margin : margin;
+      if ((scrollamt < 0 && BG2HOFS_copy2 <= camera_limit) ||
+          (scrollamt > 0 && BG2HOFS_copy2 >= camera_limit))
         continue;
       BG2HOFS_copy2 += scrollamt;
       if (dungeon_room_index == 0xffff)
