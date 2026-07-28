@@ -9,6 +9,7 @@
 #include "misc.h"
 #include "messaging.h"
 #include "player_oam.h"
+#include "zelda_rtl.h"
 #include "snes/snes_regs.h"
 #include "assets.h"
 
@@ -701,7 +702,55 @@ void ResetAncillaAndCutscene() {  // 829e6e
   flag_is_link_immobilized = 0;
 }
 
+static void Overworld_ApplyHorizontalCameraDelta(uint16 delta) {
+  WORD(byte_7E069E[1]) = delta;
+  uint8 oi = BYTE(overlay_index);
+  if (oi == 0x97 || oi == 0x9d || delta == 0)
+    return;
+
+  uint16 subpixel;
+  if (oi == 0x95 || oi == 0x9e) {
+    subpixel = (delta & 3) << 14;
+    delta >>= 2;
+    if (delta >= 0x3000)
+      delta |= 0xf000;
+  } else {
+    subpixel = (delta & 1) << 15;
+    delta >>= 1;
+    if (delta >= 0x7000)
+      delta |= 0xf000;
+  }
+  uint32 tmp = BG1HOFS_subpixel | BG1HOFS_copy2 << 16;
+  tmp += subpixel | delta << 16;
+  BG1HOFS_subpixel = (uint16)tmp;
+  BG1HOFS_copy2 = (uint16)(tmp >> 16);
+}
+
+static void Overworld_ClampFixedCameraToBounds() {
+  int margin = ZeldaGetWidescreenFixedCameraMargin();
+  uint16 width = ow_scroll_vars0.xend - ow_scroll_vars0.xstart;
+  if (!margin || width <= margin * 2)
+    return;
+
+  uint16 offset = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
+  uint16 target = BG2HOFS_copy2;
+  if (offset < margin)
+    target = ow_scroll_vars0.xstart + margin;
+  else if (offset > width - margin)
+    target = ow_scroll_vars0.xstart + width - margin;
+  if (target == BG2HOFS_copy2)
+    return;
+
+  uint16 delta = target - BG2HOFS_copy2;
+  BG2HOFS_copy2 = target;
+  camera_x_coord_scroll_low += delta;
+  camera_x_coord_scroll_hi += delta;
+  Overworld_ApplyHorizontalCameraDelta(delta);
+}
+
 void Module09_Overworld() {  // 82a475
+  if (submodule_index == 0)
+    Overworld_ClampFixedCameraToBounds();
   kOverworldSubmodules[submodule_index]();
 
   int bg2x = BG2HOFS_copy2;
@@ -917,8 +966,15 @@ void Module09_LoadNewMapAndGFX() {  // 82abc6
 void Overworld_RunScrollTransition() {  // 82abda
   Link_HandleMovingAnimation_FullLongEntry();
   Graphics_IncrementalVRAMUpload();
-  uint8 rv = OverworldScrollTransition();
-  if (!(rv & 0xf)) {
+  bool fixed_horizontal =
+      ZeldaGetWidescreenFixedCameraMargin() &&
+      overworld_screen_transition >= 2;
+  uint16 previous_scroll = fixed_horizontal ? BG2HOFS_copy2 : 0;
+  uint16 rv = OverworldScrollTransition();
+  bool crossed_tile_boundary = fixed_horizontal ?
+      (previous_scroll >> 4) != (rv >> 4) :
+      !(rv & 0xf);
+  if (crossed_tile_boundary) {
     BYTE(overworld_screen_trans_dir_bits2) = BYTE(overworld_screen_trans_dir_bits);
     OverworldTransitionScrollAndLoadMap();
     BYTE(overworld_screen_trans_dir_bits2) = 0;
@@ -1579,7 +1635,7 @@ void Overworld_OperateCameraScroll() {  // 82bb90
   if (link_x_vel != 0) {
     int vx = sign8(link_x_vel) ? -1 : 1;
     int ax = sign8(link_x_vel) ? (link_x_vel ^ 0xff) + 1 : link_x_vel;
-    uint16 r4 = 0, subp;
+    uint16 r4 = 0;
     do {
       if (sign8(link_x_vel)) {
         if (x <= camera_x_coord_scroll_low)
@@ -1589,24 +1645,7 @@ void Overworld_OperateCameraScroll() {  // 82bb90
           r4 += OverworldCameraBoundaryCheck(0, 6, vx, 4);
       }
     } while (--ax);
-    WORD(byte_7E069E[1]) = r4;
-    uint8 oi = BYTE(overlay_index);
-    if (oi != 0x97 && oi != 0x9d && r4 != 0) {
-      if (oi == 0x95 || oi == 0x9e) {
-        subp = (r4 & 3) << 14;
-        r4 >>= 2;
-        if (r4 >= 0x3000)
-          r4 |= 0xf000;
-      } else {
-        subp = (r4 & 1) << 15;
-        r4 >>= 1;
-        if (r4 >= 0x7000)
-          r4 |= 0xf000;
-      }
-      uint32 tmp = BG1HOFS_subpixel | BG1HOFS_copy2 << 16;
-      tmp += subp | r4 << 16;
-      BG1HOFS_subpixel = (uint16)(tmp), BG1HOFS_copy2 = (uint16)(tmp >> 16);
-    }
+    Overworld_ApplyHorizontalCameraDelta(r4);
   }
   if (BYTE(overworld_screen_index) != 0x47) {
     if (BYTE(overlay_index) == 0x9c) {
@@ -1635,7 +1674,15 @@ int OverworldCameraBoundaryCheck(int xa, int ya, int vd, int r8) {  // 82bd62
 
   uint16 *xp = (xa ? &BG2VOFS_copy2 : &BG2HOFS_copy2);
   uint16 *yp = &(&ow_scroll_vars0.ystart)[ya];
-  if (*xp == *yp) {
+  uint16 camera_limit = *yp;
+  if (!xa) {
+    int margin = ZeldaGetWidescreenFixedCameraMargin();
+    uint16 width = ow_scroll_vars0.xend - ow_scroll_vars0.xstart;
+    if (width > margin * 2)
+      camera_limit += (ya & 1) ? -margin : margin;
+  }
+  if ((vd < 0 && *xp <= camera_limit) ||
+      (vd > 0 && *xp >= camera_limit)) {
     (&overworld_unk1)[ya] = 0;
     (&overworld_unk1)[ya ^ 1] = 0;
     return 0;
@@ -1680,7 +1727,10 @@ int OverworldScrollTransition() {  // 82c001
       BG1HOFS_copy2 = BG2HOFS_copy2;
     if (transition_counter >= kOverworld_Func6B_Tab2[y])
       link_x_coord += d;
-    if (rv != (&up_down_scroll_target)[y])
+    uint16 target = (&up_down_scroll_target)[y];
+    int margin = ZeldaGetWidescreenFixedCameraMargin();
+    target += (y == 2) ? margin : -margin;
+    if (rv != target)
       return rv;
     link_x_coord &= ~7;
     camera_x_coord_scroll_hi = link_x_coord + kOverworld_Func6B_Tab3[y] + 11;

@@ -6501,7 +6501,45 @@ void LoadOWMusicIfNeeded() {  // 82854c
   LoadOverworldSongs();
 }
 
+static void Dungeon_ClampFixedCameraToBounds() {
+  int margin = ZeldaGetWidescreenFixedCameraMargin();
+  int qm = quadrant_fullsize_x >> 1;
+  uint16 left = room_bounds_x.v[qm];
+  uint16 width = room_bounds_x.v[qm + 2] - left;
+  if (!margin || width <= margin * 2)
+    return;
+
+  uint16 offset = BG2HOFS_copy2 - left;
+  uint16 target = BG2HOFS_copy2;
+  if (offset < margin)
+    target = left + margin;
+  else if (offset > width - margin)
+    target = left + width - margin;
+  if (target == BG2HOFS_copy2)
+    return;
+
+  uint16 delta = target - BG2HOFS_copy2;
+  BG2HOFS_copy2 = target;
+  camera_x_coord_scroll_low += delta;
+  camera_x_coord_scroll_hi += delta;
+
+  if (dungeon_room_index != 0xffff) {
+    if (dung_hdr_bg2_properties == 0 || dung_hdr_bg2_properties == 2 ||
+        dung_hdr_bg2_properties == 3 || dung_hdr_bg2_properties == 4 ||
+        dung_hdr_bg2_properties >= 6) {
+      BG1HOFS_copy2 = BG2HOFS_copy2;
+    } else {
+      uint32 fixed = BG1HOFS_subpixel | BG1HOFS_copy2 << 16;
+      fixed += (int16)delta * 0x8000;
+      BG1HOFS_subpixel = (uint16)fixed;
+      BG1HOFS_copy2 = (uint16)(fixed >> 16);
+    }
+  }
+}
+
 void Module07_Dungeon() {  // 8287a2
+  if (submodule_index == 0)
+    Dungeon_ClampFixedCameraToBounds();
   Dungeon_HandleLayerEffect();
   kDungeonSubmodules[submodule_index]();
 
@@ -8126,7 +8164,14 @@ void Dungeon_HandleCamera() {  // 82ba31
           continue;
         qm += 2;
       }
-      if (BG2HOFS_copy2 == room_bounds_x.v[qm])
+      uint16 camera_limit = room_bounds_x.v[qm];
+      int margin = ZeldaGetWidescreenFixedCameraMargin();
+      int left_bound = room_bounds_x.v[quadrant_fullsize_x >> 1];
+      int right_bound = room_bounds_x.v[(quadrant_fullsize_x >> 1) + 2];
+      if (right_bound - left_bound > margin * 2)
+        camera_limit += (qm >= 2) ? -margin : margin;
+      if ((scrollamt < 0 && BG2HOFS_copy2 <= camera_limit) ||
+          (scrollamt > 0 && BG2HOFS_copy2 >= camera_limit))
         continue;
       BG2HOFS_copy2 += scrollamt;
       if (dungeon_room_index == 0xffff)
@@ -8178,7 +8223,12 @@ void DungeonTransition_ScrollRoom() {  // 82be03
       link_y_coord += kStaircaseTab3[i];
   }
 
-  if ((t & 0x1fc) == (&up_down_scroll_target)[i]) {
+  uint16 target = (&up_down_scroll_target)[i];
+  if (i >= 2) {
+    int margin = ZeldaGetWidescreenFixedCameraMargin();
+    target += (i == 2) ? margin : -margin;
+  }
+  if ((t & 0x1fc) == (target & 0x1fc)) {
     SetAndSaveVisitedQuadrantFlags();
     subsubmodule_index++;
     transition_counter = 0;

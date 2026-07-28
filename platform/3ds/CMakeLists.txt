@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(zelda3_3ds VERSION 2.7 LANGUAGES C)
+project(zelda3_3ds VERSION 2.8 LANGUAGES C)
 
 set(ZELDA3_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
 set(ZELDA3_NATIVE "${ZELDA3_ROOT}/app/jni/src")
@@ -52,7 +52,7 @@ target_include_directories(zelda3-3ds PRIVATE
 
 target_compile_definitions(zelda3-3ds PRIVATE
   SYSTEM_VOLUME_MIXER_AVAILABLE=0
-  ZELDA3_3DS_VERSION=\"2.7\"
+  ZELDA3_3DS_VERSION=\"2.8\"
   NDEBUG=1
 )
 
@@ -94,15 +94,15 @@ configure_file(
 set(ZELDA3_SMDH "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds.smdh")
 ctr_generate_smdh(
   OUTPUT "${ZELDA3_SMDH}"
-  NAME "Zelda ALttP 3DS"
-  DESCRIPTION "Zelda A Link to the Past 3DS v2.7"
+  NAME "A Link to the Past 3DS v2.8"
+  DESCRIPTION "A Link to the Past 3DS v2.8"
   AUTHOR "snesrev, samyost1, 3DS port"
   ICON "${CMAKE_CURRENT_LIST_DIR}/assets/icon.png"
 )
 
 ctr_create_3dsx(zelda3-3ds-3dsx
   TARGET zelda3-3ds
-  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v2.7.3dsx"
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v2.8.3dsx"
   SMDH "${ZELDA3_SMDH}"
   ROMFS "${ZELDA3_ROMFS}"
 )

@@ -757,13 +757,6 @@ int main(int argc, char** argv) {
     HandleCommand(kKeys_Load + 0, true);
 
   while(running) {
-#ifdef __3DS__
-    if (!aptMainLoop()) {
-      Platform3DS_LogRuntime("APT requested application shutdown");
-      running = false;
-      break;
-    }
-#endif
     while(SDL_PollEvent(&event)) {
       if (SecondScreenSDL_HandleEvent(&event))
         continue;

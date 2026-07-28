@@ -759,6 +759,25 @@ void CalculateSwordHitBox() {  // 879e63
   player_oam_x_offset = kSwordOamXOffs[i];
 }
 
+static void LinkOam_ApplyWidescreenX(uint16 screen_x) {
+  if (!ZeldaGetWidescreenFixedCameraMargin())
+    return;
+
+  // Most of Link's drawing code intentionally keeps only the SNES low X
+  // byte. In fixed-camera mode Link can occupy the added pixels at either
+  // side, so reconstruct each piece's OAM high bit from its signed position
+  // relative to Link. This changes only Link's twelve reserved OAM entries;
+  // unrelated sprites keep their native coordinates.
+  int base_x = (int16)screen_x;
+  int oam_pos = sort_sprites_offset_into_oam_buffer >> 2;
+  for (int i = 0; i < 12; i++) {
+    OamEnt *oam = &oam_buf[oam_pos + i];
+    int x = base_x + (int8)(oam->x - (uint8)base_x);
+    bytewise_extended_oam[oam_pos + i] =
+        (bytewise_extended_oam[oam_pos + i] & ~1) | ((x >> 8) & 1);
+  }
+}
+
 void LinkOam_Main() {  // 8da18e
   uint16 y_coord_backup = link_y_coord;
 
@@ -769,7 +788,8 @@ void LinkOam_Main() {  // 8da18e
     link_y_coord += kPlayerOam_StairsOffsY[t];
   }
 
-  uint8 xcoord = link_x_coord - BG2HOFS_copy2;
+  uint16 screen_x = link_x_coord - BG2HOFS_copy2;
+  uint8 xcoord = screen_x;
   uint8 ycoord = link_y_coord - BG2VOFS_copy2;
   player_oam_x_offset = player_oam_y_offset = 0x80;
   uint8 scratch_0_var = (draw_water_ripples_or_grass != 0);
@@ -1097,7 +1117,16 @@ continue_after_set:
 
   uint16 t;
   bool hide_shadow = true;
-  if (is_standing_in_doorway && ((t = link_x_coord - BG2HOFS_copy2) < 4 || t >= 252 || (t = link_y_coord - BG2VOFS_copy2) < 4 || t >= 224) ||
+  int fixed_margin = ZeldaGetWidescreenFixedCameraMargin();
+  int16 screen_x_signed = (int16)screen_x;
+  bool outside_horizontal_doorway =
+      fixed_margin ?
+      (screen_x_signed < 4 - fixed_margin ||
+       screen_x_signed >= 252 + fixed_margin) :
+      ((t = link_x_coord - BG2HOFS_copy2) < 4 || t >= 252);
+  if (is_standing_in_doorway &&
+      (outside_horizontal_doorway ||
+       (t = link_y_coord - BG2VOFS_copy2) < 4 || t >= 224) ||
       (hide_shadow = false,
       submodule_index == 0 && countdown_for_blink && --countdown_for_blink >= 4 && (countdown_for_blink & 1) == 0 ||
       link_visibility_status == 12 ||
@@ -1126,6 +1155,8 @@ continue_after_set:
         WORD(p[shadow_oam_pos]) = 0;
     }
   }
+
+  LinkOam_ApplyWidescreenX(screen_x);
 
   if (submodule_index == 18 || submodule_index == 19)
     link_y_coord = y_coord_backup;
