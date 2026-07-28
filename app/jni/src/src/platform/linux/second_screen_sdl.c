@@ -1688,7 +1688,10 @@ void SecondScreenSDL_Shutdown(void) {
   if (ss_worker_thread) {
     ss_worker_running = false;
     LightEvent_Signal(&ss_worker_start);
-    threadJoin(ss_worker_thread, U64_MAX);
+    Result join_result = threadJoin(ss_worker_thread, 2000000000ull);
+    if (R_FAILED(join_result))
+      Platform3DS_LogRuntime("WARNING: second screen worker join timeout: 0x%08lx",
+                             (unsigned long)join_result);
     threadFree(ss_worker_thread);
     ss_worker_thread = NULL;
   }

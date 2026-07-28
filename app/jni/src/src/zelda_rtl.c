@@ -301,7 +301,12 @@ void ZeldaShutdownPpuWorker(void) {
     if (!state->thread)
       continue;
     __atomic_store_n(&state->running, false, __ATOMIC_RELEASE);
-    threadJoin(state->thread, U64_MAX);
+    Result join_result = threadJoin(state->thread, 2000000000ull);
+#ifdef __3DS__
+    if (R_FAILED(join_result))
+      Platform3DS_LogRuntime("WARNING: PPU worker join timeout: 0x%08lx",
+                             (unsigned long)join_result);
+#endif
     threadFree(state->thread);
     state->thread = NULL;
   }

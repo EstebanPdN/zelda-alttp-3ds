@@ -995,13 +995,6 @@ int main(int argc, char** argv) {
     HandleCommand(kKeys_Save + 0, true);
   }
 
-#ifdef __3DS__
-  if (system_exit_requested) {
-    Platform3DS_LogRuntime("Shutdown: fast exit after system close");
-    Platform3DS_FastExit();
-  }
-#endif
-
   // clean sdl
   if (g_config.enable_audio) {
     SDL_PauseAudioDevice(device, 1);

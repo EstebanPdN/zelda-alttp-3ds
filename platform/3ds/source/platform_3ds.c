@@ -274,12 +274,17 @@ void Platform3DS_SetWideMode(enum Platform3DSWideMode mode) {
 }
 
 bool Platform3DS_ShouldExit(void) {
-  return g_system_exit_requested;
+  if (g_system_exit_requested || aptShouldClose())
+    return true;
+  if (!aptMainLoop()) {
+    g_system_exit_requested = true;
+    return true;
+  }
+  return false;
 }
 
-void Platform3DS_FastExit(void) {
-  Platform3DS_LogRuntime("Fast process exit requested");
-  svcExitProcess();
+bool Platform3DS_IsSystemClosing(void) {
+  return g_system_exit_requested || aptShouldClose();
 }
 
 enum Platform3DSCStickMode Platform3DS_GetCStickMode(void) {
@@ -446,7 +451,8 @@ void Platform3DS_ShutdownTopPresenter(void) {
   if (!g_gpu_presenter_initialized)
     return;
   Platform3DS_EndFrame();
-  C3D_FrameSync();
+  if (!Platform3DS_IsSystemClosing())
+    C3D_FrameSync();
   C3D_RenderTargetDelete(g_bottom_target);
   g_bottom_target = NULL;
   C3D_RenderTargetDelete(g_top_target);

@@ -120,6 +120,21 @@ instead of reusing cached metadata from an older install.
   it is explicitly redesigned and tested; `Wide` + `Force` should preserve the
   old v1.8 widescreen logic path.
 
+## 3DS HOME Menu Close Rules
+
+- Do not use `svcExitProcess()` to close the title after HOME Menu ->
+  Close Software; it can bypass libctru/SDL teardown and cause the 3DS system
+  error screen.
+- Detect system close cooperatively with APT (`aptMainLoop()`,
+  `aptShouldClose()`, and the `APTHOOK_ONEXIT` flag), stop the main loop, and
+  return normally from `main`.
+- Shutdown paths must not wait forever on worker threads. Use bounded joins for
+  3DS render/second-screen workers and log timeouts instead of blocking on
+  `threadJoin(..., U64_MAX)`.
+- During a system close, avoid shutdown-only GPU waits that can stall the HOME
+  Menu close path; finish/end active frames, then let normal service teardown
+  run.
+
 ## Changelog Rules
 
 - Compare the new release against the previous release.

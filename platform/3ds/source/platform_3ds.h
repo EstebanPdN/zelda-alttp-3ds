@@ -33,7 +33,7 @@ void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode);
 enum Platform3DSWideMode Platform3DS_GetWideMode(void);
 void Platform3DS_SetWideMode(enum Platform3DSWideMode mode);
 bool Platform3DS_ShouldExit(void);
-void Platform3DS_FastExit(void);
+bool Platform3DS_IsSystemClosing(void);
 enum Platform3DSCStickMode Platform3DS_GetCStickMode(void);
 void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode);
 bool Platform3DS_TakeQuickDumpRequest(void);
