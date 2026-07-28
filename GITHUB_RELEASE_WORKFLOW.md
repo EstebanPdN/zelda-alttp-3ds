@@ -28,10 +28,19 @@ The release body must contain only:
 Link to the Past 3DS
 
 QR
+![QR-vX.Y-github.png](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/download/vX.Y/QR-vX.Y-github.png)
 
 Legal Notice
 
 Changelog
+```
+
+The QR section must embed the QR image with Markdown, not only mention the
+asset name. Use the public GitHub release asset URL for the QR image. The QR
+image itself must encode the direct GitHub `.cia` asset URL:
+
+```text
+https://github.com/EstebanPdN/zelda-alttp-3ds/releases/download/vX.Y/zelda3-3ds-vX.Y.cia
 ```
 
 Do not include user reports, dump reviews, file-by-file source diffs, hashes,
@@ -161,4 +170,3 @@ git ls-remote --tags github 'refs/tags/vX.Y'
 ```
 
 The assets list should contain only the CIA, 3DSX, source zip, and QR image.
-
