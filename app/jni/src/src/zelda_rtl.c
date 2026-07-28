@@ -26,6 +26,7 @@ ZeldaEnv g_zenv;
 uint8 g_ram[131072];
 
 uint32 g_wanted_zelda_features;
+static int g_widescreen_edge_mode = kZeldaWidescreenEdgeFixedCamera;
 
 static void Startup_InitializeMemory();
 
@@ -161,11 +162,19 @@ static void ConfigurePpuSideSpace() {
       (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
        mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
     mod = player_is_indoors ? 7 : 9;
+  bool preload_edges =
+      (enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
+      g_widescreen_edge_mode == kZeldaWidescreenEdgePreload;
   if (mod == 9) {
     if (main_module_index == 14 && submodule_index == 7 && overworld_map_state >= 4) {
       // World map
       extra_left = kPpuExtraLeftRight, extra_right = kPpuExtraLeftRight;
       extra_bottom = 16;
+    } else if (preload_edges) {
+      // Reveal both sides of the ring-buffered overworld tilemap while its
+      // normal stripe loader prepares the incoming area.
+      extra_left = extra_right = kPpuExtraLeftRight;
+      extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
     } else {
       // outdoors
       extra_left = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
@@ -175,9 +184,15 @@ static void ConfigurePpuSideSpace() {
   } else if (mod == 7) {
     // indoors, except when the light cone is in use
     if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
-      int qm = quadrant_fullsize_x >> 1;
-      extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
-      extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
+      if (preload_edges) {
+        // Inter-room transitions upload incoming BG1/BG2 tiles into the same
+        // 64-column ring buffer. Expose those prepared columns early.
+        extra_left = extra_right = kPpuExtraLeftRight;
+      } else {
+        int qm = quadrant_fullsize_x >> 1;
+        extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
+        extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
+      }
     }
 
     int qy = quadrant_fullsize_y >> 1;
@@ -187,6 +202,25 @@ static void ConfigurePpuSideSpace() {
     extra_bottom = 16;
   }
   PpuSetExtraSideSpace(g_zenv.ppu, extra_left, extra_right, extra_bottom);
+}
+
+void ZeldaSetWidescreenEdgeMode(int mode) {
+  g_widescreen_edge_mode =
+      mode == kZeldaWidescreenEdgePreload ?
+      kZeldaWidescreenEdgePreload : kZeldaWidescreenEdgeFixedCamera;
+}
+
+int ZeldaGetWidescreenEdgeMode(void) {
+  return g_widescreen_edge_mode;
+}
+
+int ZeldaGetWidescreenFixedCameraMargin(void) {
+  if (g_widescreen_edge_mode != kZeldaWidescreenEdgeFixedCamera ||
+      !(enhanced_features0 & kFeatures0_WidescreenVisualFixes) ||
+      !g_zenv.ppu || submodule_index != 0 ||
+      (main_module_index != 7 && main_module_index != 9))
+    return 0;
+  return g_zenv.ppu->extraLeftRight;
 }
 
 static void ZeldaDrawPpuLines(Ppu *ppu, int height,
