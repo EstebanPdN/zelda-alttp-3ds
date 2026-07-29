@@ -42,9 +42,9 @@ if [[ ! -x "${MAKEROM}" || ! -x "${BANNERTOOL}" ]]; then
 fi
 
 "${BANNERTOOL}" makesmdh \
-  -s "A Link to the Past 3DS v3.4" \
-  -l "A Link to the Past 3DS v3.4" \
-  -p "snesrev / samyost1 / 3DS port" \
+  -s "Link to the Past 3DS v2.0" \
+  -l "Link to the Past 3DS v2.0" \
+  -p "Esteban PDN / snesrev / samyost1" \
   -i "${ROOT}/platform/3ds/assets/icon.png" \
   -f visible,nosavebackups \
   -o "${GAME_BUILD}/zelda3-3ds.icn"
@@ -65,7 +65,7 @@ fi
   cd "${ROOT}"
   "${MAKEROM}" \
     -f cia \
-    -o "${GAME_BUILD}/zelda3-3ds-v3.4.cia" \
+    -o "${GAME_BUILD}/zelda3-3ds-v2.0.cia" \
     -DAPP_ROMFS=build-3ds/game/romfs \
     -rsf platform/3ds/cia/zelda3.rsf \
     -target t \
@@ -76,5 +76,5 @@ fi
 )
 
 printf 'Listos:\n'
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.4.3dsx"
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.4.cia"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.0.3dsx"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.0.cia"
