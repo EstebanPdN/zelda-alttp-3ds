@@ -1,5 +1,7 @@
 # Zelda A Link to the Past 3DS
 
+![Zelda A Link to the Past 3DS running on Nintendo 3DS](Git3DS.png)
+
 Nintendo 3DS dual-screen port of Zelda3, built with help from Codex.
 
 This project is based on open-source work from:
