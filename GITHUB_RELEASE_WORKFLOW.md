@@ -104,21 +104,22 @@ instead of reusing cached metadata from an older install.
 ## 3DS Screen Mode Rules
 
 - Keep the Screen menu as two rows:
-  - `Display Mode`: cycles `Original`, `Stretch`, and `Wide`.
-  - `Wide Mode`: cycles `Normal` and `Force`; it only changes game behavior
-    while `Display Mode` is `Wide`.
-- `Wide` + `Normal` must preserve native sprite spawn/despawn/gameplay logic;
+  - `Mode`: cycles `Original`, `Stretch`, and `Wide`.
+  - `Wide`: cycles `Standard` and `Fixed`; it only changes the wide renderer
+    while `Mode` is `Wide`.
+- `Wide` + `Standard` must preserve native sprite spawn/despawn/gameplay logic;
   do not enable `kFeatures0_ExtendScreen64`.
-- `Wide` + `Force` enables `kFeatures0_ExtendScreen64`; this intentionally
-  changes widescreen sprite spawn/despawn behavior and is experimental.
+- `Wide` + `Fixed` must also preserve native sprite spawn/despawn/gameplay
+  logic; do not enable `kFeatures0_ExtendScreen64`. Fixed mode may adjust only
+  render-time camera/OAM presentation state and must restore it before the
+  frame ends.
 - A rollback/rebuild release based on v1.8 may use the conservative bundled
-  default `DisplayMode = Stretch` plus `WideMode = Normal`; do not silently
-  default to the experimental logic-changing mode.
+  default `DisplayMode = Stretch` plus `WideMode = Standard`; do not silently
+  default to the experimental fixed edge mode.
 - The 3DS build should use `extend_y` / 240-line rendering so the top screen
   does not leave unused black rows at the top and bottom.
-- Do not reintroduce the post-v1.8 fixed-camera/OAM-shift renderer path unless
-  it is explicitly redesigned and tested; `Wide` + `Force` should preserve the
-  old v1.8 widescreen logic path.
+- Do not mutate `BG*_HOFS_copy*`, OAM memory, sprite/ancilla bounds, dungeon
+  camera bounds, or transition target coordinates from Screen menu changes.
 
 ## 3DS HOME Menu Close Rules
 

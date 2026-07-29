@@ -13,8 +13,10 @@ enum Platform3DSDisplayMode {
 };
 
 enum Platform3DSWideMode {
-  kPlatform3DSWideNormal,
-  kPlatform3DSWideForce,
+  kPlatform3DSWideStandard,
+  kPlatform3DSWideFixed,
+  kPlatform3DSWideNormal = kPlatform3DSWideStandard,
+  kPlatform3DSWideForce = kPlatform3DSWideFixed,
 };
 
 enum Platform3DSCStickMode {

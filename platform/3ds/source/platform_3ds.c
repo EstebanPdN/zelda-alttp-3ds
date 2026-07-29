@@ -27,7 +27,7 @@ static const char kBundledConfig[] = "romfs:/zelda3.ini";
 
 static enum Platform3DSDisplayMode g_display_mode =
   kPlatform3DSDisplayStretch;
-static enum Platform3DSWideMode g_wide_mode = kPlatform3DSWideNormal;
+static enum Platform3DSWideMode g_wide_mode = kPlatform3DSWideStandard;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_quick_dump_requested;
@@ -183,20 +183,22 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
                strcasecmp(value, "Force Wide") == 0 ||
                strcasecmp(value, "UltraWideMod") == 0) {
       g_display_mode = kPlatform3DSDisplayUltraWideMod;
-      g_wide_mode = kPlatform3DSWideForce;
+      g_wide_mode = kPlatform3DSWideFixed;
     } else {
       g_display_mode = kPlatform3DSDisplayUltraWideMod;
     }
   } else if (strcasecmp(key, "WideMode") == 0 ||
              strcasecmp(key, "WideEdgeMode") == 0) {
-    if (strcasecmp(value, "Force") == 0 ||
+    if (strcasecmp(value, "Fixed") == 0 ||
+        strcasecmp(value, "FixedCamera") == 0 ||
+        strcasecmp(value, "Force") == 0 ||
         strcasecmp(value, "ForceWide") == 0 ||
         strcasecmp(value, "LogicWide") == 0 ||
         strcasecmp(value, "Logic") == 0 ||
         strcasecmp(value, "ExtendedSprites") == 0)
-      g_wide_mode = kPlatform3DSWideForce;
+      g_wide_mode = kPlatform3DSWideFixed;
     else
-      g_wide_mode = kPlatform3DSWideNormal;
+      g_wide_mode = kPlatform3DSWideStandard;
   } else if (strcasecmp(key, "CStickMode") == 0) {
     if (strcasecmp(value, "Disabled") == 0 ||
         strcasecmp(value, "Off") == 0) {
@@ -254,6 +256,9 @@ void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode) {
   if (mode > kPlatform3DSDisplayStretch)
     mode = kPlatform3DSDisplayUltraWideMod;
   g_display_mode = mode;
+  ZeldaSetWidescreenFixedMode(
+    g_display_mode == kPlatform3DSDisplayUltraWideMod &&
+    g_wide_mode == kPlatform3DSWideFixed);
   Platform3DS_LogRuntime("Display mode set: %d", (int)g_display_mode);
 }
 
@@ -262,13 +267,13 @@ enum Platform3DSWideMode Platform3DS_GetWideMode(void) {
 }
 
 void Platform3DS_SetWideMode(enum Platform3DSWideMode mode) {
-  if (mode > kPlatform3DSWideForce)
-    mode = kPlatform3DSWideNormal;
+  if (mode > kPlatform3DSWideFixed)
+    mode = kPlatform3DSWideStandard;
   g_wide_mode = mode;
   g_config.features0 &= ~kFeatures0_ExtendScreen64;
-  if (g_display_mode == kPlatform3DSDisplayUltraWideMod &&
-      g_wide_mode == kPlatform3DSWideForce)
-    g_config.features0 |= kFeatures0_ExtendScreen64;
+  ZeldaSetWidescreenFixedMode(
+    g_display_mode == kPlatform3DSDisplayUltraWideMod &&
+    g_wide_mode == kPlatform3DSWideFixed);
   g_wanted_zelda_features = g_config.features0;
   Platform3DS_LogRuntime("Wide mode set: %d", (int)g_wide_mode);
 }
@@ -994,11 +999,10 @@ void Platform3DS_ApplyConfig(struct Config *config) {
     g_display_mode == kPlatform3DSDisplayUltraWideMod ? 72 : 0;
   config->features0 &= ~(kFeatures0_ExtendScreen64 |
                          kFeatures0_WidescreenVisualFixes);
-  if (g_display_mode == kPlatform3DSDisplayUltraWideMod) {
+  bool wide = g_display_mode == kPlatform3DSDisplayUltraWideMod;
+  if (wide)
     config->features0 |= kFeatures0_WidescreenVisualFixes;
-    if (g_wide_mode == kPlatform3DSWideForce)
-      config->features0 |= kFeatures0_ExtendScreen64;
-  }
+  ZeldaSetWidescreenFixedMode(wide && g_wide_mode == kPlatform3DSWideFixed);
   config->audio_freq = 32000;
   config->audio_channels = 2;
   config->audio_samples = 1024;

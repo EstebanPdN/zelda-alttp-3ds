@@ -28,8 +28,10 @@ enum Platform3DSDisplayMode {
 };
 
 enum Platform3DSWideMode {
-  kPlatform3DSWideNormal,
-  kPlatform3DSWideForce,
+  kPlatform3DSWideStandard,
+  kPlatform3DSWideFixed,
+  kPlatform3DSWideNormal = kPlatform3DSWideStandard,
+  kPlatform3DSWideForce = kPlatform3DSWideFixed,
 };
 
 enum Platform3DSCStickMode {
@@ -1018,10 +1020,10 @@ static const char *display_mode_label(void) {
 
 static const char *wide_mode_label(void) {
 #ifdef __3DS__
-  return Platform3DS_GetWideMode() == kPlatform3DSWideForce ?
-         "FORCE" : "NORMAL";
+  return Platform3DS_GetWideMode() == kPlatform3DSWideFixed ?
+         "FIXED" : "STANDARD";
 #else
-  return "NORMAL";
+  return "STANDARD";
 #endif
 }
 
@@ -1033,7 +1035,7 @@ static void draw_screen_panel(RectFS r) {
   draw_text("BACK", screen_back_r.x + screen_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
             screen_back_r.y + screen_back_r.h / 2 - 9 * u, 2.2f * u);
 
-  static const char *const labels[2] = {"DISPLAY MODE", "WIDE MODE"};
+  static const char *const labels[2] = {"MODE", "WIDE"};
   const char *values[2] = {display_mode_label(), wide_mode_label()};
   float row_h = 58 * u, gap = 14 * u;
   float y0 = r.y + 82 * u;
@@ -1339,17 +1341,17 @@ static void handle_tap(float x, float y) {
                    mode == kPlatform3DSDisplayOriginal ? "Original" :
                    mode == kPlatform3DSDisplayStretch ? "Stretch" : "Wide");
       } else if (in_rect(&screen_row_r[1], x, y)) {
-        enum Platform3DSWideMode mode = kPlatform3DSWideNormal;
+        enum Platform3DSWideMode mode = kPlatform3DSWideStandard;
 #ifdef __3DS__
-        mode = Platform3DS_GetWideMode() == kPlatform3DSWideForce ?
-               kPlatform3DSWideNormal : kPlatform3DSWideForce;
+        mode = Platform3DS_GetWideMode() == kPlatform3DSWideFixed ?
+               kPlatform3DSWideStandard : kPlatform3DSWideFixed;
         Platform3DS_SetWideMode(mode);
 #endif
         SS_Set3DSWideMode((int)mode);
         update_ini("[General]", "WideMode",
-                   mode == kPlatform3DSWideForce ? "Force" : "Normal");
+                   mode == kPlatform3DSWideFixed ? "Fixed" : "Standard");
         update_ini("[General]", "WideEdgeMode",
-                   mode == kPlatform3DSWideForce ? "LogicWide" : "SafeCamera");
+                   mode == kPlatform3DSWideFixed ? "FixedCamera" : "Standard");
       }
     } else {
       if (in_rect(&settings_row_r[0], x, y)) {

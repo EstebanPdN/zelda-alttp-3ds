@@ -1,5 +1,5 @@
 BasicInfo:
-  Title: "ALttP 3DS v3.3"
+  Title: "ALttP 3DS v3.4"
   ProductCode: "CTR-P-Z3DS"
   Logo: Homebrew
 
@@ -8,7 +8,7 @@ RomFs:
 
 TitleInfo:
   Category: Application
-  UniqueId: 0x5A33D
+  UniqueId: 0x5A34D
 
 Option:
   UseOnSD: true

@@ -59,6 +59,7 @@ struct Ppu {
   uint8_t *renderBuffer;
   PpuTileCache *tileCache;
   uint8_t extraLeftCur, extraRightCur, extraLeftRight, extraBottomCur;
+  int16_t renderObjXOffset;
   float mode7PerspectiveLow, mode7PerspectiveHigh;
 
   // TMW / TSW etc

@@ -26,6 +26,7 @@ ZeldaEnv g_zenv;
 uint8 g_ram[131072];
 
 uint32 g_wanted_zelda_features;
+static bool g_widescreen_fixed_mode;
 
 static void Startup_InitializeMemory();
 
@@ -39,6 +40,14 @@ typedef struct SimpleHdma {
 } SimpleHdma;
 static void SimpleHdma_Init(SimpleHdma *c, DmaChannel *dc);
 static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu);
+
+typedef struct FixedWideRenderState {
+  bool active;
+  uint16 visual_x;
+  uint16 bg1_hscroll;
+  uint16 bg2_hscroll;
+  int16 obj_x_offset;
+} FixedWideRenderState;
 
 static const uint8 bAdrOffsets[8][4] = {
   {0, 0, 0, 0},
@@ -150,7 +159,109 @@ static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
   c->rep_count--;
 }
 
-static void ConfigurePpuSideSpace() {
+void ZeldaSetWidescreenFixedMode(int enabled) {
+  g_widescreen_fixed_mode = enabled != 0;
+}
+
+int ZeldaGetWidescreenFixedMode(void) {
+  return g_widescreen_fixed_mode;
+}
+
+static bool IsFixedWideOverworldRenderCandidate(void) {
+  if (!g_widescreen_fixed_mode)
+    return false;
+  if (!(enhanced_features0 & kFeatures0_WidescreenVisualFixes))
+    return false;
+  if (g_zenv.ppu->extraLeftRight == 0)
+    return false;
+  if (main_module_index != 9)
+    return false;
+  if (player_is_indoors)
+    return false;
+  return true;
+}
+
+static uint16 GetFixedWideVisualX(void) {
+  int margin = g_zenv.ppu->extraLeftRight;
+  int actual = BG2HOFS_copy2;
+  int left = ow_scroll_vars0.xstart;
+  int right = ow_scroll_vars0.xend;
+
+  if (margin <= 0 || right - left < margin * 2)
+    return (uint16)actual;
+
+  int min_visual = left + margin;
+  int max_visual = right - margin;
+  int visual = actual;
+  int dir = BYTE(overworld_screen_trans_dir_bits);
+
+  if (dir & 1) {
+    // Transitioning east/right: keep the native edge stop at transition start,
+    // then release the visual offset over the first wide margin. This avoids a
+    // hard 72 px jump from the fixed edge view into the native scroll.
+    if (actual >= right) {
+      int distance_past_edge = actual - right;
+      int keep = margin - distance_past_edge;
+      if (keep < 0)
+        keep = 0;
+      visual = actual - keep;
+    } else if (actual > max_visual) {
+      visual = max_visual;
+    }
+  } else if (dir & 2) {
+    // Transitioning west/left: symmetric release of the visual edge offset.
+    if (actual <= left) {
+      int distance_past_edge = left - actual;
+      int keep = margin - distance_past_edge;
+      if (keep < 0)
+        keep = 0;
+      visual = actual + keep;
+    } else if (actual < min_visual) {
+      visual = min_visual;
+    }
+  } else {
+    if (visual < min_visual)
+      visual = min_visual;
+    else if (visual > max_visual)
+      visual = max_visual;
+  }
+  return (uint16)visual;
+}
+
+static FixedWideRenderState BeginFixedWideRender(void) {
+  FixedWideRenderState state = { 0 };
+  state.visual_x = BG2HOFS_copy2;
+
+  if (!IsFixedWideOverworldRenderCandidate())
+    return state;
+
+  state.visual_x = GetFixedWideVisualX();
+  int delta = (int)BG2HOFS_copy2 - (int)state.visual_x;
+  if (delta == 0)
+    return state;
+
+  state.active = true;
+  state.bg1_hscroll = g_zenv.ppu->bgLayer[0].hScroll;
+  state.bg2_hscroll = g_zenv.ppu->bgLayer[1].hScroll;
+  state.obj_x_offset = g_zenv.ppu->renderObjXOffset;
+
+  g_zenv.ppu->bgLayer[0].hScroll =
+    (uint16)((int)g_zenv.ppu->bgLayer[0].hScroll - delta) & 0x3ff;
+  g_zenv.ppu->bgLayer[1].hScroll =
+    (uint16)((int)g_zenv.ppu->bgLayer[1].hScroll - delta) & 0x3ff;
+  g_zenv.ppu->renderObjXOffset = (int16)(state.obj_x_offset + delta);
+  return state;
+}
+
+static void EndFixedWideRender(const FixedWideRenderState *state) {
+  if (!state->active)
+    return;
+  g_zenv.ppu->bgLayer[0].hScroll = state->bg1_hscroll;
+  g_zenv.ppu->bgLayer[1].hScroll = state->bg2_hscroll;
+  g_zenv.ppu->renderObjXOffset = state->obj_x_offset;
+}
+
+static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
   // Let PPU impl know about the maximum allowed extra space on the sides and bottom
   int extra_right = 0, extra_left = 0, extra_bottom = 0;
 //  printf("main %d, sub %d  (%d, %d, %d)\n", main_module_index, submodule_index, BG2HOFS_copy2, room_bounds_x.v[2 | (quadrant_fullsize_x >> 1)], quadrant_fullsize_x >> 1);
@@ -168,8 +279,9 @@ static void ConfigurePpuSideSpace() {
       extra_bottom = 16;
     } else {
       // outdoors
-      extra_left = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
-      extra_right = ow_scroll_vars0.xend - BG2HOFS_copy2;
+      int hscroll = use_camera_x ? camera_x : BG2HOFS_copy2;
+      extra_left = hscroll - ow_scroll_vars0.xstart;
+      extra_right = ow_scroll_vars0.xend - hscroll;
       extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
     }
   } else if (mod == 7) {
@@ -366,8 +478,9 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       PpuSetMode7PerspectiveCorrection(g_zenv.ppu, 0, 0);
   }
 
+  FixedWideRenderState fixed_wide = BeginFixedWideRender();
   if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240)
-    ConfigurePpuSideSpace();
+    ConfigurePpuSideSpace(fixed_wide.visual_x, fixed_wide.active);
 
   PpuSetWindow1Ext(g_zenv.ppu, g_spotlight_ext_active ? g_spotlight_ext_left : NULL,
                    g_spotlight_ext_active ? g_spotlight_ext_right : NULL);
@@ -433,6 +546,7 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
     irq_flag = 0;
     zelda_snes_dummy_write(NMITIMEN, 0x81);
   }
+  EndFixedWideRender(&fixed_wide);
 }
 
 void HdmaSetup(uint32 addr6, uint32 addr7, uint8 transfer_unit, uint8 reg6, uint8 reg7, uint8 indirect_bank) {

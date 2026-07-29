@@ -541,11 +541,10 @@ void ZeldaSet3DSDisplayMode(int mode) {
   g_config.ignore_aspect_ratio = display_mode == kPlatform3DSDisplayStretch;
   g_config.extended_aspect_ratio = extra;
   g_config.features0 &= ~ws_features;
-  if (wide) {
+  if (wide)
     g_config.features0 |= kFeatures0_WidescreenVisualFixes;
-    if (Platform3DS_GetWideMode() == kPlatform3DSWideForce)
-      g_config.features0 |= kFeatures0_ExtendScreen64;
-  }
+  ZeldaSetWidescreenFixedMode(
+    wide && Platform3DS_GetWideMode() == kPlatform3DSWideFixed);
   g_wanted_zelda_features = g_config.features0;
   g_zenv.ppu->extraLeftRight = UintMin(extra, kPpuExtraLeftRight);
   if (!wide)

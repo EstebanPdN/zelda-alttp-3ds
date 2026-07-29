@@ -20,7 +20,7 @@ user must provide their own legally obtained USA, unheadered ROM on their own
   touch settings.
 - First launch extracts `zelda3_assets.dat` locally from the user's ROM.
 - Screen menu: `ORIGINAL`, `STRETCH`, and `WIDE` display modes, plus
-  `NORMAL`/`FORCE` wide mode when using `WIDE`.
+  `STANDARD`/`FIXED` wide mode when using `WIDE`.
 - Turbo speed: off, x2, x3, x4 or x5.
 - New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
 - Quick diagnostics: press `L + R + A` to create a dump with memory files plus
@@ -33,8 +33,8 @@ user must provide their own legally obtained USA, unheadered ROM on their own
   full top-screen height.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
   with persistent tile-row caches and frame-time diagnostics in quick dumps.
-- HOME Menu metadata is versioned for each build. v3.3 appears as
-  `A Link to the Past 3DS v3.3`.
+- HOME Menu metadata is versioned for each build. v3.4 appears as
+  `A Link to the Past 3DS v3.4`.
 - HOME Menu banner uses a lightweight CGFX 3D box model with the supplied
   hover sound converted to a short PCM WAV.
 

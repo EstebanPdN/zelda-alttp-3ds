@@ -49,6 +49,8 @@ void HdmaSetup(uint32 addr6, uint32 addr7, uint8 transfer_unit, uint8 reg6, uint
 void ZeldaInitialize();
 void ZeldaReset(bool preserve_sram);
 void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags);
+void ZeldaSetWidescreenFixedMode(int enabled);
+int ZeldaGetWidescreenFixedMode(void);
 void ZeldaShutdownPpuWorker(void);
 bool ZeldaGetPpuWorkerStats(int *split_line,
                             uint32 *main_time_us,
