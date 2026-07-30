@@ -1268,6 +1268,9 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",
             g_is_new_3ds ? "yes" : "no");
+    fprintf(info, "Old 3DS half-scanline PPU: %s\n",
+            ZeldaIsOld3DSHalfScanlineRendererEnabled() ? "enabled" :
+            "disabled");
     if (g_core1_time_enabled) {
       fprintf(info, "Core 1 PPU budget: %d%%\n",
               g_core1_time_limit_percent);

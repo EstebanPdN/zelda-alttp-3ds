@@ -29,6 +29,9 @@ uint32 g_wanted_zelda_features;
 static bool g_widescreen_fixed_mode;
 
 static void Startup_InitializeMemory();
+#ifdef __3DS__
+static bool g_ppu_old3ds_half_scanline_enabled;
+#endif
 
 typedef struct SimpleHdma {
   const uint8 *table;
@@ -307,6 +310,12 @@ static void ZeldaDrawPpuLines(Ppu *ppu, int height,
   SimpleHdma hdma_chans[2];
   SimpleHdma_Init(&hdma_chans[0], &g_zenv.dma->channel[6]);
   SimpleHdma_Init(&hdma_chans[1], &g_zenv.dma->channel[7]);
+  bool half_scanline = false;
+#ifdef __3DS__
+  half_scanline = g_ppu_old3ds_half_scanline_enabled;
+#else
+  (void)height;
+#endif
 
   for (int i = 0; i <= height; i++) {
     if (i == 128 && irq_state) {
@@ -315,7 +324,8 @@ static void ZeldaDrawPpuLines(Ppu *ppu, int height,
       ppu_write(ppu, (uint8)BG3VOFS, 0);
       ppu_write(ppu, (uint8)BG3VOFS, 0);
     }
-    if (i >= first_line && i <= last_line)
+    if (i >= first_line && i <= last_line &&
+        (!half_scanline || i == 0 || (i & 1) != 0))
       ppu_runLine(ppu, i);
     SimpleHdma_DoLine(&hdma_chans[0], ppu);
     SimpleHdma_DoLine(&hdma_chans[1], ppu);
@@ -362,6 +372,22 @@ static void ZeldaPpuWorkerMain(void *argument) {
     state->duration_ticks = svcGetSystemTick() - start;
     completed_job = job;
     LightEvent_Signal(&state->done);
+  }
+}
+
+static bool ZeldaUseOld3DSHalfScanlineRenderer(void) {
+  return !Platform3DS_IsNew3DS();
+}
+
+static void ZeldaDuplicateOld3DSHalfScanlines(Ppu *ppu, int height) {
+  const size_t row_bytes =
+    (size_t)(256 + ppu->extraLeftRight * 2) * sizeof(uint32);
+  for (int line = 2; line <= height; line += 2) {
+    uint8 *previous =
+      ppu->renderBuffer + (size_t)(line - 2) * ppu->renderPitch;
+    uint8 *current =
+      ppu->renderBuffer + (size_t)(line - 1) * ppu->renderPitch;
+    memcpy(current, previous, row_bytes);
   }
 }
 
@@ -447,6 +473,10 @@ bool ZeldaGetPpuWorkerStats(int *split_line,
   return true;
 }
 
+bool ZeldaIsOld3DSHalfScanlineRendererEnabled(void) {
+  return g_ppu_old3ds_half_scanline_enabled;
+}
+
 static int ZeldaOld3DSChooseWorkerLines(int height) {
   const int min_worker_lines = 24;
   const int max_worker_lines = height / 3;
@@ -529,6 +559,8 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   uint8 irq_state = irq_flag;
 
 #ifdef __3DS__
+  g_ppu_old3ds_half_scanline_enabled =
+    ZeldaUseOld3DSHalfScanlineRenderer();
   if (ZeldaEnsurePpuWorkers()) {
     PpuWorkerState *system_worker = &g_ppu_system_worker;
     PpuWorkerState *new_worker = &g_ppu_new_worker;
@@ -576,11 +608,19 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       if (workers[i]->thread)
         LightEvent_Wait(&workers[i]->done);
     }
+    if (g_ppu_old3ds_half_scanline_enabled)
+      ZeldaDuplicateOld3DSHalfScanlines(g_zenv.ppu, height);
   } else
 #endif
   {
     ZeldaDrawPpuLines(g_zenv.ppu, height, 1, height, irq_state);
   }
+
+#ifdef __3DS__
+  if (g_ppu_old3ds_half_scanline_enabled &&
+      (!g_ppu_system_worker.thread && !g_ppu_new_worker.thread))
+    ZeldaDuplicateOld3DSHalfScanlines(g_zenv.ppu, height);
+#endif
 
   if (irq_state & 0x80) {
     irq_flag = 0;
