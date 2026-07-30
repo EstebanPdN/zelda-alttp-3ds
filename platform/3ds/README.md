@@ -34,12 +34,12 @@ once per VBlank, while the bottom UI redraws at 30 FPS. Quick-dump `info.txt`
 files include average/max frame work time and the number of frames that exceed
 the 16.67 ms budget.
 
-The HOME Menu metadata is versioned for every release. v2.0 uses:
+The HOME Menu metadata stays stable for every release:
 
 ```text
-Short name: Link to the Past 3DS v2.0
-Long name:  Link to the Past 3DS v2.0
-Author:     Esteban PDN / snesrev / samyost1
+Short name: The Legend of Zelda
+Long name:  A Link to the Past 3DS port
+Author:     EstebanPdN
 ```
 
 The CIA banner prefers `assets/banner.cgfx` when present. v1.6 uses a real

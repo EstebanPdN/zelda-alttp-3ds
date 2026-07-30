@@ -35,9 +35,9 @@ user must provide their own legally obtained USA, unheadered ROM on their own
   full top-screen height.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
   with persistent tile-row caches and frame-time diagnostics in quick dumps.
-- HOME Menu metadata is versioned for each build. v2.0 appears as
-  `Link to the Past 3DS v2.0`, credited to
-  `Esteban PDN / snesrev / samyost1`.
+- HOME Menu metadata stays stable across builds so updates replace the same
+  installed application. Versions are shown in filenames, release notes, and
+  the in-game diagnostic overlay instead.
 - HOME Menu banner uses a lightweight CGFX 3D box model with the supplied
   hover sound converted to a short PCM WAV.
 
