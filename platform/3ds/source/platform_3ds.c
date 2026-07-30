@@ -1314,13 +1314,6 @@ bool Platform3DS_DumpMemory(const char *directory,
       fprintf(info, "Last slowest PPU worker: %lu us\n",
               (unsigned long)ppu_worker_time_us);
     }
-    uint32 line_cache_hits = 0;
-    uint32 line_cache_misses = 0;
-    ZeldaGetPpuLineCacheStats(&line_cache_hits, &line_cache_misses);
-    fprintf(info, "Old 3DS scanline cache hits: %lu\n",
-            (unsigned long)line_cache_hits);
-    fprintf(info, "Old 3DS scanline cache misses: %lu\n",
-            (unsigned long)line_cache_misses);
     fprintf(info, "Frame timing samples: %llu\n",
             (unsigned long long)g_frame_timing_samples);
     if (g_frame_timing_samples != 0) {

@@ -449,10 +449,6 @@ bool ZeldaGetPpuWorkerStats(int *split_line,
   return true;
 }
 
-void ZeldaGetPpuLineCacheStats(uint32 *hits, uint32 *misses) {
-  PpuGetLineCacheStats(g_zenv.ppu, hits, misses);
-}
-
 static int ZeldaOld3DSChooseWorkerLines(int height) {
   const int min_worker_lines = 24;
   const int max_worker_lines = height / 3;
@@ -568,7 +564,6 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
         continue;
       memcpy(&state->ppu, g_zenv.ppu, sizeof(Ppu));
       state->ppu.tileCache = &state->tile_cache;
-      state->ppu.lineCache = NULL;
       state->height = height;
       state->irq_state = irq_state;
       uint32 job = state->job_id + 1;

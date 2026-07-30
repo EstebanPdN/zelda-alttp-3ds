@@ -19,7 +19,7 @@ port. It is intentionally procedural so future releases keep the same shape.
 The release title must be:
 
 ```text
-Link to the Past 3DS vX.Y
+vX.Y
 ```
 
 The release body must contain only:
@@ -80,26 +80,48 @@ The command should print nothing.
 
 ## Version Metadata
 
-Every release must update the visible 3DS HOME Menu metadata:
+Every release must keep the visible 3DS HOME Menu metadata stable so updates
+replace the same installed application:
 
 - `platform/3ds/CMakeLists.txt`
 - `platform/3ds/build.sh`
-- project README/version references
-- `platform/3ds/cia/zelda3.rsf` when a new HOME Menu entry is needed
 
-The long HOME Menu name should include the version, for example:
+The generated SMDH metadata must remain:
 
 ```text
-A Link to the Past 3DS vX.Y
+The Legend of Zelda
+A Link to the Past 3DS port
+EstebanPdN
 ```
 
-After building, parse both generated icon metadata files and the final CIA to
-confirm the new long name is present and any old HOME Menu name is absent. Do
-not rely only on filenames.
+Do not put release numbers, experimental labels, or changelog text in HOME Menu
+metadata. Version labels belong in filenames, release notes, tags, and the
+in-game diagnostics overlay only.
 
-If hardware still shows an older HOME Menu name after installing a new CIA, bump
-the RSF `UniqueId` for the next release so the 3DS creates a fresh title entry
-instead of reusing cached metadata from an older install.
+After building, parse the generated icon metadata and confirm the stable strings
+are present and version/experimental strings are absent.
+
+## New 3DS / Old 3DS Isolation Rules
+
+New 3DS is the stable profile. Old 3DS is the experimental optimization profile.
+Do not let an Old 3DS optimization change New 3DS behavior.
+
+- Treat `v2.0` as the visual/performance baseline for the New 3DS renderer.
+- Any risky renderer, PPU, timing, worker, cache, sprite, color math, or
+  presentation experiment must live behind an explicit Old 3DS-only backend or
+  wrapper selected after `Platform3DS_IsNew3DS()` detection.
+- Do not place Old 3DS experiments directly in shared files such as
+  `app/jni/src/snes/ppu.c` unless the shared file only dispatches to separate
+  New/Old implementations and the New branch remains byte-for-byte equivalent
+  in behavior to the stable baseline.
+- Prefer duplicated implementation files for risky code paths, for example a
+  stable New 3DS PPU path and a separate Old 3DS experimental PPU path, instead
+  of clever shared fast paths.
+- Before publishing or tagging an Old 3DS experiment, compare the New 3DS path
+  against the stable baseline and verify that no Old-only flag, cache, scanline
+  shortcut, frame pacing change, or worker split is active on New 3DS.
+- Never use visual degradation such as half scanlines, reduced vertical
+  resolution, or duplicated rows as an Old 3DS performance strategy.
 
 ## 3DS Screen Mode Rules
 

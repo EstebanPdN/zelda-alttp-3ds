@@ -766,10 +766,6 @@ int main(int argc, char** argv) {
                        g_config.enhanced_mode7 * kPpuRenderFlags_4x4Mode7 |
                        g_config.extend_y * kPpuRenderFlags_Height240 |
                        g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
-#ifdef __3DS__
-  if (!Platform3DS_IsNew3DS())
-    g_ppu_render_flags |= kPpuRenderFlags_Old3DSLineCache;
-#endif
   ZeldaEnableMsu(g_config.enable_msu);
   ZeldaSetLanguage(g_config.language);
 
