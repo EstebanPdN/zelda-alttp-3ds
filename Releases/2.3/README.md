@@ -23,6 +23,6 @@ Installing this CIA should update the same HOME Menu app instead of creating a s
 
 The QR points to:
 
-https://github.com/EstebanPdN/zelda-alttp-3ds/raw/v2.3/Releases/2.3/zelda3-3ds-v2.3.cia
+https://github.com/EstebanPdN/zelda-alttp-3ds/releases/download/v2.3/zelda3-3ds-v2.3.cia
 
 This repository does not include a ROM or extracted `zelda3_assets.dat`.
