@@ -100,6 +100,7 @@ struct Ppu {
   // cgram access
   uint8_t cgramPointer;
   bool cgramSecondWrite;
+  bool colorMapDirty;
   uint8_t cgramBuffer;
   // oam access
   uint16_t oamAdr;
