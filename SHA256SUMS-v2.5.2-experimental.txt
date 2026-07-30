@@ -1,0 +1,2 @@
+0884915a97d33bebc32fdf214b4c60ff4310175e5944111c9def11f01d1b96c4  zelda3-3ds-v2.5.2-experimental.cia
+6e4bc9bc2a9e14556369f182dc38af0818826ac5624fd32ba4a7c2da6ac00dc7  zelda3-3ds-v2.5.2-experimental.3dsx
