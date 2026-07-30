@@ -8,3 +8,4 @@
 - Verified SMDH metadata does not contain `2.4`, `2.3`, or `experimental`.
 - Verified tracked files do not include ROMs, extracted assets, or dump binaries.
 - Verified release SHA256 checksums.
+- Built after adding the Settings/Developer overlay UI changes.

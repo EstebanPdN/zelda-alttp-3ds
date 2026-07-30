@@ -5,3 +5,4 @@ The rendering bug was caused by Old 3DS performance experiments being applied to
 v2.4 restores `app/jni/src/snes/ppu.c` and `app/jni/src/snes/ppu.h` to the stable v2.0 renderer behavior, removes the unsafe v2.4.0 scanline cache hooks, and keeps the later platform fixes outside the PPU renderer.
 
 Future Old 3DS experiments must use a separate backend/wrapper so renderer changes cannot affect New 3DS.
+The Settings changes are limited to the second-screen SDL UI and do not touch the shared SNES PPU renderer.
