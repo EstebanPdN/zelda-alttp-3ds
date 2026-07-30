@@ -38,6 +38,7 @@ static bool g_irrst_initialized;
 static bool g_is_new_3ds;
 static bool g_model_detected;
 static bool g_core1_time_enabled;
+static int g_core1_time_limit_percent;
 static bool g_version_overlay_visible;
 static uint64_t g_version_overlay_hide_time_ms;
 static uint64_t g_frame_timing_samples;
@@ -378,7 +379,13 @@ bool Platform3DS_InitTopPresenter(void) {
   g_irrst_initialized = R_SUCCEEDED(irrstInit());
 
   // Reserve part of the system core for a parallel PPU segment.
-  g_core1_time_enabled = R_SUCCEEDED(APT_SetAppCpuTimeLimit(30));
+  //
+  // The New 3DS path keeps the proven v2.0/E5 profile. On Old 3DS the PPU
+  // worker was visibly starved in E5 dumps, so E6 gives that worker a larger
+  // Core 1 time slice and records the exact value in runtime dumps.
+  g_core1_time_limit_percent = g_is_new_3ds ? 30 : 70;
+  g_core1_time_enabled = R_SUCCEEDED(
+    APT_SetAppCpuTimeLimit(g_core1_time_limit_percent));
 
   // Zelda's source image is derived from the SNES 15-bit palette. RGB565 keeps
   // that detail while halving the top framebuffer bandwidth versus RGBA8.
@@ -487,9 +494,10 @@ bool Platform3DS_InitTopPresenter(void) {
   g_max_scheduled_logic_frames = 0;
   Platform3DS_LogRuntime(
     "Top presenter: PICA200 RGB565, 60 Hz timer pacing, New 3DS=%s, "
-    "Core 1 PPU budget=%s",
+    "Core 1 PPU budget=%s%d%%",
     g_is_new_3ds ? "yes" : "no",
-    g_core1_time_enabled ? "30%" : "unavailable");
+    g_core1_time_enabled ? "" : "unavailable/",
+    g_core1_time_limit_percent);
   return gfxGetScreenFormat(GFX_TOP) == GSP_RGB565_OES;
 }
 
@@ -1201,8 +1209,13 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",
             g_is_new_3ds ? "yes" : "no");
-    fprintf(info, "Core 1 PPU budget: %s\n",
-            g_core1_time_enabled ? "30%" : "unavailable");
+    if (g_core1_time_enabled) {
+      fprintf(info, "Core 1 PPU budget: %d%%\n",
+              g_core1_time_limit_percent);
+    } else {
+      fprintf(info, "Core 1 PPU budget: unavailable/%d%% requested\n",
+              g_core1_time_limit_percent);
+    }
     int ppu_split_line = 0;
     uint32 ppu_main_time_us = 0;
     uint32 ppu_worker_time_us = 0;

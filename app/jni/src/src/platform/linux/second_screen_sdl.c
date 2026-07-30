@@ -1316,6 +1316,52 @@ static void force_bottom_redraw_now(int logic_frames) {
 #endif
 }
 
+#ifdef __3DS__
+typedef struct BottomCriticalState {
+  int module;
+  int area;
+  int dungeon;
+  int indoors;
+  int equipped;
+  uint8_t health_cap;
+  uint8_t health_cur;
+  uint8_t magic;
+  uint8_t keys;
+  uint8_t bombs;
+  uint8_t arrows;
+  uint16_t rupees;
+} BottomCriticalState;
+
+static bool bottom_critical_state_changed(void) {
+  static bool initialized;
+  static BottomCriticalState previous;
+  BottomCriticalState current;
+  uint8_t local_sram[0x80];
+
+  memset(&current, 0, sizeof(current));
+  SS_ReadSram(local_sram, sizeof(local_sram));
+  current.module = SS_GetModule() & 0xff;
+  current.area = SS_GetArea();
+  current.dungeon = SS_GetDungeon();
+  current.indoors = SS_IsIndoors() ? 1 : 0;
+  current.equipped = SS_GetEquippedSlot();
+  current.health_cap = local_sram[0x6c];
+  current.health_cur = local_sram[0x6d];
+  current.magic = local_sram[0x6e];
+  current.keys = local_sram[0x6f];
+  current.bombs = local_sram[0x43];
+  current.arrows = local_sram[0x77];
+  current.rupees = (uint16_t)local_sram[0x62] |
+                   ((uint16_t)local_sram[0x63] << 8);
+
+  bool changed = initialized &&
+    memcmp(&current, &previous, sizeof(current)) != 0;
+  previous = current;
+  initialized = true;
+  return changed;
+}
+#endif
+
 static void handle_tap(float x, float y) {
   int module = SS_GetModule() & 0xFF;
   if (mode_for_module(module) != MODE_GAME || !art_ready) return;
@@ -1655,6 +1701,11 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
   if (!ss_win) {
     if (frame_no < 3 || !ensure_window())
       return;
+  }
+
+  if (bottom_critical_state_changed()) {
+    force_bottom_redraw_now(logic_frames);
+    return;
   }
 
   if (!ensure_second_screen_worker()) {

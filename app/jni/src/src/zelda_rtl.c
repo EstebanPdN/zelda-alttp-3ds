@@ -342,8 +342,8 @@ static PpuWorkerState g_ppu_new_worker;
 static bool g_ppu_worker_initialized;
 static int g_ppu_split_line = 112;
 static int g_ppu_last_split_line = 112;
-static int g_ppu_old3ds_worker_lines = 56;
-static int g_ppu_old3ds_last_worker_lines = 56;
+static int g_ppu_old3ds_worker_lines = 96;
+static int g_ppu_old3ds_last_worker_lines = 96;
 static uint64 g_ppu_main_duration_ticks;
 
 static void ZeldaPpuWorkerMain(void *argument) {
@@ -449,7 +449,7 @@ bool ZeldaGetPpuWorkerStats(int *split_line,
 
 static int ZeldaOld3DSChooseWorkerLines(int height) {
   const int min_worker_lines = 24;
-  const int max_worker_lines = height / 3;
+  const int max_worker_lines = height / 2;
   int worker_lines = g_ppu_old3ds_worker_lines;
 
   if (g_ppu_main_duration_ticks != 0 &&
