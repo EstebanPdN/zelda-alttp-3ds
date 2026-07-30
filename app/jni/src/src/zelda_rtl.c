@@ -389,7 +389,8 @@ static int ZeldaEnsurePpuWorkers(void) {
   s32 priority = 0x30;
   svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
 
-  bool system_worker =
+  bool can_use_core1 = Platform3DS_CanUseCore1PpuWorker();
+  bool system_worker = can_use_core1 &&
     ZeldaCreatePpuWorker(&g_ppu_system_worker, 1, priority);
   bool new_worker = is_new_3ds &&
     ZeldaCreatePpuWorker(&g_ppu_new_worker, 2, priority);
@@ -400,7 +401,8 @@ static int ZeldaEnsurePpuWorkers(void) {
   } else {
     Platform3DS_LogRuntime(
       "PPU workers: Core 1=%s, Core 2=%s",
-      system_worker ? "enabled" : "unavailable",
+      system_worker ? "enabled" :
+      (can_use_core1 ? "unavailable" : "disabled/no budget"),
       new_worker ? "enabled" : "unavailable");
   }
   return count;

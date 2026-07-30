@@ -1,3 +1,3 @@
-aee36628efa211bc7e4f45c823e7b0d3847ffc8a8b681dce245889282c019da9  zelda3-3ds-v2.3.1-experimental.cia
-38e2f7684f2fab09a2f2f9525a47cb33352cbb8d4778d1032393a5111838be78  zelda3-3ds-v2.3.1-experimental.3dsx
+f8b02992d6f02153598a4d0af7bd6e548e5f32ced3631bac796dc39402b70b3a  zelda3-3ds-v2.3.1-experimental.cia
+23c1c0fe2f1bf74143a221621eae6f0d8d8622a29571957a96a8c72b96d2cd5c  zelda3-3ds-v2.3.1-experimental.3dsx
 e35fe50b2d503db382a4ed61858c7c676a4d93d836e8bbaccbfbbd7ca587a04d  QR-v2.3.1-github.png

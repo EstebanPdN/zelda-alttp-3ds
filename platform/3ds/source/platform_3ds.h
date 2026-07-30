@@ -34,6 +34,7 @@ void Platform3DS_ShowFatalError(const char *message);
 enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void);
 void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode);
 bool Platform3DS_IsNew3DS(void);
+bool Platform3DS_CanUseCore1PpuWorker(void);
 bool Platform3DS_IsVersionOverlayVisible(void);
 enum Platform3DSWideMode Platform3DS_GetWideMode(void);
 void Platform3DS_SetWideMode(enum Platform3DSWideMode mode);

@@ -31,8 +31,9 @@ El archivo `PROCESS.txt` documenta cómo se arregló originalmente el problema d
 - Se corrigió HOME/suspend/close handling para que el HOME menu y cierre de app funcionen mejor.
 - Se añadió pantalla fatal legible en 3DS para evitar black screens silenciosos en errores de setup/assets.
 - Se probó subir Core 1 a 70%, pero la Old 3DS lo rechazó y el renderer paralelo quedó desactivado; por eso se revirtió a 30%.
-- `v2.3.1` probó reducir trabajo renderizando líneas alternas, pero se descartó porque degradaba demasiado la imagen aunque subiera FPS.
+- La primera `v2.3.1` probó reducir trabajo renderizando líneas alternas, pero se descartó porque degradaba demasiado la imagen aunque subiera FPS.
 - `v2.3.2` vuelve a resolución completa y prueba optimizaciones conservadoras del PPU: cache de paleta/color, evitar evaluación de sprites cuando OBJ está deshabilitado, saltar trabajo de subscreen cuando no se usa, fast path de color-window normal y escritura de paleta desenrollada.
+- La nueva `v2.3.1` experimental de arranque corrige un bloqueo de New 3DS donde se creaba un worker PPU en Core 1 aunque el sistema hubiera devuelto 0% de presupuesto de CPU para ese core.
 
 ## Qué se puede seguir optimizando
 

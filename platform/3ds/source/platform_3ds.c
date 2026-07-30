@@ -313,6 +313,10 @@ bool Platform3DS_IsNew3DS(void) {
   return g_is_new_3ds;
 }
 
+bool Platform3DS_CanUseCore1PpuWorker(void) {
+  return g_core1_time_enabled && g_core1_time_limit_percent > 0;
+}
+
 bool Platform3DS_IsVersionOverlayVisible(void) {
   if (g_version_overlay_visible &&
       osGetTime() >= g_version_overlay_hide_time_ms) {
@@ -420,9 +424,14 @@ bool Platform3DS_InitTopPresenter(void) {
     if (R_SUCCEEDED(APT_SetAppCpuTimeLimit(core1_candidates[i]))) {
       u32 actual_percent = core1_candidates[i];
       APT_GetAppCpuTimeLimit(&actual_percent);
-      g_core1_time_limit_percent = (int)actual_percent;
-      g_core1_time_enabled = true;
-      break;
+      if (actual_percent > 0) {
+        g_core1_time_limit_percent = (int)actual_percent;
+        g_core1_time_enabled = true;
+        break;
+      }
+      g_core1_time_limit_percent = 0;
+      Platform3DS_LogRuntime(
+        "Core 1 PPU budget request returned 0%%; disabling Core 1 worker");
     }
   }
 
@@ -535,7 +544,7 @@ bool Platform3DS_InitTopPresenter(void) {
     "Top presenter: PICA200 RGB565, 60 Hz timer pacing, New 3DS=%s, "
     "Core 1 PPU budget=%s%d%%",
     g_is_new_3ds ? "yes" : "no",
-    g_core1_time_enabled ? "" : "unavailable/",
+    Platform3DS_CanUseCore1PpuWorker() ? "" : "unavailable/",
     g_core1_time_limit_percent);
   return gfxGetScreenFormat(GFX_TOP) == GSP_RGB565_OES;
 }
