@@ -143,6 +143,15 @@ Do not let an Old 3DS optimization change New 3DS behavior.
 - Do not mutate `BG*_HOFS_copy*`, OAM memory, sprite/ancilla bounds, dungeon
   camera bounds, or transition target coordinates from Screen menu changes.
 
+## 3DS Bottom Screen UI Rules
+
+- Text on the 320x240 bottom screen must be readable on real hardware. Do not
+  shrink text merely to fit more rows; use pages, scrolling, or submenus.
+- Avoid dense two-column settings layouts for long labels such as button remap
+  entries. Prefer one readable column with a visible page/scroll control.
+- Developer diagnostics should use a dedicated readable panel when possible,
+  not tiny always-on text that is hard to read during gameplay.
+
 ## 3DS HOME Menu Close Rules
 
 - Do not use `svcExitProcess()` to close the title after HOME Menu ->

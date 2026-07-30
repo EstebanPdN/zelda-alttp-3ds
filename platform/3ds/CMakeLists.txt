@@ -52,7 +52,7 @@ target_include_directories(zelda3-3ds PRIVATE
 
 target_compile_definitions(zelda3-3ds PRIVATE
   SYSTEM_VOLUME_MIXER_AVAILABLE=0
-  ZELDA3_3DS_VERSION=\"2.4\"
+  ZELDA3_3DS_VERSION=\"2.4.1\"
   NDEBUG=1
 )
 
@@ -102,7 +102,7 @@ ctr_generate_smdh(
 
 ctr_create_3dsx(zelda3-3ds-3dsx
   TARGET zelda3-3ds
-  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v2.4.3dsx"
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v2.4.1.3dsx"
   SMDH "${ZELDA3_SMDH}"
   ROMFS "${ZELDA3_ROMFS}"
 )
