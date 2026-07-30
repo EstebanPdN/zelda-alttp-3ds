@@ -1295,6 +1295,27 @@ static void present_second_screen(void) {
 #endif
 }
 
+static void force_bottom_redraw_now(int logic_frames) {
+#ifdef __3DS__
+  if (!ss_enabled || !ss_win)
+    return;
+  if (ss_worker_busy) {
+    LightEvent_Wait(&ss_worker_done);
+    ss_worker_busy = false;
+  }
+  ss_worker_buffer = ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer;
+  draw_second_screen(logic_frames);
+  ss_front_buffer = ss_worker_buffer;
+  ss_frame_ready = false;
+  ss_redraw_requested = false;
+  Platform3DS_PresentBottomFrame(
+    ss_present_pixels[ss_front_buffer],
+    k3DSBottomTextureWidth * 4, W, H);
+#else
+  (void)logic_frames;
+#endif
+}
+
 static void handle_tap(float x, float y) {
   int module = SS_GetModule() & 0xFF;
   if (mode_for_module(module) != MODE_GAME || !art_ready) return;
@@ -1478,6 +1499,7 @@ void SecondScreenSDL_Handle3DSTouch(void) {
     float x = (float)pos.px - draw_x;
     float y = (float)pos.py - draw_y;
     handle_tap(x, y);
+    force_bottom_redraw_now(1);
   }
   was_touching = touching;
 #endif

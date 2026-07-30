@@ -508,10 +508,9 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       new_worker->first_line = main_last + 1;
       new_worker->last_line = height;
     } else {
-      int system_last = height * 3 / 13;
-      main_first = system_last + 1;
-      system_worker->first_line = 1;
-      system_worker->last_line = system_last;
+      main_last = height / 2;
+      system_worker->first_line = main_last + 1;
+      system_worker->last_line = height;
     }
     g_ppu_last_split_line = main_last;
 

@@ -114,6 +114,8 @@ static bool g_display_perf;
 static int g_curr_fps;
 #ifdef __3DS__
 static int g_3ds_visual_fps = 0;
+static uint32 g_3ds_visual_fps_window_start_ms = 0;
+static uint32 g_3ds_visual_fps_window_frames = 0;
 #endif
 static int g_ppu_render_flags = 0;
 static int g_snes_width, g_snes_height;
@@ -297,7 +299,7 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
     "NEW 3DS" : "OLD 3DS";
   char fps_text[32];
   snprintf(fps_text, sizeof(fps_text), "FPS %d", g_3ds_visual_fps);
-  int text_w = IntMax(TinyTextWidth("VERSION 2.2", scale),
+  int text_w = IntMax(TinyTextWidth("VERSION E2", scale),
                       IntMax(TinyTextWidth(profile, scale),
                              TinyTextWidth(fps_text, scale)));
   int box_w = IntMin(text_w + 24 * scale, width - 16 * scale);
@@ -314,8 +316,8 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
                x, y, 2 * scale, box_h, 0xe8c260u);
   FillArgbRect(pixels, pitch, width, height,
                x + box_w - 2 * scale, y, 2 * scale, box_h, 0xe8c260u);
-  DrawTinyText(pixels, pitch, width, height, "VERSION 2.2",
-               x + (box_w - TinyTextWidth("VERSION 2.2", scale)) / 2,
+  DrawTinyText(pixels, pitch, width, height, "VERSION E2",
+               x + (box_w - TinyTextWidth("VERSION E2", scale)) / 2,
                y + 7 * scale, scale, 0xffffffu);
   DrawTinyText(pixels, pitch, width, height, profile,
                x + (box_w - TinyTextWidth(profile, scale)) / 2,
@@ -1023,9 +1025,18 @@ int main(int argc, char** argv) {
       render_interval_us = (uint32)(
         (frame_work_start - last_render_counter) * 1000000ull /
         logic_frequency);
-      if (render_interval_us != 0)
+      uint32 now_ms = SDL_GetTicks();
+      if (g_3ds_visual_fps_window_start_ms == 0)
+        g_3ds_visual_fps_window_start_ms = now_ms;
+      g_3ds_visual_fps_window_frames++;
+      uint32 elapsed_ms = now_ms - g_3ds_visual_fps_window_start_ms;
+      if (elapsed_ms >= 2500) {
         g_3ds_visual_fps =
-          (int)((1000000ull + render_interval_us / 2) / render_interval_us);
+          (int)((uint64)g_3ds_visual_fps_window_frames * 1000ull /
+                (elapsed_ms ? elapsed_ms : 1));
+        g_3ds_visual_fps_window_start_ms = now_ms;
+        g_3ds_visual_fps_window_frames = 0;
+      }
     }
 
     bool turbo_held;
