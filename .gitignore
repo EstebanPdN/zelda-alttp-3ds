@@ -4,6 +4,18 @@ build/
 build-3ds/
 .DS_Store
 
+# Release staging/output folders. Public artifacts belong on GitHub Releases,
+# not in the source tree.
+Release/
+Releases/
+Experimental/
+release-staging/
+*.cia
+*.3dsx
+*-source.zip
+QR-*-github.png
+QR-*-release.png
+
 # Local configuration file (sdk path, etc)
 local.properties
 

@@ -1,3 +1,0 @@
-99933517adfd2329cbbef956eb489ea7cf7c7d0a75f2a8443fb084658e56dfc2  zelda3-3ds-v2.3.1-experimental.cia
-d7a13c8cd1ddb70bf16aa0b5bbc760acd387d6aa910e8c2b904e7f0ae32aa97c  zelda3-3ds-v2.3.1-experimental.3dsx
-e35fe50b2d503db382a4ed61858c7c676a4d93d836e8bbaccbfbbd7ca587a04d  QR-v2.3.1-github.png

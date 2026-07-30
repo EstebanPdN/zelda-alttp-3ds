@@ -10,9 +10,12 @@ port. It is intentionally procedural so future releases keep the same shape.
 - Do not use Catbox for normal releases.
 - The QR code must point directly to the GitHub `.cia` asset URL.
 - Keep public GitHub releases consolidated to important milestones when needed.
-  Local `Releases/X.Y/` folders and git history must remain complete.
-- If a broken release is replaced, delete that public GitHub release and clean
-  up its tag, but do not delete local release folders or source history.
+- Do not commit release artifacts, old experiment builds, QR images, `.cia`,
+  `.3dsx`, or packaged source zips to the repository.
+- Stage release files in a temporary local directory outside git, such as
+  `/tmp/zelda3-release-vX.Y/` or ignored `release-staging/vX.Y/`.
+- If a broken release is replaced, update or delete the public GitHub release
+  and clean up its tag as needed; do not keep obsolete artifacts in the repo.
 
 ## Release Page Format
 
@@ -58,8 +61,13 @@ QR-vX.Y-github.png
 ```
 
 GitHub also provides automatic source archives for each tag. Internal notes,
-hashes, test reports, detailed build info, and technical notes stay inside the
-local release folder and source zip.
+hashes, test reports, detailed build info, and technical notes may stay in an
+ignored temporary staging folder, but must not be committed.
+
+The uploaded `zelda3-3ds-vX.Y-source.zip` must contain only the source tree for
+that exact tagged version. It must not contain historical `Release/`,
+`Releases/`, `Experimental/`, `build-3ds/`, `.git/`, dumps, ROMs, generated
+CIAs/3DSX files from other versions, or any old testing packages.
 
 ## Legal Rules
 
@@ -177,13 +185,12 @@ Do not let an Old 3DS optimization change New 3DS behavior.
   a user-visible fix.
 - Put detailed implementation notes in `TECHNICAL_NOTES-vX.Y.md`.
 
-## Local Release Folder
+## Release Staging Folder
 
-Each release keeps a complete local folder:
+Each release may use a temporary staging folder outside tracked source control:
 
 ```text
-Releases/X.Y/
-  source/
+release-staging/X.Y/
   zelda3-3ds-vX.Y.cia
   zelda3-3ds-vX.Y.3dsx
   zelda3-3ds-vX.Y-source.zip
@@ -196,6 +203,25 @@ Releases/X.Y/
   TEST_REPORT-vX.Y.md
   BUILD_INFO-vX.Y.md
   GITHUB_RELEASE.txt
+```
+
+This folder is ignored by git and must not be pushed. After the GitHub release
+is verified, the staging folder can be deleted.
+
+Create the source zip from a clean tracked snapshot, not from the full working
+directory. Preferred method:
+
+```sh
+git archive --format=zip --prefix=zelda3-3ds-vX.Y-source/ \
+  -o release-staging/X.Y/zelda3-3ds-vX.Y-source.zip vX.Y
+```
+
+If the tag has not been created yet, create the zip from `HEAD` only after
+checking that `git status --short` contains no unintended changes:
+
+```sh
+git archive --format=zip --prefix=zelda3-3ds-vX.Y-source/ \
+  -o release-staging/X.Y/zelda3-3ds-vX.Y-source.zip HEAD
 ```
 
 ## Publishing Commands
@@ -212,13 +238,13 @@ Create the release:
 
 ```sh
 gh release create vX.Y \
-  "/path/to/Releases/X.Y/zelda3-3ds-vX.Y.cia" \
-  "/path/to/Releases/X.Y/zelda3-3ds-vX.Y.3dsx" \
-  "/path/to/Releases/X.Y/zelda3-3ds-vX.Y-source.zip" \
-  "/path/to/Releases/X.Y/QR-vX.Y-github.png" \
+  "/path/to/release-staging/X.Y/zelda3-3ds-vX.Y.cia" \
+  "/path/to/release-staging/X.Y/zelda3-3ds-vX.Y.3dsx" \
+  "/path/to/release-staging/X.Y/zelda3-3ds-vX.Y-source.zip" \
+  "/path/to/release-staging/X.Y/QR-vX.Y-github.png" \
   --repo EstebanPdN/zelda-alttp-3ds \
-  --title "Link to the Past 3DS vX.Y" \
-  --notes-file "/path/to/Releases/X.Y/GITHUB_RELEASE.txt" \
+  --title "vX.Y" \
+  --notes-file "/path/to/release-staging/X.Y/GITHUB_RELEASE.txt" \
   --latest
 ```
 

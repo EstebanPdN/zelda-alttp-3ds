@@ -57,10 +57,11 @@ Every GitHub release includes:
 - installable CIA
 - Homebrew Launcher 3DSX
 - QR code for scanning the CIA URL from FBI on a 3DS
+- clean source-code zip for that exact version
 
-GitHub supplies automatic source-code archives for each tag.
-The release page itself shows the QR code, legal notice and a short changelog.
-Detailed development notes are preserved inside the source snapshot.
+Release binaries and QR images are kept on the GitHub Releases page, not in the
+repository source tree. The release page itself shows the QR code, legal notice
+and a short changelog.
 
 Latest release:
 
