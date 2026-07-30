@@ -112,6 +112,9 @@ static uint8 g_gamepad_buttons;
 static int g_input1_state;
 static bool g_display_perf;
 static int g_curr_fps;
+#ifdef __3DS__
+static int g_3ds_visual_fps = 0;
+#endif
 static int g_ppu_render_flags = 0;
 static int g_snes_width, g_snes_height;
 static int g_sdl_audio_mixer_volume = SDL_MIX_MAXVOLUME;
@@ -291,11 +294,12 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
     return;
   int scale = render_scale > 1 ? render_scale : 2;
   const char *profile = Platform3DS_IsNew3DS() ?
-    "NEW 3DS V2.0" : "OLD 3DS PROFILE";
-  const char *close_hint = "L+R+B / AUTO 5S";
-  int text_w = IntMax(TinyTextWidth("2.1 EXPERIMENTAL", scale),
+    "NEW 3DS" : "OLD 3DS";
+  char fps_text[32];
+  snprintf(fps_text, sizeof(fps_text), "FPS %d", g_3ds_visual_fps);
+  int text_w = IntMax(TinyTextWidth("VERSION 2.1", scale),
                       IntMax(TinyTextWidth(profile, scale),
-                             TinyTextWidth(close_hint, scale)));
+                             TinyTextWidth(fps_text, scale)));
   int box_w = IntMin(text_w + 24 * scale, width - 16 * scale);
   int box_h = 38 * scale;
   int x = (width - box_w) / 2;
@@ -310,14 +314,14 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
                x, y, 2 * scale, box_h, 0xe8c260u);
   FillArgbRect(pixels, pitch, width, height,
                x + box_w - 2 * scale, y, 2 * scale, box_h, 0xe8c260u);
-  DrawTinyText(pixels, pitch, width, height, "2.1 EXPERIMENTAL",
-               x + (box_w - TinyTextWidth("2.1 EXPERIMENTAL", scale)) / 2,
+  DrawTinyText(pixels, pitch, width, height, "VERSION 2.1",
+               x + (box_w - TinyTextWidth("VERSION 2.1", scale)) / 2,
                y + 7 * scale, scale, 0xffffffu);
   DrawTinyText(pixels, pitch, width, height, profile,
                x + (box_w - TinyTextWidth(profile, scale)) / 2,
                y + 18 * scale, scale, 0xe8c260u);
-  DrawTinyText(pixels, pitch, width, height, close_hint,
-               x + (box_w - TinyTextWidth(close_hint, scale)) / 2,
+  DrawTinyText(pixels, pitch, width, height, fps_text,
+               x + (box_w - TinyTextWidth(fps_text, scale)) / 2,
                y + 29 * scale, scale, 0xc8c8c8u);
 }
 #endif
@@ -1019,6 +1023,9 @@ int main(int argc, char** argv) {
       render_interval_us = (uint32)(
         (frame_work_start - last_render_counter) * 1000000ull /
         logic_frequency);
+      if (render_interval_us != 0)
+        g_3ds_visual_fps =
+          (int)((1000000ull + render_interval_us / 2) / render_interval_us);
     }
 
     bool turbo_held;
