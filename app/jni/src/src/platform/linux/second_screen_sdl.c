@@ -1322,7 +1322,8 @@ static void handle_tap(float x, float y) {
           mode = kPlatform3DSDisplayStretch;
           break;
         case kPlatform3DSDisplayStretch:
-          mode = kPlatform3DSDisplayUltraWideMod;
+          mode = Platform3DS_IsNew3DS() ?
+            kPlatform3DSDisplayUltraWideMod : kPlatform3DSDisplayOriginal;
           break;
         case kPlatform3DSDisplayUltraWideMod:
         default:
@@ -1631,7 +1632,9 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
     ss_frame_ready = true;
   }
 
-  int divisor = logic_frames <= 1 ? 2 : 6;
+  int divisor = Platform3DS_IsNew3DS() ?
+    (logic_frames <= 1 ? 2 : 6) :
+    (logic_frames <= 1 ? 2 : 4);
   if (!ss_worker_busy && frame_no % divisor == 0) {
     ss_worker_buffer = ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer;
     ss_worker_logic_frames = logic_frames;

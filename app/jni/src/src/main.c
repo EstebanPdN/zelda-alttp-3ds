@@ -185,6 +185,118 @@ static SDL_HitTestResult HitTestCallback(SDL_Window *win, const SDL_Point *pt, v
 }
 #endif
 
+#ifdef __3DS__
+static const uint8 *TinyGlyphRows(char ch) {
+  static const uint8 letters[26][7] = {
+    {14,17,17,31,17,17,17}, {30,17,17,30,17,17,30},
+    {14,17,16,16,16,17,14}, {30,17,17,17,17,17,30},
+    {31,16,16,30,16,16,31}, {31,16,16,30,16,16,16},
+    {14,17,16,23,17,17,14}, {17,17,17,31,17,17,17},
+    {14,4,4,4,4,4,14}, {7,2,2,2,18,18,12},
+    {17,18,20,24,20,18,17}, {16,16,16,16,16,16,31},
+    {17,27,21,21,17,17,17}, {17,25,21,19,17,17,17},
+    {14,17,17,17,17,17,14}, {30,17,17,30,16,16,16},
+    {14,17,17,17,21,18,13}, {30,17,17,30,20,18,17},
+    {15,16,16,14,1,1,30}, {31,4,4,4,4,4,4},
+    {17,17,17,17,17,17,14}, {17,17,17,17,17,10,4},
+    {17,17,17,21,21,21,10}, {17,17,10,4,10,17,17},
+    {17,17,10,4,4,4,4}, {31,1,2,4,8,16,31},
+  };
+  static const uint8 digits[10][7] = {
+    {14,17,19,21,25,17,14}, {4,12,4,4,4,4,14},
+    {14,17,1,2,4,8,31}, {30,1,1,14,1,1,30},
+    {2,6,10,18,31,2,2}, {31,16,30,1,1,17,14},
+    {6,8,16,30,17,17,14}, {31,1,2,4,8,8,8},
+    {14,17,17,14,17,17,14}, {14,17,17,15,1,2,12},
+  };
+  static const uint8 dot[7] = {0,0,0,0,0,12,12};
+  static const uint8 dash[7] = {0,0,0,31,0,0,0};
+  if (ch >= 'A' && ch <= 'Z')
+    return letters[ch - 'A'];
+  if (ch >= '0' && ch <= '9')
+    return digits[ch - '0'];
+  if (ch == '.')
+    return dot;
+  if (ch == '-')
+    return dash;
+  return NULL;
+}
+
+static void FillArgbRect(uint8 *pixels, int pitch, int width, int height,
+                         int x, int y, int w, int h, uint32 color) {
+  int x0 = IntMax(x, 0);
+  int y0 = IntMax(y, 0);
+  int x1 = IntMin(x + w, width);
+  int y1 = IntMin(y + h, height);
+  for (int yy = y0; yy < y1; yy++) {
+    uint32 *row = (uint32 *)(pixels + yy * pitch);
+    for (int xx = x0; xx < x1; xx++)
+      row[xx] = color;
+  }
+}
+
+static int TinyTextWidth(const char *text, int scale) {
+  int width = 0;
+  for (; *text; text++)
+    width += (*text == ' ' ? 4 : 6) * scale;
+  return width;
+}
+
+static void DrawTinyText(uint8 *pixels, int pitch, int width, int height,
+                         const char *text, int x, int y, int scale,
+                         uint32 color) {
+  for (; *text; text++) {
+    const uint8 *rows = TinyGlyphRows(*text);
+    if (rows) {
+      for (int yy = 0; yy < 7; yy++) {
+        for (int xx = 0; xx < 5; xx++) {
+          if (rows[yy] & (1 << (4 - xx))) {
+            FillArgbRect(pixels, pitch, width, height,
+                         x + xx * scale, y + yy * scale,
+                         scale, scale, color);
+          }
+        }
+      }
+    }
+    x += (*text == ' ' ? 4 : 6) * scale;
+  }
+}
+
+static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
+                                  int width, int height, int render_scale) {
+  if (!Platform3DS_IsVersionOverlayVisible() || !pixels)
+    return;
+  int scale = render_scale > 1 ? render_scale : 2;
+  const char *profile = Platform3DS_IsNew3DS() ?
+    "NEW 3DS V2.0" : "OLD 3DS PROFILE";
+  int text_w = IntMax(TinyTextWidth("2.1 EXPERIMENTAL", scale),
+                      TinyTextWidth(profile, scale));
+  int box_w = IntMin(text_w + 24 * scale, width - 16 * scale);
+  int box_h = 38 * scale;
+  int x = (width - box_w) / 2;
+  int y = (height - box_h) / 2;
+  FillArgbRect(pixels, pitch, width, height,
+               x, y, box_w, box_h, 0x000000u);
+  FillArgbRect(pixels, pitch, width, height,
+               x, y, box_w, 2 * scale, 0xe8c260u);
+  FillArgbRect(pixels, pitch, width, height,
+               x, y + box_h - 2 * scale, box_w, 2 * scale, 0xe8c260u);
+  FillArgbRect(pixels, pitch, width, height,
+               x, y, 2 * scale, box_h, 0xe8c260u);
+  FillArgbRect(pixels, pitch, width, height,
+               x + box_w - 2 * scale, y, 2 * scale, box_h, 0xe8c260u);
+  DrawTinyText(pixels, pitch, width, height, "2.1 EXPERIMENTAL",
+               x + (box_w - TinyTextWidth("2.1 EXPERIMENTAL", scale)) / 2,
+               y + 7 * scale, scale, 0xffffffu);
+  DrawTinyText(pixels, pitch, width, height, profile,
+               x + (box_w - TinyTextWidth(profile, scale)) / 2,
+               y + 18 * scale, scale, 0xe8c260u);
+  DrawTinyText(pixels, pitch, width, height, "B CLOSE",
+               x + (box_w - TinyTextWidth("B CLOSE", scale)) / 2,
+               y + 29 * scale, scale, 0xc8c8c8u);
+}
+#endif
+
 static void DrawPpuFrameWithPerf() {
   int render_scale = PpuGetCurrentRenderScale(g_zenv.ppu, g_ppu_render_flags);
   uint8 *pixel_buffer = 0;
@@ -234,6 +346,10 @@ static void DrawPpuFrameWithPerf() {
   g_3ds_last_capture_us =
     TicksToMicroseconds(SDL_GetPerformanceCounter() - section_start);
   section_start = SDL_GetPerformanceCounter();
+  Draw3DSVersionOverlay(pixel_buffer, pitch,
+                        g_snes_width * render_scale,
+                        g_snes_height * render_scale,
+                        render_scale);
 #endif
   g_renderer_funcs.EndDraw();
 #ifdef __3DS__
@@ -534,6 +650,9 @@ void ZeldaSetWidescreen(bool enable) {
 #ifdef __3DS__
 void ZeldaSet3DSDisplayMode(int mode) {
   enum Platform3DSDisplayMode display_mode = (enum Platform3DSDisplayMode)mode;
+  if (!Platform3DS_IsNew3DS() &&
+      display_mode == kPlatform3DSDisplayUltraWideMod)
+    display_mode = kPlatform3DSDisplayStretch;
   bool wide = display_mode == kPlatform3DSDisplayUltraWideMod;
   int extra = wide ? 72 : 0;
   uint32 ws_features = kFeatures0_ExtendScreen64 | kFeatures0_WidescreenVisualFixes;
@@ -761,6 +880,7 @@ int main(int argc, char** argv) {
   bool audiopaused = true;
 #ifdef __3DS__
   bool system_exit_requested = false;
+  bool old3ds_render_phase = false;
 #endif
 
   if (g_config.autosave)
@@ -873,7 +993,6 @@ int main(int argc, char** argv) {
         (frame_work_start - last_render_counter) * 1000000ull /
         logic_frequency);
     }
-    last_render_counter = frame_work_start;
 
     bool turbo_held;
     int turbo_multiplier;
@@ -899,6 +1018,13 @@ int main(int argc, char** argv) {
       frameCtr++;
     }
     uint64 logic_work_ticks = SDL_GetPerformanceCounter() - frame_work_start;
+    if (!Platform3DS_IsNew3DS() && !Platform3DS_IsVersionOverlayVisible() &&
+        !g_turbo) {
+      old3ds_render_phase = !old3ds_render_phase;
+      if (!old3ds_render_phase)
+        continue;
+    }
+    last_render_counter = frame_work_start;
 #else
     // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
     inputs = g_input1_state;

@@ -36,7 +36,9 @@ static bool g_apt_hook_registered;
 static volatile bool g_system_exit_requested;
 static bool g_irrst_initialized;
 static bool g_is_new_3ds;
+static bool g_model_detected;
 static bool g_core1_time_enabled;
+static bool g_version_overlay_visible;
 static uint64_t g_frame_timing_samples;
 static uint64_t g_top_work_total_us;
 static uint64_t g_total_work_total_us;
@@ -114,6 +116,17 @@ static void Platform3DS_RegisterAptHook(void) {
   g_apt_hook_registered = true;
 }
 
+static void Platform3DS_DetectModel(void) {
+  if (g_model_detected)
+    return;
+  bool is_new_3ds = false;
+  if (R_SUCCEEDED(APT_CheckNew3DS(&is_new_3ds)))
+    g_is_new_3ds = is_new_3ds;
+  else
+    g_is_new_3ds = false;
+  g_model_detected = true;
+}
+
 static bool CStickIsHeld(u32 keys) {
   if (keys & (KEY_CSTICK_UP | KEY_CSTICK_DOWN |
               KEY_CSTICK_LEFT | KEY_CSTICK_RIGHT))
@@ -130,12 +143,24 @@ static bool CStickIsHeld(u32 keys) {
 uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   hidScanInput();
   u32 keys = hidKeysHeld();
+  u32 keys_down = hidKeysDown();
   static bool quick_dump_combo_was_held;
+  static bool version_combo_was_held;
   bool quick_dump_combo =
     (keys & (KEY_L | KEY_R | KEY_A)) == (KEY_L | KEY_R | KEY_A);
   if (quick_dump_combo && !quick_dump_combo_was_held)
     g_quick_dump_requested = true;
   quick_dump_combo_was_held = quick_dump_combo;
+
+  bool version_combo =
+    (keys & (KEY_L | KEY_R | KEY_B)) == (KEY_L | KEY_R | KEY_B);
+  if (version_combo && !version_combo_was_held) {
+    g_version_overlay_visible = true;
+  } else if (g_version_overlay_visible && !version_combo &&
+             (keys_down & KEY_B)) {
+    g_version_overlay_visible = false;
+  }
+  version_combo_was_held = version_combo;
 
   circlePosition circle;
   hidCircleRead(&circle);
@@ -148,11 +173,12 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   if (keys & KEY_SELECT) input |= 1u << 2;
   if (keys & KEY_START) input |= 1u << 3;
   if ((keys & KEY_A) && !quick_dump_combo) input |= 1u << 8;
-  if (keys & KEY_B) input |= 1u << 0;
+  if ((keys & KEY_B) && !g_version_overlay_visible && !version_combo)
+    input |= 1u << 0;
   if (keys & KEY_X) input |= 1u << 9;
   if (keys & KEY_Y) input |= 1u << 1;
-  if (keys & KEY_L) input |= 1u << 10;
-  if (keys & KEY_R) input |= 1u << 11;
+  if ((keys & KEY_L) && !version_combo) input |= 1u << 10;
+  if ((keys & KEY_R) && !version_combo) input |= 1u << 11;
   *turbo_held = g_turbo_multiplier > 0 &&
                 ((keys & (KEY_ZL | KEY_ZR)) != 0 || CStickIsHeld(keys));
   *turbo_multiplier = g_turbo_multiplier > 0 ? g_turbo_multiplier : 1;
@@ -253,13 +279,25 @@ enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void) {
 }
 
 void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode) {
+  Platform3DS_DetectModel();
   if (mode > kPlatform3DSDisplayStretch)
     mode = kPlatform3DSDisplayUltraWideMod;
+  if (!g_is_new_3ds && mode == kPlatform3DSDisplayUltraWideMod)
+    mode = kPlatform3DSDisplayStretch;
   g_display_mode = mode;
   ZeldaSetWidescreenFixedMode(
     g_display_mode == kPlatform3DSDisplayUltraWideMod &&
     g_wide_mode == kPlatform3DSWideFixed);
   Platform3DS_LogRuntime("Display mode set: %d", (int)g_display_mode);
+}
+
+bool Platform3DS_IsNew3DS(void) {
+  Platform3DS_DetectModel();
+  return g_is_new_3ds;
+}
+
+bool Platform3DS_IsVersionOverlayVisible(void) {
+  return g_version_overlay_visible;
 }
 
 enum Platform3DSWideMode Platform3DS_GetWideMode(void) {
@@ -326,10 +364,7 @@ void Platform3DS_SetTurboMultiplier(int multiplier) {
 
 bool Platform3DS_InitTopPresenter(void) {
   Platform3DS_RegisterAptHook();
-
-  bool is_new_3ds = false;
-  if (R_SUCCEEDED(APT_CheckNew3DS(&is_new_3ds)))
-    g_is_new_3ds = is_new_3ds;
+  Platform3DS_DetectModel();
 
   // This is a no-op on Old 3DS and enables 804 MHz operation for 3DSX builds
   // on New 3DS. CIA builds also request the faster clock in their exheader.
@@ -983,6 +1018,11 @@ bool Platform3DS_PrepareStorage(void) {
 }
 
 void Platform3DS_ApplyConfig(struct Config *config) {
+  Platform3DS_DetectModel();
+  if (!g_is_new_3ds && g_display_mode == kPlatform3DSDisplayUltraWideMod) {
+    g_display_mode = kPlatform3DSDisplayStretch;
+    g_wide_mode = kPlatform3DSWideStandard;
+  }
   config->window_width = 400;
   config->window_height = 240;
   config->window_scale = 1;
@@ -1005,13 +1045,15 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   ZeldaSetWidescreenFixedMode(wide && g_wide_mode == kPlatform3DSWideFixed);
   config->audio_freq = 32000;
   config->audio_channels = 2;
-  config->audio_samples = 1024;
+  config->audio_samples = g_is_new_3ds ? 1024 : 2048;
   config->enable_msu = 0;
   config->disable_frame_delay = true;
-  Platform3DS_LogRuntime("Runtime settings: display=%d, wide=%d, turbo=%d",
+  Platform3DS_LogRuntime("Runtime settings: model=%s, display=%d, wide=%d, turbo=%d, audio_samples=%d",
+                         g_is_new_3ds ? "New 3DS" : "Old 3DS",
                          (int)g_display_mode,
                          (int)g_wide_mode,
-                         g_turbo_multiplier);
+                         g_turbo_multiplier,
+                         config->audio_samples);
 }
 
 static bool WriteBlob(const char *path, const void *data, size_t size) {
