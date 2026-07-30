@@ -1045,7 +1045,7 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->enhanced_mode7 = false;
   config->new_renderer = true;
   config->no_sprite_limits = false;
-  config->extend_y = true;
+  config->extend_y = g_is_new_3ds;
   config->extended_aspect_ratio =
     g_display_mode == kPlatform3DSDisplayUltraWideMod ? 72 : 0;
   config->features0 &= ~(kFeatures0_ExtendScreen64 |

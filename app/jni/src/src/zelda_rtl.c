@@ -301,19 +301,9 @@ static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
   PpuSetExtraSideSpace(g_zenv.ppu, extra_left, extra_right, extra_bottom);
 }
 
-static void ZeldaCopyPreviousPpuLine(Ppu *ppu, int line) {
-  if (line <= 1 || line >= 225 + ppu->extraBottomCur)
-    return;
-  size_t bytes = sizeof(uint32) * (256 + ppu->extraLeftRight * 2);
-  uint8 *dst = ppu->renderBuffer + (line - 1) * ppu->renderPitch;
-  uint8 *src = dst - ppu->renderPitch;
-  memcpy(dst, src, bytes);
-}
-
 static void ZeldaDrawPpuLines(Ppu *ppu, int height,
                               int first_line, int last_line,
-                              uint8 irq_state,
-                              bool old3ds_fast_scanline) {
+                              uint8 irq_state) {
   SimpleHdma hdma_chans[2];
   SimpleHdma_Init(&hdma_chans[0], &g_zenv.dma->channel[6]);
   SimpleHdma_Init(&hdma_chans[1], &g_zenv.dma->channel[7]);
@@ -325,12 +315,8 @@ static void ZeldaDrawPpuLines(Ppu *ppu, int height,
       ppu_write(ppu, (uint8)BG3VOFS, 0);
       ppu_write(ppu, (uint8)BG3VOFS, 0);
     }
-    if (i >= first_line && i <= last_line) {
-      if (old3ds_fast_scanline && i > 1 && (i & 1) == 0)
-        ZeldaCopyPreviousPpuLine(ppu, i);
-      else
-        ppu_runLine(ppu, i);
-    }
+    if (i >= first_line && i <= last_line)
+      ppu_runLine(ppu, i);
     SimpleHdma_DoLine(&hdma_chans[0], ppu);
     SimpleHdma_DoLine(&hdma_chans[1], ppu);
   }
@@ -372,7 +358,7 @@ static void ZeldaPpuWorkerMain(void *argument) {
     uint64 start = svcGetSystemTick();
     ZeldaDrawPpuLines(&state->ppu, state->height,
                       state->first_line, state->last_line,
-                      state->irq_state, false);
+                      state->irq_state);
     state->duration_ticks = svcGetSystemTick() - start;
     completed_job = job;
     LightEvent_Signal(&state->done);
@@ -541,12 +527,9 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
 
   int height = render_flags & kPpuRenderFlags_Height240 ? 240 : 224;
   uint8 irq_state = irq_flag;
-  bool old3ds_fast_scanline = false;
 
 #ifdef __3DS__
-  old3ds_fast_scanline =
-    !Platform3DS_IsNew3DS() && PpuGetCurrentRenderScale(g_zenv.ppu, render_flags) == 1;
-  if (!old3ds_fast_scanline && ZeldaEnsurePpuWorkers()) {
+  if (ZeldaEnsurePpuWorkers()) {
     PpuWorkerState *system_worker = &g_ppu_system_worker;
     PpuWorkerState *new_worker = &g_ppu_new_worker;
     int main_first = 1;
@@ -587,7 +570,7 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
 
     uint64 main_start = svcGetSystemTick();
     ZeldaDrawPpuLines(g_zenv.ppu, height,
-                      main_first, main_last, irq_state, false);
+                      main_first, main_last, irq_state);
     g_ppu_main_duration_ticks = svcGetSystemTick() - main_start;
     for (size_t i = 0; i < countof(workers); i++) {
       if (workers[i]->thread)
@@ -596,8 +579,7 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   } else
 #endif
   {
-    ZeldaDrawPpuLines(g_zenv.ppu, height, 1, height, irq_state,
-                      old3ds_fast_scanline);
+    ZeldaDrawPpuLines(g_zenv.ppu, height, 1, height, irq_state);
   }
 
   if (irq_state & 0x80) {

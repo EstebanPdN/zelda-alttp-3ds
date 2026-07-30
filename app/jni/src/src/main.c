@@ -82,11 +82,11 @@ static uint32 g_win_flags = SDL_WINDOW_FULLSCREEN;
 static int Old3DS_MinRenderDivisor(enum Platform3DSDisplayMode mode) {
   switch (mode) {
   case kPlatform3DSDisplayUltraWideMod:
-    return 3;  // wide asks the software PPU to draw 400px; start at 20 Hz visuals
+    return 1;  // render as fast as the Old 3DS CPU allows; logic stays fixed at 60 Hz
   case kPlatform3DSDisplayOriginal:
   case kPlatform3DSDisplayStretch:
   default:
-    return 2;  // keep game logic 60 Hz, but render every other tick on Old 3DS
+    return 1;  // do not cap Old 3DS visuals at 30 FPS
   }
 }
 
@@ -299,7 +299,7 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
     "NEW 3DS" : "OLD 3DS";
   char fps_text[32];
   snprintf(fps_text, sizeof(fps_text), "FPS %d", g_3ds_visual_fps);
-  int text_w = IntMax(TinyTextWidth("VERSION E4", scale),
+  int text_w = IntMax(TinyTextWidth("VERSION E5", scale),
                       IntMax(TinyTextWidth(profile, scale),
                              TinyTextWidth(fps_text, scale)));
   int box_w = IntMin(text_w + 24 * scale, width - 16 * scale);
@@ -316,8 +316,8 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
                x, y, 2 * scale, box_h, 0xe8c260u);
   FillArgbRect(pixels, pitch, width, height,
                x + box_w - 2 * scale, y, 2 * scale, box_h, 0xe8c260u);
-  DrawTinyText(pixels, pitch, width, height, "VERSION E4",
-               x + (box_w - TinyTextWidth("VERSION E4", scale)) / 2,
+  DrawTinyText(pixels, pitch, width, height, "VERSION E5",
+               x + (box_w - TinyTextWidth("VERSION E5", scale)) / 2,
                y + 7 * scale, scale, 0xffffffu);
   DrawTinyText(pixels, pitch, width, height, profile,
                x + (box_w - TinyTextWidth(profile, scale)) / 2,
@@ -908,7 +908,7 @@ int main(int argc, char** argv) {
   bool audiopaused = true;
 #ifdef __3DS__
   bool system_exit_requested = false;
-  int old3ds_render_divisor = 2;
+  int old3ds_render_divisor = 1;
   int old3ds_render_ticks = 0;
   int old3ds_under_budget_frames = 0;
   int old3ds_over_budget_frames = 0;
@@ -1140,7 +1140,7 @@ int main(int argc, char** argv) {
         !g_turbo) {
       enum Platform3DSDisplayMode display_mode = Platform3DS_GetDisplayMode();
       int min_render_divisor = Old3DS_MinRenderDivisor(display_mode);
-      const int max_render_divisor = 4;
+      const int max_render_divisor = 1;
       uint32 budget_us = (uint32)old3ds_render_divisor * 16667u;
       if (total_work_us + 1000u > budget_us) {
         old3ds_over_budget_frames++;
