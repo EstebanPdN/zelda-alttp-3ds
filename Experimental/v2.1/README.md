@@ -18,8 +18,13 @@ Runtime profile:
 
 Version popup:
 
-- Press L + R + B in game to show the internal version window.
-- Press B to close it.
+- Press L + R + B in game to show or hide the internal version window.
+- It also closes automatically after five seconds.
+
+Touch fix:
+
+- The 3DS bottom screen now uses one direct hardware touch path, avoiding duplicate SDL + HID taps.
+- Touch coordinates are mapped against the fixed 320x240 bottom-screen layout used by the 3DS renderer.
 
 The QR points to the CIA in this tag:
 

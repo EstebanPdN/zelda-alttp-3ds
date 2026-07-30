@@ -39,6 +39,7 @@ static bool g_is_new_3ds;
 static bool g_model_detected;
 static bool g_core1_time_enabled;
 static bool g_version_overlay_visible;
+static uint64_t g_version_overlay_hide_time_ms;
 static uint64_t g_frame_timing_samples;
 static uint64_t g_top_work_total_us;
 static uint64_t g_total_work_total_us;
@@ -143,7 +144,6 @@ static bool CStickIsHeld(u32 keys) {
 uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   hidScanInput();
   u32 keys = hidKeysHeld();
-  u32 keys_down = hidKeysDown();
   static bool quick_dump_combo_was_held;
   static bool version_combo_was_held;
   bool quick_dump_combo =
@@ -155,10 +155,13 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   bool version_combo =
     (keys & (KEY_L | KEY_R | KEY_B)) == (KEY_L | KEY_R | KEY_B);
   if (version_combo && !version_combo_was_held) {
-    g_version_overlay_visible = true;
-  } else if (g_version_overlay_visible && !version_combo &&
-             (keys_down & KEY_B)) {
+    g_version_overlay_visible = !g_version_overlay_visible;
+    g_version_overlay_hide_time_ms =
+      g_version_overlay_visible ? osGetTime() + 5000 : 0;
+  } else if (g_version_overlay_visible &&
+             osGetTime() >= g_version_overlay_hide_time_ms) {
     g_version_overlay_visible = false;
+    g_version_overlay_hide_time_ms = 0;
   }
   version_combo_was_held = version_combo;
 
@@ -297,6 +300,11 @@ bool Platform3DS_IsNew3DS(void) {
 }
 
 bool Platform3DS_IsVersionOverlayVisible(void) {
+  if (g_version_overlay_visible &&
+      osGetTime() >= g_version_overlay_hide_time_ms) {
+    g_version_overlay_visible = false;
+    g_version_overlay_hide_time_ms = 0;
+  }
   return g_version_overlay_visible;
 }
 

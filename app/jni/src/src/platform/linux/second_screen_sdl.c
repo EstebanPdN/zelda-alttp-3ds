@@ -1199,6 +1199,9 @@ static bool ensure_window(void) {
   printf("second screen: creating window...\n");
   fflush(stdout);
   int n = SDL_GetNumVideoDisplays();
+#ifdef __3DS__
+  int target = n > 1 ? 1 : 0;
+#else
   int main_disp = main_win ? SDL_GetWindowDisplayIndex(main_win) : 0;
   if (main_disp < 0) main_disp = 0;
   int target = -1;
@@ -1210,6 +1213,7 @@ static bool ensure_window(void) {
     target = SDL_atoi(disp_env);
     if (target < 0 || target >= n) target = main_disp;
   }
+#endif
 
   const char *title = SDL_getenv("ZELDA3_SECOND_SCREEN_TITLE");
   if (!title || !title[0]) title = "Zelda3 Bottom Screen";
@@ -1243,6 +1247,10 @@ static bool ensure_window(void) {
   }
   ss_winid = SDL_GetWindowID(ss_win);
   SDL_GetRendererOutputSize(ss_r, &W, &H);
+#ifdef __3DS__
+  W = 320;
+  H = 240;
+#endif
   if (W <= 0 || H <= 0) { W = 640; H = 480; }
 #ifdef __3DS__
   for (int i = 0; i < 2; i++) {
@@ -1425,8 +1433,12 @@ bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
   if (!ss_win) return false;
   switch (e->type) {
   case SDL_FINGERDOWN:
+#ifdef __3DS__
+    return e->tfinger.windowID == ss_winid;
+#else
     if (e->tfinger.windowID == ss_winid) { handle_tap(e->tfinger.x * W, e->tfinger.y * H); return true; }
     return false;
+#endif
   case SDL_FINGERUP: case SDL_FINGERMOTION:
     return e->tfinger.windowID == ss_winid;
   case SDL_MOUSEBUTTONDOWN:
@@ -1458,8 +1470,10 @@ void SecondScreenSDL_Handle3DSTouch(void) {
   if (touching && !was_touching) {
     touchPosition pos;
     hidTouchRead(&pos);
-    float x = W > 0 ? (float)pos.px * W / 320.0f : (float)pos.px;
-    float y = H > 0 ? (float)pos.py * H / 240.0f : (float)pos.py;
+    float draw_x = (320.0f - W) * 0.5f;
+    float draw_y = (240.0f - H) * 0.5f;
+    float x = (float)pos.px - draw_x;
+    float y = (float)pos.py - draw_y;
     handle_tap(x, y);
   }
   was_touching = touching;
