@@ -413,26 +413,40 @@ bool Platform3DS_InitTopPresenter(void) {
 
   // Reserve part of the system core for a parallel PPU segment.
   //
-  // E6 proved that some Old 3DS systems reject larger slices and then leave the
-  // PPU worker unavailable. E7 therefore always falls back to the known-good
-  // 30% slice instead of losing parallel rendering completely.
-  const u32 core1_candidates[] = {30};
+  // Some systems accept the APT call but report 0% for small requests. Try the
+  // libctru/homebrew maximum first and fall back until APT gives us a real,
+  // non-zero budget. If all requests become 0%, Core 1 is not usable and the
+  // renderer must not create a worker there.
+  const u32 core1_candidates[] = {80, 70, 50, 30};
   g_core1_time_enabled = false;
   g_core1_time_limit_percent = 0;
   for (size_t i = 0; i < sizeof(core1_candidates) / sizeof(core1_candidates[0]);
        i++) {
-    if (R_SUCCEEDED(APT_SetAppCpuTimeLimit(core1_candidates[i]))) {
-      u32 actual_percent = core1_candidates[i];
-      APT_GetAppCpuTimeLimit(&actual_percent);
+    Result set_result = APT_SetAppCpuTimeLimit(core1_candidates[i]);
+    if (R_SUCCEEDED(set_result)) {
+      u32 actual_percent = 0;
+      Result get_result = APT_GetAppCpuTimeLimit(&actual_percent);
+      Platform3DS_LogRuntime(
+        "Core 1 PPU budget request: wanted=%lu%% actual=%lu%% get=0x%08lx",
+        (unsigned long)core1_candidates[i],
+        (unsigned long)actual_percent,
+        (unsigned long)get_result);
       if (actual_percent > 0) {
         g_core1_time_limit_percent = (int)actual_percent;
         g_core1_time_enabled = true;
         break;
       }
       g_core1_time_limit_percent = 0;
+    } else {
       Platform3DS_LogRuntime(
-        "Core 1 PPU budget request returned 0%%; disabling Core 1 worker");
+        "Core 1 PPU budget request failed: wanted=%lu%% result=0x%08lx",
+        (unsigned long)core1_candidates[i],
+        (unsigned long)set_result);
     }
+  }
+  if (!g_core1_time_enabled) {
+    Platform3DS_LogRuntime(
+      "Core 1 PPU budget unavailable; disabling Core 1 worker");
   }
 
   // Zelda's source image is derived from the SNES 15-bit palette. RGB565 keeps

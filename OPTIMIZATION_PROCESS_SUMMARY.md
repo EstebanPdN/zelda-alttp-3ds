@@ -33,7 +33,7 @@ El archivo `PROCESS.txt` documenta cómo se arregló originalmente el problema d
 - Se probó subir Core 1 a 70%, pero la Old 3DS lo rechazó y el renderer paralelo quedó desactivado; por eso se revirtió a 30%.
 - La primera `v2.3.1` probó reducir trabajo renderizando líneas alternas, pero se descartó porque degradaba demasiado la imagen aunque subiera FPS.
 - `v2.3.2` vuelve a resolución completa y prueba optimizaciones conservadoras del PPU: cache de paleta/color, evitar evaluación de sprites cuando OBJ está deshabilitado, saltar trabajo de subscreen cuando no se usa, fast path de color-window normal y escritura de paleta desenrollada.
-- La nueva `v2.3.1` experimental de arranque corrige un bloqueo de New 3DS donde se creaba un worker PPU en Core 1 aunque el sistema hubiera devuelto 0% de presupuesto de CPU para ese core.
+- La nueva `v2.3.1` experimental de arranque corrige un bloqueo de New 3DS donde se creaba un worker PPU en Core 1 aunque el sistema hubiera devuelto 0% de presupuesto de CPU para ese core; ahora negocia 80/70/50/30% y solo desactiva Core 1 si todos los intentos vuelven con 0%.
 
 ## Qué se puede seguir optimizando
 

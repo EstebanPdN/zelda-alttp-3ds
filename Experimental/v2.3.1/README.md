@@ -24,13 +24,15 @@ Esta build:
 
 En la consola que reportaba el bug, ahora debería aparecer algo parecido a:
 
-`Core 1 PPU budget request returned 0%; disabling Core 1 worker`
+`Core 1 PPU budget request: wanted=80% actual=80% get=0x00000000`
 
 y después:
 
-`PPU workers: Core 1=disabled/no budget, Core 2=enabled`
+`PPU workers: Core 1=enabled, Core 2=enabled`
 
-Si el juego entra al menú/gameplay después de eso, el diagnóstico queda confirmado.
+Si todos los intentos devuelven `actual=0%`, la build desactiva Core 1 para no congelarse y deja registrado:
+
+`Core 1 PPU budget unavailable; disabling Core 1 worker`
 
 ## Instalación directa
 
