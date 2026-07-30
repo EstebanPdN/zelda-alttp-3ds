@@ -610,11 +610,18 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
 
 void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
                                     int width, int height) {
-  if (!g_gpu_frame_active || !pixels ||
-      pitch != kTopTextureWidth * 4 ||
+  if (!pixels || pitch != kTopTextureWidth * 4 ||
       width <= 0 || width > kTopTextureWidth ||
       height <= 0 || height > kTopTextureHeight)
     return;
+
+  bool bottom_only_frame = false;
+  if (!g_gpu_frame_active) {
+    if (!C3D_FrameBegin(0))
+      return;
+    g_gpu_frame_active = true;
+    bottom_only_frame = true;
+  }
 
   GSPGPU_FlushDataCache(pixels,
                         kTopTextureWidth * kTopTextureHeight * 4);
@@ -656,6 +663,8 @@ void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
   C2D_SceneBegin(g_bottom_target);
   C2D_DrawImage(image, &params, NULL);
   ConfigureArgbTextureEnv();
+  if (bottom_only_frame)
+    Platform3DS_EndFrame();
 }
 
 void Platform3DS_EndFrame(void) {

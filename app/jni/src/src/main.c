@@ -78,6 +78,29 @@ enum {
 static const char kWindowTitle[] = "The Legend of Zelda: A Link to the Past";
 #ifdef __3DS__
 static uint32 g_win_flags = SDL_WINDOW_FULLSCREEN;
+
+static int Old3DS_MinRenderDivisor(enum Platform3DSDisplayMode mode) {
+  switch (mode) {
+  case kPlatform3DSDisplayUltraWideMod:
+    return 3;  // wide asks the software PPU to draw 400px; start at 20 Hz visuals
+  case kPlatform3DSDisplayOriginal:
+  case kPlatform3DSDisplayStretch:
+  default:
+    return 2;  // keep game logic 60 Hz, but render every other tick on Old 3DS
+  }
+}
+
+static const char *Old3DS_DisplayModeName(enum Platform3DSDisplayMode mode) {
+  switch (mode) {
+  case kPlatform3DSDisplayOriginal:
+    return "original";
+  case kPlatform3DSDisplayUltraWideMod:
+    return "wide";
+  case kPlatform3DSDisplayStretch:
+  default:
+    return "stretch";
+  }
+}
 #else
 static uint32 g_win_flags = SDL_WINDOW_RESIZABLE;
 #endif
@@ -269,8 +292,10 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
   int scale = render_scale > 1 ? render_scale : 2;
   const char *profile = Platform3DS_IsNew3DS() ?
     "NEW 3DS V2.0" : "OLD 3DS PROFILE";
+  const char *close_hint = "L+R+B / AUTO 5S";
   int text_w = IntMax(TinyTextWidth("2.1 EXPERIMENTAL", scale),
-                      TinyTextWidth(profile, scale));
+                      IntMax(TinyTextWidth(profile, scale),
+                             TinyTextWidth(close_hint, scale)));
   int box_w = IntMin(text_w + 24 * scale, width - 16 * scale);
   int box_h = 38 * scale;
   int x = (width - box_w) / 2;
@@ -291,8 +316,8 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
   DrawTinyText(pixels, pitch, width, height, profile,
                x + (box_w - TinyTextWidth(profile, scale)) / 2,
                y + 18 * scale, scale, 0xe8c260u);
-  DrawTinyText(pixels, pitch, width, height, "B CLOSE",
-               x + (box_w - TinyTextWidth("B CLOSE", scale)) / 2,
+  DrawTinyText(pixels, pitch, width, height, close_hint,
+               x + (box_w - TinyTextWidth(close_hint, scale)) / 2,
                y + 29 * scale, scale, 0xc8c8c8u);
 }
 #endif
@@ -877,7 +902,12 @@ int main(int argc, char** argv) {
   bool audiopaused = true;
 #ifdef __3DS__
   bool system_exit_requested = false;
-  bool old3ds_render_phase = false;
+  int old3ds_render_divisor = 2;
+  int old3ds_render_ticks = 0;
+  int old3ds_under_budget_frames = 0;
+  int old3ds_over_budget_frames = 0;
+  enum Platform3DSDisplayMode old3ds_last_display_mode =
+    Platform3DS_GetDisplayMode();
 #endif
 
   if (g_config.autosave)
@@ -1018,9 +1048,26 @@ int main(int argc, char** argv) {
     SecondScreenSDL_BeginFrame(rendered_logic_frames);
     if (!Platform3DS_IsNew3DS() && !Platform3DS_IsVersionOverlayVisible() &&
         !g_turbo) {
-      old3ds_render_phase = !old3ds_render_phase;
-      if (!old3ds_render_phase)
+      enum Platform3DSDisplayMode display_mode = Platform3DS_GetDisplayMode();
+      int min_render_divisor = Old3DS_MinRenderDivisor(display_mode);
+      if (display_mode != old3ds_last_display_mode ||
+          old3ds_render_divisor < min_render_divisor) {
+        old3ds_last_display_mode = display_mode;
+        old3ds_render_divisor = min_render_divisor;
+        old3ds_render_ticks = 0;
+        old3ds_under_budget_frames = 0;
+        old3ds_over_budget_frames = 0;
+        Platform3DS_LogRuntime(
+          "Old3DS adaptive render: mode=%s divisor=%d visual_hz=%d",
+          Old3DS_DisplayModeName(display_mode), old3ds_render_divisor,
+          60 / old3ds_render_divisor);
+      }
+      old3ds_render_ticks += scheduled_logic_frames;
+      if (old3ds_render_ticks < old3ds_render_divisor) {
+        SecondScreenSDL_Update(rendered_logic_frames);
         continue;
+      }
+      old3ds_render_ticks = 0;
     }
     last_render_counter = frame_work_start;
 #else
@@ -1071,6 +1118,47 @@ int main(int argc, char** argv) {
       (uint32)(bottom_work_ticks * 1000000ull / performance_frequency) : 0;
     uint32 total_work_us = performance_frequency != 0 ?
       (uint32)(total_work_ticks * 1000000ull / performance_frequency) : 0;
+    if (!Platform3DS_IsNew3DS() && !Platform3DS_IsVersionOverlayVisible() &&
+        !g_turbo) {
+      enum Platform3DSDisplayMode display_mode = Platform3DS_GetDisplayMode();
+      int min_render_divisor = Old3DS_MinRenderDivisor(display_mode);
+      const int max_render_divisor = 4;
+      uint32 budget_us = (uint32)old3ds_render_divisor * 16667u;
+      if (total_work_us + 1000u > budget_us) {
+        old3ds_over_budget_frames++;
+        old3ds_under_budget_frames = 0;
+      } else if ((uint64)total_work_us * 3u < (uint64)budget_us * 2u) {
+        old3ds_under_budget_frames++;
+        old3ds_over_budget_frames = 0;
+      } else {
+        old3ds_over_budget_frames = 0;
+        old3ds_under_budget_frames = 0;
+      }
+
+      if (old3ds_over_budget_frames >= 3 &&
+          old3ds_render_divisor < max_render_divisor) {
+        old3ds_render_divisor++;
+        old3ds_render_ticks = 0;
+        old3ds_over_budget_frames = 0;
+        old3ds_under_budget_frames = 0;
+        Platform3DS_LogRuntime(
+          "Old3DS adaptive render: slower mode=%s divisor=%d visual_hz=%d "
+          "last_total_us=%u",
+          Old3DS_DisplayModeName(display_mode), old3ds_render_divisor,
+          60 / old3ds_render_divisor, total_work_us);
+      } else if (old3ds_under_budget_frames >= 180 &&
+                 old3ds_render_divisor > min_render_divisor) {
+        old3ds_render_divisor--;
+        old3ds_render_ticks = 0;
+        old3ds_over_budget_frames = 0;
+        old3ds_under_budget_frames = 0;
+        Platform3DS_LogRuntime(
+          "Old3DS adaptive render: faster mode=%s divisor=%d visual_hz=%d "
+          "last_total_us=%u",
+          Old3DS_DisplayModeName(display_mode), old3ds_render_divisor,
+          60 / old3ds_render_divisor, total_work_us);
+      }
+    }
     Platform3DS_RecordFrameTiming(logic_work_us, top_draw_us,
                                   g_3ds_last_ppu_draw_us,
                                   g_3ds_last_capture_us,

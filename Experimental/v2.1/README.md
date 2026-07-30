@@ -14,7 +14,8 @@ That means installing this CIA should update the same app instead of creating a 
 Runtime profile:
 
 - New 3DS: keeps the normal v2.0 rendering profile.
-- Old 3DS / Old 2DS: automatically switches to an Old 3DS profile. It keeps game logic at 60 Hz, uses a steadier top-screen presentation target, lowers audio callback pressure, and keeps the bottom screen asynchronous. Original, Stretch, and Wide are all selectable; Wide remains experimental on Old hardware because it asks the software PPU to draw a larger 400px-wide scene.
+- Old 3DS / Old 2DS: automatically switches to an Old 3DS profile. It keeps game logic at 60 Hz and uses an adaptive top-screen render pacer measured against the 60 Hz frame budget. Original and Stretch start at 30 Hz visuals; Wide is selectable again and starts at 20 Hz visuals because it asks the software PPU to draw a larger 400px-wide scene. If a mode repeatedly misses budget, the pacer temporarily lowers only the visual refresh instead of slowing game logic; if there is sustained headroom, it climbs back toward that mode's target.
+- The bottom screen can now present independently during Old 3DS top-frame skips, so touch menus and map/status redraws are not forced to wait for the next top-screen render.
 
 Version popup:
 
@@ -25,7 +26,7 @@ Touch fix:
 
 - The 3DS bottom screen now uses one direct hardware touch path, avoiding duplicate SDL + HID taps.
 - Touch coordinates are mapped against the fixed 320x240 bottom-screen layout used by the 3DS renderer.
-- Touches request an immediate bottom-screen redraw, and the bottom renderer now prepares frames during Old 3DS top-frame skips so menus and the overworld map feel more responsive.
+- Touches request an immediate bottom-screen redraw, and the bottom renderer now prepares and presents frames during Old 3DS top-frame skips so menus and the overworld map feel more responsive.
 
 The QR points to the CIA in this tag:
 
