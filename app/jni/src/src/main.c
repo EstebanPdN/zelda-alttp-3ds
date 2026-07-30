@@ -650,9 +650,6 @@ void ZeldaSetWidescreen(bool enable) {
 #ifdef __3DS__
 void ZeldaSet3DSDisplayMode(int mode) {
   enum Platform3DSDisplayMode display_mode = (enum Platform3DSDisplayMode)mode;
-  if (!Platform3DS_IsNew3DS() &&
-      display_mode == kPlatform3DSDisplayUltraWideMod)
-    display_mode = kPlatform3DSDisplayStretch;
   bool wide = display_mode == kPlatform3DSDisplayUltraWideMod;
   int extra = wide ? 72 : 0;
   uint32 ws_features = kFeatures0_ExtendScreen64 | kFeatures0_WidescreenVisualFixes;
@@ -1018,6 +1015,7 @@ int main(int argc, char** argv) {
       frameCtr++;
     }
     uint64 logic_work_ticks = SDL_GetPerformanceCounter() - frame_work_start;
+    SecondScreenSDL_BeginFrame(rendered_logic_frames);
     if (!Platform3DS_IsNew3DS() && !Platform3DS_IsVersionOverlayVisible() &&
         !g_turbo) {
       old3ds_render_phase = !old3ds_render_phase;
@@ -1047,7 +1045,6 @@ int main(int argc, char** argv) {
 #endif
 
 #ifdef __3DS__
-    SecondScreenSDL_BeginFrame(rendered_logic_frames);
     uint64 top_draw_start = SDL_GetPerformanceCounter();
 #endif
     DrawPpuFrameWithPerf();

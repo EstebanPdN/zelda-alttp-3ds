@@ -1142,6 +1142,7 @@ static int ss_front_buffer = -1;
 static int ss_worker_buffer;
 static bool ss_worker_busy;
 static bool ss_frame_ready;
+static bool ss_redraw_requested;
 static bool ss_worker_running;
 static Thread ss_worker_thread;
 static LightEvent ss_worker_start;
@@ -1297,6 +1298,9 @@ static void present_second_screen(void) {
 static void handle_tap(float x, float y) {
   int module = SS_GetModule() & 0xFF;
   if (mode_for_module(module) != MODE_GAME || !art_ready) return;
+#ifdef __3DS__
+  ss_redraw_requested = true;
+#endif
 
   if (in_rect(&tab_items_r, x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leave_settings_submenu(); return; }
   if (in_rect(&tab_map_r, x, y))   { tab = TAB_MAP; leave_settings_submenu(); return; }
@@ -1330,8 +1334,7 @@ static void handle_tap(float x, float y) {
           mode = kPlatform3DSDisplayStretch;
           break;
         case kPlatform3DSDisplayStretch:
-          mode = Platform3DS_IsNew3DS() ?
-            kPlatform3DSDisplayUltraWideMod : kPlatform3DSDisplayOriginal;
+          mode = kPlatform3DSDisplayUltraWideMod;
           break;
         case kPlatform3DSDisplayUltraWideMod:
         default:
@@ -1646,12 +1649,12 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
     ss_frame_ready = true;
   }
 
-  int divisor = Platform3DS_IsNew3DS() ?
-    (logic_frames <= 1 ? 2 : 6) :
-    (logic_frames <= 1 ? 2 : 4);
-  if (!ss_worker_busy && frame_no % divisor == 0) {
+  int divisor = logic_frames <= 1 ? 2 : 6;
+  if (!ss_worker_busy &&
+      (ss_redraw_requested || frame_no % divisor == 0)) {
     ss_worker_buffer = ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer;
     ss_worker_logic_frames = logic_frames;
+    ss_redraw_requested = false;
     ss_worker_busy = true;
     LightEvent_Signal(&ss_worker_start);
   }

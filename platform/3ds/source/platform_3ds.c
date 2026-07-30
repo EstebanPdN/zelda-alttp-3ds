@@ -285,8 +285,6 @@ void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode) {
   Platform3DS_DetectModel();
   if (mode > kPlatform3DSDisplayStretch)
     mode = kPlatform3DSDisplayUltraWideMod;
-  if (!g_is_new_3ds && mode == kPlatform3DSDisplayUltraWideMod)
-    mode = kPlatform3DSDisplayStretch;
   g_display_mode = mode;
   ZeldaSetWidescreenFixedMode(
     g_display_mode == kPlatform3DSDisplayUltraWideMod &&
@@ -1027,10 +1025,6 @@ bool Platform3DS_PrepareStorage(void) {
 
 void Platform3DS_ApplyConfig(struct Config *config) {
   Platform3DS_DetectModel();
-  if (!g_is_new_3ds && g_display_mode == kPlatform3DSDisplayUltraWideMod) {
-    g_display_mode = kPlatform3DSDisplayStretch;
-    g_wide_mode = kPlatform3DSWideStandard;
-  }
   config->window_width = 400;
   config->window_height = 240;
   config->window_scale = 1;
