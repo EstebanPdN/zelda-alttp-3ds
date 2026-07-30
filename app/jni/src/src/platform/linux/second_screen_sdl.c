@@ -424,7 +424,7 @@ static void draw_block_label_value(const char *label, const char *value,
                                    uint32_t label_color,
                                    uint32_t value_color) {
   draw_block_text(label, x, y, sc, label_color);
-  draw_block_text(value, x + 104 * u, y, sc, value_color);
+  draw_block_text(value, x + 190 * u, y, sc, value_color);
 }
 static void draw_number(int value, int digits, float x, float y, float s, bool yellow) {
   static const int kD[10]  = {SS_GLYPH_DIGIT0, SS_GLYPH_DIGIT1, SS_GLYPH_DIGIT2, SS_GLYPH_DIGIT3, SS_GLYPH_DIGIT4,
@@ -1177,8 +1177,8 @@ static void draw_developer_overlay_panel(RectFS r) {
   }
   snprintf(module, sizeof(module), "%02X", SS_GetModule() & 0xff);
 
-  float sc = 2.0f * u;
-  float row_h = 20 * u;
+  float sc = 3.0f * u;
+  float row_h = 30 * u;
   float x = r.x + 26 * u;
   float y = r.y + 62 * u;
   struct {
