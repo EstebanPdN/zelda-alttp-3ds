@@ -46,6 +46,10 @@ enum Platform3DSCStickMode {
 #include "ss_sheets.h"             // generated cell indices for icons/glyphs/letters
 #include "ss_textures.h"           // baked theme background tiles (menu/parchment/stone)
 
+#ifndef ZELDA3_3DS_VERSION
+#define ZELDA3_3DS_VERSION "dev"
+#endif
+
 // API provided by second_screen.c
 int  SS_GetLinkX(void);
 int  SS_GetLinkY(void);
@@ -186,12 +190,15 @@ static bool ss_needs_rebuild;
 
 // touch rects recomputed every draw, used by the tap handler
 static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_ring_r;
-static RectFS settings_row_r[6], remap_row_r[12], remap_back_r;
-static RectFS screen_row_r[2], screen_back_r;
+static RectFS settings_row_r[5], remap_row_r[12], remap_back_r;
+static RectFS screen_row_r[3], screen_back_r;
+static RectFS developer_row_r[2], developer_back_r;
 
 // settings / remap state
 static bool remap_mode;
 static bool screen_mode;
+static bool developer_mode;
+static bool developer_overlay_visible;
 static int  remap_arm = -1;         // row currently waiting for a button press
 static uint32_t remap_arm_at;
 static int  pad_controls[12];
@@ -200,6 +207,7 @@ static uint32_t dump_flash_until;
 static RectFS plaque_r[16];
 static int    plaque_floor[16], plaque_count;
 static float  grid_x, grid_y, grid_cell;
+static int    ss_diag_fps;
 
 // live values snapshot for the current frame
 static int cur_room, cur_floor_now, cur_palace;
@@ -360,8 +368,23 @@ static const uint8_t *tiny_letter(char ch) {
     {17,17,17,21,21,21,10}, {17,17,10,4,10,17,17},
     {17,17,10,4,4,4,4}, {31,1,2,4,8,16,31},
   };
+  static const uint8_t digits[10][7] = {
+    {14,17,19,21,25,17,14}, {4,12,4,4,4,4,14},
+    {14,17,1,2,4,8,31}, {30,1,1,14,1,1,30},
+    {2,6,10,18,31,2,2}, {31,16,30,1,1,17,14},
+    {6,8,16,30,17,17,14}, {31,1,2,4,8,8,8},
+    {14,17,17,14,17,17,14}, {14,17,17,15,1,2,12},
+  };
+  static const uint8_t dot[7] = {0,0,0,0,0,12,12};
+  static const uint8_t dash[7] = {0,0,0,31,0,0,0};
   if (ch >= 'A' && ch <= 'Z')
     return letters[ch - 'A'];
+  if (ch >= '0' && ch <= '9')
+    return digits[ch - '0'];
+  if (ch == '.')
+    return dot;
+  if (ch == '-')
+    return dash;
   return NULL;
 }
 
@@ -947,6 +970,7 @@ static void leave_remap(void) {
 static void leave_settings_submenu(void) {
   leave_remap();
   screen_mode = false;
+  developer_mode = false;
 }
 
 static void draw_cog(float cx, float cy, float r) {
@@ -967,10 +991,10 @@ static void draw_settings_row(RectFS *row, bool armed) {
 static void draw_remap_panel(RectFS r) {
   draw_text("REMAP BUTTONS", r.x + r.w / 2 - text_width("REMAP BUTTONS", 3 * u) / 2,
             r.y + 18 * u, 3 * u);
-  remap_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
+  remap_back_r = (RectFS){r.x + 14 * u, r.y + 12 * u, 76 * u, 32 * u};
   draw_settings_row(&remap_back_r, false);
-  draw_text("BACK", remap_back_r.x + remap_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
-            remap_back_r.y + remap_back_r.h / 2 - 9 * u, 2.2f * u);
+  draw_text("BACK", remap_back_r.x + remap_back_r.w / 2 - text_width("BACK", 1.8f * u) / 2,
+            remap_back_r.y + remap_back_r.h / 2 - 7 * u, 1.8f * u);
 
   // resolve a pending capture from the game thread
   if (remap_arm >= 0) {
@@ -986,23 +1010,28 @@ static void draw_remap_panel(RectFS r) {
     }
   }
 
-  float row_h = 58 * u, gap = 12 * u;
-  float col_w = (r.w - 3 * 24 * u) / 2;
-  float y0 = r.y + 70 * u;
+  float row_h = 44 * u, gap = 6 * u;
+  float col_w = (r.w - 3 * 14 * u - 10 * u) / 2;
+  float y0 = r.y + 56 * u;
   for (int i = 0; i < 12; i++) {
     int col = i / 6, row_i = i % 6;
-    float x = r.x + 24 * u + col * (col_w + 24 * u);
+    float x = r.x + 14 * u + col * (col_w + 14 * u);
     float y = y0 + row_i * (row_h + gap);
     RectFS *row = &remap_row_r[i];
     *row = (RectFS){x, y, col_w, row_h};
     bool armed = remap_arm == i;
     draw_settings_row(row, armed);
-    float ty = row->y + row->h / 2 - 9 * u;
-    draw_text(kPadCmdNames[i], row->x + 14 * u, ty, 2.2f * u);
+    float ty = row->y + row->h / 2 - 7 * u;
+    draw_text(kPadCmdNames[i], row->x + 8 * u, ty, 1.65f * u);
     const char *v = armed ? "PRESS KEY"
         : (pad_controls[i] >= 0 && pad_controls[i] < 17 ? kPadButtonLabel[pad_controls[i]] : "----");
-    draw_text(v, row->x + row->w - 14 * u - text_width(v, 2.2f * u), ty, 2.2f * u);
+    draw_text(v, row->x + row->w - 8 * u - text_width(v, 1.65f * u), ty, 1.65f * u);
   }
+  float bar_x = r.x + r.w - 10 * u;
+  float bar_y = y0;
+  float bar_h = 6 * row_h + 5 * gap;
+  fill_round(bar_x, bar_y, 4 * u, bar_h, 2 * u, COL(42, 42, 42));
+  fill_round(bar_x, bar_y, 4 * u, bar_h, 2 * u, COL_GOLD_DARK);
 }
 
 static const char *display_mode_label(void) {
@@ -1035,12 +1064,41 @@ static void draw_screen_panel(RectFS r) {
   draw_text("BACK", screen_back_r.x + screen_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
             screen_back_r.y + screen_back_r.h / 2 - 9 * u, 2.2f * u);
 
-  static const char *const labels[2] = {"MODE", "WIDE"};
-  const char *values[2] = {display_mode_label(), wide_mode_label()};
+  bool hud_hidden = SS_IsHudHidden();
+  static const char *const labels[3] = {"MODE", "WIDE", "TOP HUD"};
+  const char *values[3] = {
+    display_mode_label(), wide_mode_label(), hud_hidden ? "OFF" : "ON",
+  };
+  float row_h = 58 * u, gap = 14 * u;
+  float y0 = r.y + 82 * u;
+  for (int i = 0; i < 3; i++) {
+    RectFS *row = &screen_row_r[i];
+    *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
+    draw_settings_row(row, false);
+    float ty = row->y + row->h / 2 - 8 * u;
+    draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
+    draw_text(values[i], row->x + row->w - 16 * u - text_width(values[i], 2 * u),
+              ty, 2 * u);
+  }
+}
+
+static void draw_developer_panel(RectFS r) {
+  draw_text("DEVELOPER", r.x + r.w / 2 - text_width("DEVELOPER", 3 * u) / 2,
+            r.y + 18 * u, 3 * u);
+  developer_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
+  draw_settings_row(&developer_back_r, false);
+  draw_text("BACK", developer_back_r.x + developer_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
+            developer_back_r.y + developer_back_r.h / 2 - 9 * u, 2.2f * u);
+
+  const char *labels[2] = {"MEM DUMP", "OVERLAY"};
+  const char *values[2] = {
+    SDL_GetTicks() < dump_flash_until ? "DONE" : "WRITE",
+    developer_overlay_visible ? "ON" : "OFF",
+  };
   float row_h = 58 * u, gap = 14 * u;
   float y0 = r.y + 82 * u;
   for (int i = 0; i < 2; i++) {
-    RectFS *row = &screen_row_r[i];
+    RectFS *row = &developer_row_r[i];
     *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
     draw_settings_row(row, false);
     float ty = row->y + row->h / 2 - 8 * u;
@@ -1060,9 +1118,12 @@ static void draw_settings(RectFS r) {
     draw_screen_panel(r);
     return;
   }
+  if (developer_mode) {
+    draw_developer_panel(r);
+    return;
+  }
   draw_text("SETTINGS", r.x + r.w / 2 - text_width("SETTINGS", 3 * u) / 2, r.y + 18 * u, 3 * u);
 
-  bool hud_hidden = SS_IsHudHidden();
   char turbo_value[12];
 #ifdef __3DS__
   int turbo_multiplier = Platform3DS_GetTurboMultiplier();
@@ -1073,17 +1134,15 @@ static void draw_settings(RectFS r) {
 #else
   snprintf(turbo_value, sizeof(turbo_value), "X5");
 #endif
-  static const char *const labels[6] = {
-    "SCREEN", "TURBO SPEED", "TOP HUD",
-    "REMAP BUTTONS", "MEM DUMP", "RESTART",
+  static const char *const labels[5] = {
+    "SCREEN", "TURBO SPEED", "REMAP BUTTONS", "DEVELOPER", "RESTART",
   };
-  const char *values[6] = {
-    "", turbo_value, hud_hidden ? "OFF" : "ON",
-    "", SDL_GetTicks() < dump_flash_until ? "DONE" : "WRITE", "GO",
+  const char *values[5] = {
+    "", turbo_value, "", "", "GO",
   };
   float row_h = 44 * u, gap = 8 * u;
   float y0 = r.y + 55 * u;
-  for (int i = 0; i < 6; i++) {
+  for (int i = 0; i < 5; i++) {
     RectFS *row = &settings_row_r[i];
     *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
     draw_settings_row(row, false);
@@ -1130,6 +1189,39 @@ static void draw_tab_bar(float tab_h) {
   draw_tab_button(tab_settings_r, NULL, tab == TAB_SETTINGS);
   draw_cog(tab_settings_r.x + tab_settings_r.w / 2, tab_settings_r.y + tab_settings_r.h / 2,
            bh * 0.28f);
+}
+
+static void draw_developer_overlay(void) {
+  if (!developer_overlay_visible)
+    return;
+  char line1[48], line2[48], line3[48];
+#ifdef __3DS__
+  snprintf(line1, sizeof(line1), "VERSION %s", ZELDA3_3DS_VERSION);
+  snprintf(line2, sizeof(line2), "%s  FPS %d",
+           Platform3DS_IsNew3DS() ? "NEW 3DS" : "OLD 3DS", ss_diag_fps);
+  snprintf(line3, sizeof(line3), "CORE1 %s  %s",
+           Platform3DS_CanUseCore1PpuWorker() ? "ON" : "OFF",
+           display_mode_label());
+#else
+  snprintf(line1, sizeof(line1), "VERSION %s", ZELDA3_3DS_VERSION);
+  snprintf(line2, sizeof(line2), "DESKTOP  FPS %d", ss_diag_fps);
+  snprintf(line3, sizeof(line3), "%s", display_mode_label());
+#endif
+  float sc = 1.35f * u;
+  float pad = 7 * u;
+  float w = tiny_text_width(line1, sc);
+  float w2 = tiny_text_width(line2, sc);
+  float w3 = tiny_text_width(line3, sc);
+  if (w2 > w) w = w2;
+  if (w3 > w) w = w3;
+  float h = 38 * u;
+  float x = 8 * u;
+  float y = 8 * u;
+  fill_round(x, y, w + pad * 2, h, 5 * u, COL(0, 0, 0));
+  draw_frame(x, y, w + pad * 2, h, 1.5f * u, COL_GOLD);
+  draw_tiny_text(line1, x + pad, y + 6 * u, sc, COL(255, 255, 255));
+  draw_tiny_text(line2, x + pad, y + 17 * u, sc, COL_GOLD);
+  draw_tiny_text(line3, x + pad, y + 28 * u, sc, COL(190, 210, 255));
 }
 
 // public API
@@ -1189,6 +1281,10 @@ void SecondScreenSDL_RequestDump(void) {
   if (!ss_enabled)
     return;
   request_dump_now();
+}
+
+void SecondScreenSDL_SetDiagnostics(int visual_fps) {
+  ss_diag_fps = visual_fps;
 }
 
 // Create the bottom window lazily on the other display, after the game has
@@ -1431,6 +1527,22 @@ static void handle_tap(float x, float y) {
                    mode == kPlatform3DSWideFixed ? "Fixed" : "Standard");
         update_ini("[General]", "WideEdgeMode",
                    mode == kPlatform3DSWideFixed ? "FixedCamera" : "Standard");
+      } else if (in_rect(&screen_row_r[2], x, y)) {
+        bool hide = !SS_IsHudHidden();
+        SS_SetHudHidden(hide);
+        if (hide) { FILE *f = fopen(".ss_hidehud", "wb"); if (f) fclose(f); }
+        else remove(".ss_hidehud");
+      }
+    } else if (developer_mode) {
+      if (in_rect(&developer_back_r, x, y)) {
+        developer_mode = false;
+      } else if (in_rect(&developer_row_r[0], x, y)) {
+        request_dump_now();
+      } else if (in_rect(&developer_row_r[1], x, y)) {
+        developer_overlay_visible = !developer_overlay_visible;
+#ifdef __3DS__
+        ss_redraw_requested = true;
+#endif
       }
     } else {
       if (in_rect(&settings_row_r[0], x, y)) {
@@ -1449,16 +1561,11 @@ static void handle_tap(float x, float y) {
           snprintf(value, sizeof(value), "%d", multiplier);
         update_ini("[General]", "CStickTurboMultiplier", value);
       } else if (in_rect(&settings_row_r[2], x, y)) {
-        bool hide = !SS_IsHudHidden();
-        SS_SetHudHidden(hide);
-        if (hide) { FILE *f = fopen(".ss_hidehud", "wb"); if (f) fclose(f); }
-        else remove(".ss_hidehud");
-      } else if (in_rect(&settings_row_r[3], x, y)) {
         SS_GetGamepadControls(pad_controls);
         remap_mode = true;
+      } else if (in_rect(&settings_row_r[3], x, y)) {
+        developer_mode = true;
       } else if (in_rect(&settings_row_r[4], x, y)) {
-        request_dump_now();
-      } else if (in_rect(&settings_row_r[5], x, y)) {
         SS_RequestRestart();
       }
     }
@@ -1640,8 +1747,8 @@ static void draw_second_screen(int logic_frames) {
              dungeon_mode ? COL_BG_STONE : COL_BG_MENU);
   float tab_h = 84 * u;
   float side_w = 200 * u;
-  bool gear_full_width = tab == TAB_GEAR;
-  map_area_r = gear_full_width ?
+  bool full_width = tab == TAB_GEAR || tab == TAB_SETTINGS;
+  map_area_r = full_width ?
     (RectFS){10 * u, 10 * u, W - 20 * u, H - tab_h - 14 * u} :
     (RectFS){10 * u, 10 * u, W - side_w - 14 * u, H - tab_h - 14 * u};
 
@@ -1651,9 +1758,10 @@ static void draw_second_screen(int logic_frames) {
   else if (dungeon_mode)     draw_dungeon(map_area_r, link_x, link_y, area & 0xFF, dungeon_info);
   else                       draw_overworld(map_area_r, link_x, link_y, area);
 
-  if (!gear_full_width)
+  if (!full_width)
     draw_sidebar(W - side_w + 4 * u, 10 * u, side_w - 14 * u, H - tab_h - 14 * u, dungeon_mode);
   draw_tab_bar(tab_h);
+  draw_developer_overlay();
 
   present_second_screen();
 }
@@ -1723,6 +1831,9 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
   }
 
   int divisor = logic_frames <= 1 ? 2 : 6;
+  if (developer_overlay_visible)
+    ss_redraw_requested = true;
+
   if (!ss_worker_busy &&
       (ss_redraw_requested || frame_no % divisor == 0)) {
     ss_worker_buffer = ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer;

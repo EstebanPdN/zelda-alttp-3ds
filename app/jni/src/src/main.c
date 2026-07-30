@@ -43,6 +43,7 @@ bool SecondScreenSDL_Init(SDL_Window *main_window);
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e);
 void SecondScreenSDL_Handle3DSTouch(void);
 void SecondScreenSDL_Update(int logic_frames);
+void SecondScreenSDL_SetDiagnostics(int visual_fps);
 #ifdef __3DS__
 void SecondScreenSDL_BeginFrame(int logic_frames);
 #endif
@@ -1048,6 +1049,7 @@ int main(int argc, char** argv) {
     bool turbo_held;
     int turbo_multiplier;
     inputs = Platform3DS_ReadInput(&turbo_held, &turbo_multiplier);
+    SecondScreenSDL_SetDiagnostics(g_3ds_visual_fps);
     SecondScreenSDL_Handle3DSTouch();
     if (Platform3DS_TakeQuickDumpRequest())
       SecondScreenSDL_RequestDump();

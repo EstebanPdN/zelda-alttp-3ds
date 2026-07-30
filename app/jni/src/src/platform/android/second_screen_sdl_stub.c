@@ -6,5 +6,6 @@
 bool SecondScreenSDL_Init(SDL_Window *main_window) { (void)main_window; return false; }
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e) { (void)e; return false; }
 void SecondScreenSDL_Update(int logic_frames) { (void)logic_frames; }
+void SecondScreenSDL_SetDiagnostics(int visual_fps) { (void)visual_fps; }
 void SecondScreenSDL_RequestDump(void) {}
 void SecondScreenSDL_Shutdown(void) {}
