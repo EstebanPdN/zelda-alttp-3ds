@@ -39,6 +39,14 @@ typedef struct PpuTileCache {
   uint32_t pixels[0x8000];
 } PpuTileCache;
 
+typedef struct PpuLineCache {
+  uint64_t signatures[240];
+  uint8_t valid[240];
+  uint32_t pixels[240][kPpuXPixels];
+  uint32_t hits;
+  uint32_t misses;
+} PpuLineCache;
+
 enum {
   kPpuRenderFlags_NewRenderer = 1,
   // Render mode7 upsampled by 4x4
@@ -47,6 +55,8 @@ enum {
   kPpuRenderFlags_Height240 = 4,
   // Disable sprite render limits
   kPpuRenderFlags_NoSpriteLimits = 8,
+  // Experimental Old 3DS path: reuse complete scanlines when PPU state matches.
+  kPpuRenderFlags_Old3DSLineCache = 16,
 };
 
 
@@ -58,6 +68,8 @@ struct Ppu {
   uint32_t renderPitch;
   uint8_t *renderBuffer;
   PpuTileCache *tileCache;
+  PpuLineCache *lineCache;
+  uint32_t vramGeneration, cgramGeneration, oamGeneration;
   uint8_t extraLeftCur, extraRightCur, extraLeftRight, extraBottomCur;
   int16_t renderObjXOffset;
   float mode7PerspectiveLow, mode7PerspectiveHigh;
@@ -146,6 +158,8 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr);
 void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val);
 void ppu_saveload(Ppu *ppu, SaveLoadFunc *func, void *ctx);
 void PpuBeginDrawing(Ppu *ppu, uint8_t *buffer, size_t pitch, uint32_t render_flags);
+void PpuInvalidateLineCache(Ppu *ppu);
+void PpuGetLineCacheStats(Ppu *ppu, uint32_t *hits, uint32_t *misses);
 
 // Returns the current render scale, 1x = 256px, 2x=512px, 4x=1024px
 int PpuGetCurrentRenderScale(Ppu *ppu, uint32_t render_flags);

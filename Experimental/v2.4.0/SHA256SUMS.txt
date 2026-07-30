@@ -1,0 +1,3 @@
+f175d1d3cba2c96e90f68c2bbc4cbac4f775363432f8d1501843caefbb78e51c  Experimental/v2.4.0/zelda3-3ds-v2.4.0-experimental.cia
+103a5238762ed08683a5a1164b6afa380abcb6547c0d37d903f8fcb3e6e15e5e  Experimental/v2.4.0/zelda3-3ds-v2.4.0-experimental.3dsx
+6a7bdc098a722039a8222501b4acc416fc5776003bc2f0a7ace810a6e416dacb  Experimental/v2.4.0/QR-v2.4.0-github.png

@@ -301,8 +301,11 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
   const char *profile = Platform3DS_IsNew3DS() ?
     "NEW 3DS" : "OLD 3DS";
   char fps_text[32];
+  char version_text[32];
   snprintf(fps_text, sizeof(fps_text), "FPS %d", g_3ds_visual_fps);
-  int text_w = IntMax(TinyTextWidth("VERSION 2.3.1", scale),
+  snprintf(version_text, sizeof(version_text), "VERSION %s",
+           ZELDA3_3DS_VERSION);
+  int text_w = IntMax(TinyTextWidth(version_text, scale),
                       IntMax(TinyTextWidth(profile, scale),
                              TinyTextWidth(fps_text, scale)));
   int box_w = IntMin(text_w + 24 * scale, width - 16 * scale);
@@ -319,8 +322,8 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
                x, y, 2 * scale, box_h, 0xe8c260u);
   FillArgbRect(pixels, pitch, width, height,
                x + box_w - 2 * scale, y, 2 * scale, box_h, 0xe8c260u);
-  DrawTinyText(pixels, pitch, width, height, "VERSION 2.3.1",
-               x + (box_w - TinyTextWidth("VERSION 2.3.1", scale)) / 2,
+  DrawTinyText(pixels, pitch, width, height, version_text,
+               x + (box_w - TinyTextWidth(version_text, scale)) / 2,
                y + 7 * scale, scale, 0xffffffu);
   DrawTinyText(pixels, pitch, width, height, profile,
                x + (box_w - TinyTextWidth(profile, scale)) / 2,
@@ -763,6 +766,10 @@ int main(int argc, char** argv) {
                        g_config.enhanced_mode7 * kPpuRenderFlags_4x4Mode7 |
                        g_config.extend_y * kPpuRenderFlags_Height240 |
                        g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
+#ifdef __3DS__
+  if (!Platform3DS_IsNew3DS())
+    g_ppu_render_flags |= kPpuRenderFlags_Old3DSLineCache;
+#endif
   ZeldaEnableMsu(g_config.enable_msu);
   ZeldaSetLanguage(g_config.language);
 

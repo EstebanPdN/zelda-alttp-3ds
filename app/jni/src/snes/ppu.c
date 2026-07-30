@@ -42,6 +42,12 @@ Ppu* ppu_init() {
     free(ppu);
     return NULL;
   }
+  ppu->lineCache = (PpuLineCache *)calloc(1, sizeof(PpuLineCache));
+  if (!ppu->lineCache) {
+    free(ppu->tileCache);
+    free(ppu);
+    return NULL;
+  }
   ppu->extraLeftRight = kPpuExtraLeftRight;
   return ppu;
 }
@@ -49,12 +55,14 @@ Ppu* ppu_init() {
 void ppu_free(Ppu* ppu) {
   if (!ppu)
     return;
+  free(ppu->lineCache);
   free(ppu->tileCache);
   free(ppu);
 }
 
 void ppu_reset(Ppu* ppu) {
   memset(ppu->vram, 0, sizeof(ppu->vram));
+  ppu->vramGeneration++;
   ppu->lastBrightnessMult = 0xff;
   ppu->lastMosaicModulo = 0xff;
   ppu->extraLeftCur = 0;
@@ -66,11 +74,14 @@ void ppu_reset(Ppu* ppu) {
   ppu->vramIncrementOnHigh = false;
   ppu->vramIncrement = 1;
   memset(ppu->cgram, 0, sizeof(ppu->cgram));
+  ppu->cgramGeneration++;
   ppu->cgramPointer = 0;
   ppu->cgramSecondWrite = false;
   ppu->colorMapDirty = true;
   ppu->cgramBuffer = 0;
   memset(ppu->oam, 0, sizeof(ppu->oam));
+  ppu->oamGeneration++;
+  PpuInvalidateLineCache(ppu);
   ppu->oamAdr = 0;
   ppu->oamSecondWrite = false;
   ppu->oamBuffer = 0;
@@ -128,6 +139,10 @@ void ppu_saveload(Ppu *ppu, SaveLoadFunc *func, void *ctx) {
   func(ctx, tmp, 556);
   ppu->lastBrightnessMult = 0xff;
   ppu->colorMapDirty = true;
+  ppu->vramGeneration++;
+  ppu->cgramGeneration++;
+  ppu->oamGeneration++;
+  PpuInvalidateLineCache(ppu);
   func(ctx, tmp, 520);
   for (int i = 0; i < 4; i++) {
     func(ctx, tmp, 4);
@@ -171,6 +186,98 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
         ppu->brightnessMult[(color >> 10) & 0x1f];
     }
   }
+}
+
+void PpuInvalidateLineCache(Ppu *ppu) {
+  if (!ppu || !ppu->lineCache)
+    return;
+  memset(ppu->lineCache->valid, 0, sizeof(ppu->lineCache->valid));
+}
+
+void PpuGetLineCacheStats(Ppu *ppu, uint32_t *hits, uint32_t *misses) {
+  if (hits)
+    *hits = ppu && ppu->lineCache ? ppu->lineCache->hits : 0;
+  if (misses)
+    *misses = ppu && ppu->lineCache ? ppu->lineCache->misses : 0;
+}
+
+static inline uint64_t PpuHashMix64(uint64_t hash, uint64_t value) {
+  hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+  return hash;
+}
+
+static bool PpuTryCopyCachedLine(Ppu *ppu, uint y, uint64_t signature) {
+  if (!(ppu->renderFlags & kPpuRenderFlags_Old3DSLineCache) ||
+      !ppu->lineCache || y == 0 || y > 240)
+    return false;
+  PpuLineCache *cache = ppu->lineCache;
+  uint index = y - 1;
+  if (!cache->valid[index] || cache->signatures[index] != signature) {
+    cache->misses++;
+    return false;
+  }
+  uint32_t *dst = (uint32_t *)&ppu->renderBuffer[index * ppu->renderPitch];
+  memcpy(dst, cache->pixels[index],
+         sizeof(uint32_t) * (256 + ppu->extraLeftRight * 2));
+  cache->hits++;
+  return true;
+}
+
+static void PpuStoreCachedLine(Ppu *ppu, uint y, uint64_t signature) {
+  if (!(ppu->renderFlags & kPpuRenderFlags_Old3DSLineCache) ||
+      !ppu->lineCache || y == 0 || y > 240)
+    return;
+  PpuLineCache *cache = ppu->lineCache;
+  uint index = y - 1;
+  uint32_t *src = (uint32_t *)&ppu->renderBuffer[index * ppu->renderPitch];
+  memcpy(cache->pixels[index], src,
+         sizeof(uint32_t) * (256 + ppu->extraLeftRight * 2));
+  cache->signatures[index] = signature;
+  cache->valid[index] = 1;
+}
+
+static uint64_t PpuComputeLineSignature(Ppu *ppu, uint y) {
+  uint64_t hash = 0xcbf29ce484222325ull;
+  hash = PpuHashMix64(hash, y);
+  hash = PpuHashMix64(hash, ppu->vramGeneration);
+  hash = PpuHashMix64(hash, ppu->cgramGeneration);
+  hash = PpuHashMix64(hash, ppu->oamGeneration);
+  hash = PpuHashMix64(hash, ppu->screenEnabled[0] | (ppu->screenEnabled[1] << 8));
+  hash = PpuHashMix64(hash, ppu->screenWindowed[0] | (ppu->screenWindowed[1] << 8));
+  hash = PpuHashMix64(hash, ppu->mosaicEnabled | (ppu->mosaicSize << 8));
+  hash = PpuHashMix64(hash, ppu->windowsel);
+  hash = PpuHashMix64(hash, ppu->window1left | (ppu->window1right << 8) |
+                            (ppu->window2left << 16) | (ppu->window2right << 24));
+  hash = PpuHashMix64(hash, ppu->clipMode | (ppu->preventMathMode << 8) |
+                            (ppu->addSubscreen << 16) |
+                            (ppu->subtractColor << 17) |
+                            (ppu->halfColor << 18) |
+                            (ppu->mathEnabled << 24));
+  hash = PpuHashMix64(hash, ppu->fixedColorR | (ppu->fixedColorG << 8) |
+                            (ppu->fixedColorB << 16));
+  hash = PpuHashMix64(hash, ppu->mode | (ppu->brightness << 8) |
+                            (ppu->forcedBlank << 16));
+  hash = PpuHashMix64(hash, ppu->extraLeftCur | (ppu->extraRightCur << 8) |
+                            (ppu->extraBottomCur << 16));
+  for (int i = 0; i < 4; i++) {
+    BgLayer *bg = &ppu->bgLayer[i];
+    hash = PpuHashMix64(hash, bg->hScroll | (bg->vScroll << 16));
+    hash = PpuHashMix64(hash, bg->tilemapAdr | (bg->tileAdr << 16) |
+                              (bg->tilemapWider << 30) |
+                              (bg->tilemapHigher << 31));
+  }
+  if (ppu->mode == 7) {
+    for (int i = 0; i < 8; i++)
+      hash = PpuHashMix64(hash, (uint16_t)ppu->m7matrix[i]);
+    hash = PpuHashMix64(hash, ppu->m7largeField | (ppu->m7charFill << 1) |
+                              (ppu->m7xFlip << 2) | (ppu->m7yFlip << 3));
+  }
+  if (ppu->windowExtLeft) {
+    hash = PpuHashMix64(
+      hash, (uint16_t)ppu->windowExtLeft[y - 1] |
+              ((uint32_t)(uint16_t)ppu->windowExtRight[y - 1] << 16));
+  }
+  return hash;
 }
 
 static inline void ClearBackdrop(Ppu *ppu, PpuPixelPrioBufs *buf) {
@@ -218,9 +325,14 @@ void ppu_runLine(Ppu *ppu, int line) {
         j = (j + 1 == mod ? 0 : j + 1);
       }
     }
+    uint64_t line_signature = PpuComputeLineSignature(ppu, (uint)line);
+    if (PpuTryCopyCachedLine(ppu, (uint)line, line_signature))
+      return;
+
     // outside of visible range?
     if (line >= 225 + ppu->extraBottomCur) {
       memset(&ppu->renderBuffer[(line - 1) * ppu->renderPitch], 0, sizeof(uint32) * (256 + ppu->extraLeftRight * 2));
+      PpuStoreCachedLine(ppu, (uint)line, line_signature);
       return;
     }
 
@@ -250,6 +362,7 @@ void ppu_runLine(Ppu *ppu, int line) {
         memset(dst + sizeof(uint32) * (256 + ppu->extraLeftRight), 0, sizeof(uint32) * ppu->extraLeftRight);
       }
     }
+    PpuStoreCachedLine(ppu, (uint)line, line_signature);
   }
 }
 
@@ -1453,8 +1566,10 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       if (!ppu->oamSecondWrite) {
         ppu->oamBuffer = val;
       } else {
-        if (ppu->oamAdr < 0x110)
+        if (ppu->oamAdr < 0x110) {
           ppu->oam[ppu->oamAdr++] = (val << 8) | ppu->oamBuffer;
+          ppu->oamGeneration++;
+        }
       }
       ppu->oamSecondWrite = !ppu->oamSecondWrite;
       break;
@@ -1538,13 +1653,23 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
     }
     case 0x18: {  // VMDATAL
       uint16_t vramAdr = ppu->vramPointer;
-      ppu->vram[vramAdr & 0x7fff] = (ppu->vram[vramAdr & 0x7fff] & 0xff00) | val;
+      uint16_t *word = &ppu->vram[vramAdr & 0x7fff];
+      uint16_t new_word = (*word & 0xff00) | val;
+      if (*word != new_word) {
+        *word = new_word;
+        ppu->vramGeneration++;
+      }
       if(!ppu->vramIncrementOnHigh) ppu->vramPointer += ppu->vramIncrement;
       break;
     }
     case 0x19: {  // VMDATAH
       uint16_t vramAdr = ppu->vramPointer;
-      ppu->vram[vramAdr & 0x7fff] = (ppu->vram[vramAdr & 0x7fff] & 0x00ff) | (val << 8);
+      uint16_t *word = &ppu->vram[vramAdr & 0x7fff];
+      uint16_t new_word = (*word & 0x00ff) | (val << 8);
+      if (*word != new_word) {
+        *word = new_word;
+        ppu->vramGeneration++;
+      }
       if(ppu->vramIncrementOnHigh) ppu->vramPointer += ppu->vramIncrement;
       break;
     }
@@ -1579,8 +1704,13 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       if(!ppu->cgramSecondWrite) {
         ppu->cgramBuffer = val;
       } else {
-        ppu->cgram[ppu->cgramPointer++] = (val << 8) | ppu->cgramBuffer;
-        ppu->colorMapDirty = true;
+        uint8_t index = ppu->cgramPointer++;
+        uint16_t new_color = (val << 8) | ppu->cgramBuffer;
+        if (ppu->cgram[index] != new_color) {
+          ppu->cgram[index] = new_color;
+          ppu->colorMapDirty = true;
+          ppu->cgramGeneration++;
+        }
       }
       ppu->cgramSecondWrite = !ppu->cgramSecondWrite;
       break;
