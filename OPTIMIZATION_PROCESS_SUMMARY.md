@@ -37,6 +37,7 @@ El archivo `PROCESS.txt` documenta cómo se arregló originalmente el problema d
 
 ## Qué se puede seguir optimizando
 
+- Tomar como referencia lo que funcionó en New 3DS: presentación PICA200/Citro2D, timing lógico a 60 Hz, bounded catch-up, cuidado con VBlank, render superior completo, renderer PPU paralelo y cachés de tiles/scanlines. Esas piezas no deben promocionarse como features públicas, pero sí sirven como lista de control para el perfil Old 3DS.
 - PPU por scanline: es el cuello principal en Old 3DS, con dumps alrededor de 27–29 ms.
 - Dirty lines / dirty tiles: no redibujar líneas o tiles que no cambiaron.
 - Caché de fondos por tilemap/paleta para overworld e interiores.

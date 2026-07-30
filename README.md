@@ -15,31 +15,17 @@ No ROM or extracted game asset package is distributed in this repository. Each
 user must provide their own legally obtained USA, unheadered ROM on their own
 3DS SD card.
 
-## Nintendo 3DS Features
+## Features
 
 - Top screen: 400x240 gameplay.
-- Bottom screen: 320x240 live map, dungeon map, gear view, item selection and
-  touch settings.
+- Bottom screen: live map, dungeon map, gear view, item section and settings.
 - First launch extracts `zelda3_assets.dat` locally from the user's ROM.
-- Screen menu: `ORIGINAL`, `STRETCH`, and `WIDE` display modes, plus
-  `STANDARD`/`FIXED` wide mode when using `WIDE`.
-- Turbo speed: off, x2, x3, x4 or x5.
-- New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
+- Screen menu with `Original`, `Stretch` and `Wide` display modes.
+- Turbo speed support on New 3DS.
 - Quick diagnostics: press `L + R + A` to create a dump with memory files plus
   top and bottom screenshots.
-- PICA200/Citro2D presentation for both screens with nearest-neighbor sampling
-  and RGB565 display output.
-- Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making
-  game speed depend on when a VBlank wait returns.
-- 240-line top-screen rendering is enabled on 3DS so the image can use the
-  full top-screen height.
-- Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
-  with persistent tile-row caches and frame-time diagnostics in quick dumps.
-- HOME Menu metadata stays stable across builds so updates replace the same
-  installed application. Versions are shown in filenames, release notes, and
-  the in-game diagnostic overlay instead.
-- HOME Menu banner uses a lightweight CGFX 3D box model with the supplied
-  hover sound converted to a short PCM WAV.
+- Use diagnostics for any bug or issue report so I can fix problems more
+  easily.
 
 ## Installation
 
