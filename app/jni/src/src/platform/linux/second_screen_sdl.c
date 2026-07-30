@@ -209,7 +209,8 @@ static uint32_t dump_flash_until;
 static RectFS plaque_r[16];
 static int    plaque_floor[16], plaque_count;
 static float  grid_x, grid_y, grid_cell;
-static int    ss_diag_fps;
+static int    ss_diag_current_fps;
+static int    ss_diag_average_fps;
 
 // live values snapshot for the current frame
 static int cur_room, cur_floor_now, cur_palace;
@@ -410,6 +411,20 @@ static void draw_tiny_text(const char *s, float x, float y, float sc, uint32_t c
     }
     cx += (*s == ' ' ? 4 : 6) * sc;
   }
+}
+
+static void draw_block_text(const char *s, float x, float y, float sc,
+                            uint32_t color) {
+  draw_tiny_text(s, floorf(x + 0.5f), floorf(y + 0.5f), floorf(sc + 0.5f),
+                 color);
+}
+
+static void draw_block_label_value(const char *label, const char *value,
+                                   float x, float y, float sc,
+                                   uint32_t label_color,
+                                   uint32_t value_color) {
+  draw_block_text(label, x, y, sc, label_color);
+  draw_block_text(value, x + 104 * u, y, sc, value_color);
 }
 static void draw_number(int value, int digits, float x, float y, float s, bool yellow) {
   static const int kD[10]  = {SS_GLYPH_DIGIT0, SS_GLYPH_DIGIT1, SS_GLYPH_DIGIT2, SS_GLYPH_DIGIT3, SS_GLYPH_DIGIT4,
@@ -1132,44 +1147,60 @@ static void draw_developer_overlay_panel(RectFS r) {
   draw_text("BACK", developer_back_r.x + developer_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
             developer_back_r.y + developer_back_r.h / 2 - 9 * u, 2.2f * u);
 
-  char version[48], model[48], fps[48], core[48], display[48], location[64], module[48];
+  char version[32], model[32], fps_now[32], fps_avg[32], core[32],
+       display[32], location[48], module[32];
 #ifdef __3DS__
-  snprintf(model, sizeof(model), "MODEL  %s",
+  snprintf(model, sizeof(model), "%s",
            Platform3DS_IsNew3DS() ? "NEW 3DS" : "OLD 3DS");
-  snprintf(core, sizeof(core), "CORE1  %s",
+  snprintf(core, sizeof(core), "%s",
            Platform3DS_CanUseCore1PpuWorker() ? "ON" : "OFF");
 #else
-  snprintf(model, sizeof(model), "MODEL  DESKTOP");
-  snprintf(core, sizeof(core), "CORE1  N A");
+  snprintf(model, sizeof(model), "DESKTOP");
+  snprintf(core, sizeof(core), "N A");
 #endif
-  snprintf(version, sizeof(version), "VERSION  %s", ZELDA3_3DS_VERSION);
+  snprintf(version, sizeof(version), "%s", ZELDA3_3DS_VERSION);
   for (char *p = version; *p; p++)
     if (*p == '.' || *p == '-')
       *p = ' ';
-  snprintf(fps, sizeof(fps), "FPS  %d", ss_diag_fps);
-  snprintf(display, sizeof(display), "SCREEN  %s", display_mode_label());
+  snprintf(fps_now, sizeof(fps_now), "%d", ss_diag_current_fps);
+  snprintf(fps_avg, sizeof(fps_avg), "%d", ss_diag_average_fps);
+  snprintf(display, sizeof(display), "%s", display_mode_label());
   if (SS_IsIndoors()) {
     int dungeon_info = SS_GetDungeon();
     int palace = dungeon_info & 0xff;
     if (palace >= 0 && palace < 14)
-      snprintf(location, sizeof(location), "ROOM  %s", kDungeonNames[palace]);
+      snprintf(location, sizeof(location), "%s", kDungeonNames[palace]);
     else
-      snprintf(location, sizeof(location), "ROOM  HOUSE %02X", SS_GetArea() & 0xff);
+      snprintf(location, sizeof(location), "HOUSE %02X", SS_GetArea() & 0xff);
   } else {
-    snprintf(location, sizeof(location), "AREA  OVERWORLD %02X", SS_GetArea() & 0xff);
+    snprintf(location, sizeof(location), "OVERWORLD %02X", SS_GetArea() & 0xff);
   }
-  snprintf(module, sizeof(module), "MODULE  %02X", SS_GetModule() & 0xff);
+  snprintf(module, sizeof(module), "%02X", SS_GetModule() & 0xff);
 
-  const char *lines[] = {version, model, fps, core, display, location, module};
-  float sc = 2.6f * u;
-  float row_h = 26 * u;
-  float x = r.x + 30 * u;
+  float sc = 2.0f * u;
+  float row_h = 20 * u;
+  float x = r.x + 26 * u;
   float y = r.y + 62 * u;
-  for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++) {
-    fill_round(x - 8 * u, y - 4 * u, r.w - 44 * u, row_h, 5 * u,
-               i == 2 ? COL(42, 34, 12) : COL(28, 28, 28));
-    draw_text(lines[i], x, y, sc);
-    y += row_h + 5 * u;
+  struct {
+    const char *label;
+    const char *value;
+    uint32_t color;
+  } rows[] = {
+    {"VERSION", version, COL(255, 255, 255)},
+    {"MODEL", model, COL_GOLD},
+    {"FPS NOW", fps_now, COL(120, 255, 140)},
+    {"FPS AVG", fps_avg, COL(120, 220, 255)},
+    {"CORE1", core, COL(230, 230, 230)},
+    {"SCREEN", display, COL(230, 230, 230)},
+    {"ROOM", location, COL(230, 230, 230)},
+    {"MODULE", module, COL(230, 230, 230)},
+  };
+  for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
+    fill_round(x - 8 * u, y - 4 * u, r.w - 40 * u, row_h, 5 * u,
+               i == 2 || i == 3 ? COL(34, 28, 12) : COL(24, 24, 24));
+    draw_block_label_value(rows[i].label, rows[i].value, x, y, sc,
+                           COL(170, 170, 170), rows[i].color);
+    y += row_h + 3 * u;
   }
 }
 
@@ -1318,8 +1349,9 @@ void SecondScreenSDL_RequestDump(void) {
   request_dump_now();
 }
 
-void SecondScreenSDL_SetDiagnostics(int visual_fps) {
-  ss_diag_fps = visual_fps;
+void SecondScreenSDL_SetDiagnostics(int current_fps, int average_fps) {
+  ss_diag_current_fps = current_fps;
+  ss_diag_average_fps = average_fps;
 }
 
 // Create the bottom window lazily on the other display, after the game has

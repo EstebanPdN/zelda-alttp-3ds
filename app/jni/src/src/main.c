@@ -43,7 +43,7 @@ bool SecondScreenSDL_Init(SDL_Window *main_window);
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e);
 void SecondScreenSDL_Handle3DSTouch(void);
 void SecondScreenSDL_Update(int logic_frames);
-void SecondScreenSDL_SetDiagnostics(int visual_fps);
+void SecondScreenSDL_SetDiagnostics(int current_fps, int average_fps);
 #ifdef __3DS__
 void SecondScreenSDL_BeginFrame(int logic_frames);
 #endif
@@ -115,8 +115,13 @@ static bool g_display_perf;
 static int g_curr_fps;
 #ifdef __3DS__
 static int g_3ds_visual_fps = 0;
+static int g_3ds_current_fps = 0;
+static int g_3ds_average_fps = 0;
 static uint32 g_3ds_visual_fps_window_start_ms = 0;
 static uint32 g_3ds_visual_fps_window_frames = 0;
+static uint32 g_3ds_average_fps_samples[20];
+static uint32 g_3ds_average_fps_sample_count;
+static uint32 g_3ds_average_fps_sample_pos;
 #endif
 static int g_ppu_render_flags = 0;
 static int g_snes_width, g_snes_height;
@@ -1037,10 +1042,25 @@ int main(int argc, char** argv) {
         g_3ds_visual_fps_window_start_ms = now_ms;
       g_3ds_visual_fps_window_frames++;
       uint32 elapsed_ms = now_ms - g_3ds_visual_fps_window_start_ms;
-      if (elapsed_ms >= 2500) {
-        g_3ds_visual_fps =
+      if (elapsed_ms >= 500) {
+        g_3ds_current_fps =
           (int)((uint64)g_3ds_visual_fps_window_frames * 1000ull /
                 (elapsed_ms ? elapsed_ms : 1));
+        g_3ds_visual_fps = g_3ds_current_fps;
+        g_3ds_average_fps_samples[g_3ds_average_fps_sample_pos] =
+          (uint32)g_3ds_current_fps;
+        g_3ds_average_fps_sample_pos =
+          (g_3ds_average_fps_sample_pos + 1) %
+          countof(g_3ds_average_fps_samples);
+        if (g_3ds_average_fps_sample_count <
+            countof(g_3ds_average_fps_samples))
+          g_3ds_average_fps_sample_count++;
+        uint32 fps_sum = 0;
+        for (uint32 i = 0; i < g_3ds_average_fps_sample_count; i++)
+          fps_sum += g_3ds_average_fps_samples[i];
+        g_3ds_average_fps = g_3ds_average_fps_sample_count ?
+          (int)(fps_sum / g_3ds_average_fps_sample_count) :
+          g_3ds_current_fps;
         g_3ds_visual_fps_window_start_ms = now_ms;
         g_3ds_visual_fps_window_frames = 0;
       }
@@ -1049,7 +1069,7 @@ int main(int argc, char** argv) {
     bool turbo_held;
     int turbo_multiplier;
     inputs = Platform3DS_ReadInput(&turbo_held, &turbo_multiplier);
-    SecondScreenSDL_SetDiagnostics(g_3ds_visual_fps);
+    SecondScreenSDL_SetDiagnostics(g_3ds_current_fps, g_3ds_average_fps);
     SecondScreenSDL_Handle3DSTouch();
     if (Platform3DS_TakeQuickDumpRequest())
       SecondScreenSDL_RequestDump();
