@@ -1354,6 +1354,17 @@ void SecondScreenSDL_SetDiagnostics(int current_fps, int average_fps) {
   ss_diag_average_fps = average_fps;
 }
 
+void SecondScreenSDL_OpenDeveloperOverlay(void) {
+  tab = TAB_SETTINGS;
+  leave_remap();
+  screen_mode = false;
+  developer_mode = true;
+  developer_overlay_mode = true;
+#ifdef __3DS__
+  ss_redraw_requested = true;
+#endif
+}
+
 // Create the bottom window lazily on the other display, after the game has
 // drawn its first frames -- opening a second fullscreen window on the same
 // output mid-init can resize the game window under its GL renderer.

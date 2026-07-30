@@ -1,4 +1,4 @@
-a09621fead7b6aae387d377c449badc1313e3772d9a7ed91ad16e177b9f63c1f  Releases/2.4/zelda3-3ds-v2.4.cia
-2d4ded1b8ed9b947636e61d7db88ed8d8be4753562ffc1ed318dce06c59e03b2  Releases/2.4/zelda3-3ds-v2.4.3dsx
-44849d3546f00c0d949250e3863cc5c06057f076dbd89bf215324cc7301c3bf0  Releases/2.4/zelda3-3ds-v2.4-source.zip
+e2fc1a2e8b26a97d2345dd1bea3cce668b07b9a06aa421a529aeb0b36e5d134a  Releases/2.4/zelda3-3ds-v2.4.cia
+9b0baf54a9117be0e446f3b390257ca188a8c81eaa7b6b6afb58ab66d6b2e1ed  Releases/2.4/zelda3-3ds-v2.4.3dsx
+a8543d2494c4e94b29cb908de65aa69aa08117eb3bc1f54110d0fe90b8ad6cd2  Releases/2.4/zelda3-3ds-v2.4-source.zip
 d774f25af65d5135aca1d6536e8ddfb3be457ddc4ee9fff9da9d1e4a7ba19e28  Releases/2.4/QR-v2.4-github.png

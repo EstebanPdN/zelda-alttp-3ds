@@ -14,3 +14,4 @@ Changelog
 - Kept the v2.3 HOME Menu close and Core 1 startup fixes.
 - Added workflow rules to keep future Old 3DS renderer experiments isolated from the stable New 3DS path.
 - Improved the bottom-screen Settings menu with a compact Remap Buttons view, Screen submenu Top HUD control, and a Developer submenu with Mem Dump and persistent diagnostics overlay.
+- Improved overlay screen.

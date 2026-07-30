@@ -19,6 +19,8 @@
 #include "util.h"
 #include "zelda_rtl.h"
 
+extern void SecondScreenSDL_OpenDeveloperOverlay(void);
+
 static const char kStorageDirectory[] = "sdmc:/3ds/Zelda 3DS";
 static const char kAssetsFilename[] = "zelda3_assets.dat";
 static const char kTemporaryAssetsFilename[] = "zelda3_assets.tmp";
@@ -171,9 +173,9 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   bool version_combo =
     (keys & (KEY_L | KEY_R | KEY_B)) == (KEY_L | KEY_R | KEY_B);
   if (version_combo && !version_combo_was_held) {
-    g_version_overlay_visible = !g_version_overlay_visible;
-    g_version_overlay_hide_time_ms =
-      g_version_overlay_visible ? osGetTime() + 5000 : 0;
+    g_version_overlay_visible = false;
+    g_version_overlay_hide_time_ms = 0;
+    SecondScreenSDL_OpenDeveloperOverlay();
   } else if (g_version_overlay_visible &&
              osGetTime() >= g_version_overlay_hide_time_ms) {
     g_version_overlay_visible = false;
@@ -318,12 +320,9 @@ bool Platform3DS_CanUseCore1PpuWorker(void) {
 }
 
 bool Platform3DS_IsVersionOverlayVisible(void) {
-  if (g_version_overlay_visible &&
-      osGetTime() >= g_version_overlay_hide_time_ms) {
-    g_version_overlay_visible = false;
-    g_version_overlay_hide_time_ms = 0;
-  }
-  return g_version_overlay_visible;
+  g_version_overlay_visible = false;
+  g_version_overlay_hide_time_ms = 0;
+  return false;
 }
 
 enum Platform3DSWideMode Platform3DS_GetWideMode(void) {

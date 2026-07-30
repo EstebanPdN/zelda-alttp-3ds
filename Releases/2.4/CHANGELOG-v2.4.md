@@ -6,3 +6,4 @@
 - Preserved the HOME Menu close and Core 1 worker startup fixes from v2.3.
 - Added workflow rules requiring Old 3DS renderer experiments to stay isolated from the stable New 3DS path.
 - Improved the bottom-screen Settings menu with compact button remapping, moved Top HUD into Screen, and added Developer > Overlay diagnostics.
+- Improved overlay screen.
