@@ -30,6 +30,7 @@ void Platform3DS_ApplyConfig(struct Config *config);
 void Platform3DS_LogRuntime(const char *format, ...);
 uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier);
 void Platform3DS_LoadRuntimeSettings(void);
+void Platform3DS_ShowFatalError(const char *message);
 enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void);
 void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode);
 bool Platform3DS_IsNew3DS(void);

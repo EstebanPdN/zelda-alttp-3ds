@@ -34,6 +34,7 @@ static bool g_quick_dump_requested;
 static aptHookCookie g_apt_hook_cookie;
 static bool g_apt_hook_registered;
 static volatile bool g_system_exit_requested;
+static volatile bool g_system_suspended;
 static bool g_irrst_initialized;
 static bool g_is_new_3ds;
 static bool g_model_detected;
@@ -69,6 +70,7 @@ static uint64_t g_catchup_presentations;
 static uint32_t g_max_scheduled_logic_frames;
 static bool g_gpu_presenter_initialized;
 static bool g_gpu_frame_active;
+static bool g_setup_console_active;
 static C3D_RenderTarget *g_top_target;
 static C3D_RenderTarget *g_bottom_target;
 static C3D_Tex g_top_texture;
@@ -107,8 +109,21 @@ void Platform3DS_LogRuntime(const char *format, ...) {
 
 static void Platform3DS_AptHook(APT_HookType hook, void *param) {
   (void)param;
-  if (hook == APTHOOK_ONEXIT)
+  switch (hook) {
+  case APTHOOK_ONSUSPEND:
+  case APTHOOK_ONSLEEP:
+    g_system_suspended = true;
+    break;
+  case APTHOOK_ONRESTORE:
+  case APTHOOK_ONWAKEUP:
+    g_system_suspended = false;
+    break;
+  case APTHOOK_ONEXIT:
     g_system_exit_requested = true;
+    break;
+  default:
+    break;
+  }
 }
 
 static void Platform3DS_RegisterAptHook(void) {
@@ -330,6 +345,18 @@ bool Platform3DS_ShouldExit(void) {
     g_system_exit_requested = true;
     return true;
   }
+  if (g_system_suspended || !aptIsActive() || aptShouldJumpToHome()) {
+    Platform3DS_EndFrame();
+    while (!aptShouldClose() && aptMainLoop() &&
+           (g_system_suspended || !aptIsActive() || aptShouldJumpToHome())) {
+      aptHandleSleep();
+      gspWaitForVBlank();
+    }
+    if (aptShouldClose()) {
+      g_system_exit_requested = true;
+      return true;
+    }
+  }
   return false;
 }
 
@@ -377,15 +404,27 @@ bool Platform3DS_InitTopPresenter(void) {
   // on New 3DS. CIA builds also request the faster clock in their exheader.
   osSetSpeedupEnable(true);
   g_irrst_initialized = R_SUCCEEDED(irrstInit());
+  aptSetHomeAllowed(true);
+  aptSetSleepAllowed(true);
 
   // Reserve part of the system core for a parallel PPU segment.
   //
-  // The New 3DS path keeps the proven v2.0/E5 profile. On Old 3DS the PPU
-  // worker was visibly starved in E5 dumps, so E6 gives that worker a larger
-  // Core 1 time slice and records the exact value in runtime dumps.
-  g_core1_time_limit_percent = g_is_new_3ds ? 30 : 70;
-  g_core1_time_enabled = R_SUCCEEDED(
-    APT_SetAppCpuTimeLimit(g_core1_time_limit_percent));
+  // E6 proved that some Old 3DS systems reject larger slices and then leave the
+  // PPU worker unavailable. E7 therefore always falls back to the known-good
+  // 30% slice instead of losing parallel rendering completely.
+  const u32 core1_candidates[] = {30};
+  g_core1_time_enabled = false;
+  g_core1_time_limit_percent = 0;
+  for (size_t i = 0; i < sizeof(core1_candidates) / sizeof(core1_candidates[0]);
+       i++) {
+    if (R_SUCCEEDED(APT_SetAppCpuTimeLimit(core1_candidates[i]))) {
+      u32 actual_percent = core1_candidates[i];
+      APT_GetAppCpuTimeLimit(&actual_percent);
+      g_core1_time_limit_percent = (int)actual_percent;
+      g_core1_time_enabled = true;
+      break;
+    }
+  }
 
   // Zelda's source image is derived from the SNES 15-bit palette. RGB565 keeps
   // that detail while halving the top framebuffer bandwidth versus RGBA8.
@@ -846,9 +885,14 @@ static bool FindRom(char *path, size_t path_size) {
 }
 
 static void BeginSetupConsole(void) {
+  if (g_setup_console_active)
+    return;
   gfxInitDefault();
   consoleInit(GFX_TOP, NULL);
   consoleClear();
+  aptSetHomeAllowed(true);
+  aptSetSleepAllowed(true);
+  g_setup_console_active = true;
 }
 
 static void PresentSetupConsole(void) {
@@ -858,8 +902,11 @@ static void PresentSetupConsole(void) {
 }
 
 static void EndSetupConsole(void) {
+  if (!g_setup_console_active)
+    return;
   PresentSetupConsole();
   gfxExit();
+  g_setup_console_active = false;
 }
 
 static u32 WaitForButtons(u32 accepted) {
@@ -885,6 +932,18 @@ static void ShowFatalSetupError(const char *message) {
   printf("Press B to exit.");
   PresentSetupConsole();
   WaitForButtons(KEY_B | KEY_START);
+}
+
+void Platform3DS_ShowFatalError(const char *message) {
+  Platform3DS_LogRuntime("FATAL: %s", message ? message : "(null)");
+  if (g_gpu_presenter_initialized)
+    Platform3DS_ShutdownTopPresenter();
+  bool already_in_console = g_setup_console_active;
+  if (!already_in_console)
+    BeginSetupConsole();
+  ShowFatalSetupError(message ? message : "Unknown fatal error.");
+  if (!already_in_console)
+    EndSetupConsole();
 }
 
 static bool ConfirmExtraction(void) {
