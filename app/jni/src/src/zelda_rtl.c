@@ -342,6 +342,8 @@ static PpuWorkerState g_ppu_new_worker;
 static bool g_ppu_worker_initialized;
 static int g_ppu_split_line = 112;
 static int g_ppu_last_split_line = 112;
+static int g_ppu_old3ds_worker_lines = 56;
+static int g_ppu_old3ds_last_worker_lines = 56;
 static uint64 g_ppu_main_duration_ticks;
 
 static void ZeldaPpuWorkerMain(void *argument) {
@@ -444,6 +446,44 @@ bool ZeldaGetPpuWorkerStats(int *split_line,
   }
   return true;
 }
+
+static int ZeldaOld3DSChooseWorkerLines(int height) {
+  const int min_worker_lines = 24;
+  const int max_worker_lines = height / 3;
+  int worker_lines = g_ppu_old3ds_worker_lines;
+
+  if (g_ppu_main_duration_ticks != 0 &&
+      g_ppu_system_worker.duration_ticks != 0 &&
+      g_ppu_old3ds_last_worker_lines > 0) {
+    int previous_worker_lines = g_ppu_old3ds_last_worker_lines;
+    int previous_main_lines = height - previous_worker_lines;
+    uint64 main_per_line =
+      g_ppu_main_duration_ticks / (uint64)IntMax(previous_main_lines, 1);
+    uint64 worker_per_line =
+      g_ppu_system_worker.duration_ticks /
+      (uint64)IntMax(previous_worker_lines, 1);
+
+    if (main_per_line != 0 && worker_per_line != 0) {
+      uint64 wanted =
+        (uint64)height * main_per_line / (main_per_line + worker_per_line);
+      int target = (int)wanted;
+      target = IntMin(IntMax(target, min_worker_lines), max_worker_lines);
+
+      if (target > worker_lines + 4)
+        worker_lines += 4;
+      else if (target < worker_lines - 4)
+        worker_lines -= 4;
+      else
+        worker_lines = target;
+    }
+  }
+
+  worker_lines = IntMin(IntMax(worker_lines, min_worker_lines),
+                        max_worker_lines);
+  g_ppu_old3ds_worker_lines = worker_lines;
+  g_ppu_old3ds_last_worker_lines = worker_lines;
+  return worker_lines;
+}
 #else
 void ZeldaShutdownPpuWorker(void) {
 }
@@ -508,7 +548,8 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       new_worker->first_line = main_last + 1;
       new_worker->last_line = height;
     } else {
-      main_last = height / 2;
+      int worker_lines = ZeldaOld3DSChooseWorkerLines(height);
+      main_last = height - worker_lines;
       system_worker->first_line = main_last + 1;
       system_worker->last_line = height;
     }
