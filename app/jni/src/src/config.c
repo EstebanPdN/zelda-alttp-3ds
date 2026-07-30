@@ -484,6 +484,12 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
                StringEqualsNoCase(key, "SecondScreenSwap") ||
                StringEqualsNoCase(key, "SecondScreenCrt")) {
       return true;  // read by the second-screen UI only, the engine ignores it
+    } else if (StringEqualsNoCase(key, "DisplayMode") ||
+               StringEqualsNoCase(key, "WideMode") ||
+               StringEqualsNoCase(key, "WideEdgeMode") ||
+               StringEqualsNoCase(key, "CStickMode") ||
+               StringEqualsNoCase(key, "CStickTurboMultiplier")) {
+      return true;  // 3DS runtime settings are parsed by platform_3ds.c
     }
   } else if (section == 4) {
     if (StringEqualsNoCase(key, "ItemSwitchLR")) {

@@ -297,7 +297,7 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
     "NEW 3DS" : "OLD 3DS";
   char fps_text[32];
   snprintf(fps_text, sizeof(fps_text), "FPS %d", g_3ds_visual_fps);
-  int text_w = IntMax(TinyTextWidth("VERSION 2.1", scale),
+  int text_w = IntMax(TinyTextWidth("VERSION 2.2", scale),
                       IntMax(TinyTextWidth(profile, scale),
                              TinyTextWidth(fps_text, scale)));
   int box_w = IntMin(text_w + 24 * scale, width - 16 * scale);
@@ -314,8 +314,8 @@ static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
                x, y, 2 * scale, box_h, 0xe8c260u);
   FillArgbRect(pixels, pitch, width, height,
                x + box_w - 2 * scale, y, 2 * scale, box_h, 0xe8c260u);
-  DrawTinyText(pixels, pitch, width, height, "VERSION 2.1",
-               x + (box_w - TinyTextWidth("VERSION 2.1", scale)) / 2,
+  DrawTinyText(pixels, pitch, width, height, "VERSION 2.2",
+               x + (box_w - TinyTextWidth("VERSION 2.2", scale)) / 2,
                y + 7 * scale, scale, 0xffffffu);
   DrawTinyText(pixels, pitch, width, height, profile,
                x + (box_w - TinyTextWidth(profile, scale)) / 2,
