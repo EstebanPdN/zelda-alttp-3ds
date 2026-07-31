@@ -20,6 +20,7 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 - Top screen: 400x240 gameplay.
 - Bottom screen: live map, dungeon map, gear view, item section and settings.
 - First launch extracts `zelda3_assets.dat` locally from the user's ROM.
+- ROM files can use any filename, though short names are recommended.
 - Screen menu with `Original`, `Stretch` and `Wide` display modes.
 - Turbo speed support on New 3DS.
 - Quick diagnostics: press `L + R + A` to create a dump with memory files plus
@@ -35,8 +36,13 @@ Install the CIA, then create this directory on the SD card:
 sdmc:/3ds/Zelda 3DS/
 ```
 
-Place a legally obtained USA, unheadered ROM there. The preferred filename is
-`zelda3.sfc`, but the setup also accepts other `.sfc` or `.smc` filenames.
+Place a legally obtained USA, unheadered ROM there. The ROM can use any `.sfc`
+or `.smc` filename, though short names are recommended.
+
+The port can also use certain translated ROMs, and some Spanish translations
+should work correctly. Keep the original USA ROM and the translated ROM as
+separate files in the same folder. If a translated ROM is missing some data or
+assets, the port can use the original USA version to build the missing parts.
 
 On first launch, press A to validate the ROM and extract the assets. The ROM is
 read locally and is never copied into the CIA.
