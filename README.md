@@ -15,7 +15,7 @@ No ROM or extracted game asset package is distributed in this repository. Each
 user must provide their own legally obtained USA, unheadered ROM on their own
 3DS SD card.
 
-# Support me:
+## Support me:
 https://ko-fi.com/estebanpdn
 
 ## Features
