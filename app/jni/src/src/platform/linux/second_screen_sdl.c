@@ -27,11 +27,9 @@ enum Platform3DSDisplayMode {
   kPlatform3DSDisplayStretch,
 };
 
-enum Platform3DSWideMode {
-  kPlatform3DSWideStandard,
-  kPlatform3DSWideFixed,
-  kPlatform3DSWideNormal = kPlatform3DSWideStandard,
-  kPlatform3DSWideForce = kPlatform3DSWideFixed,
+enum Platform3DSWideEdgeMode {
+  kPlatform3DSWideEdgeStandard,
+  kPlatform3DSWideEdgeFixedCamera,
 };
 
 enum Platform3DSCStickMode {
@@ -73,7 +71,7 @@ void SS_EquipSlot(int slot);
 void SS_SetWidescreen(bool on);
 bool SS_IsWidescreen(void);
 void SS_Set3DSDisplayMode(int mode);
-void SS_Set3DSWideMode(int mode);
+void SS_Set3DSWideEdgeMode(int mode);
 void SS_SetHudHidden(bool hide);
 bool SS_IsHudHidden(void);
 void SS_RequestMemoryDump(const char *dump_dir);
@@ -190,9 +188,9 @@ static bool ss_needs_rebuild;
 
 // touch rects recomputed every draw, used by the tap handler
 static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_ring_r;
-static RectFS settings_row_r[5], remap_row_r[6], remap_back_r;
+static RectFS settings_row_r[6], remap_row_r[6], remap_back_r;
 static RectFS remap_page_r;
-static RectFS screen_row_r[3], screen_back_r;
+static RectFS screen_row_r[4], screen_back_r;
 static RectFS developer_row_r[2], developer_back_r;
 
 // settings / remap state
@@ -1078,12 +1076,18 @@ static const char *display_mode_label(void) {
 #endif
 }
 
-static const char *wide_mode_label(void) {
+static const char *wide_zoom_label(void) {
 #ifdef __3DS__
-  return Platform3DS_GetWideMode() == kPlatform3DSWideFixed ?
-         "FIXED" : "STANDARD";
+  switch (Platform3DS_GetWideZoomIndex()) {
+  case 1: return "1.2X";
+  case 2: return "1.5X";
+  case 3: return "2X";
+  case 4: return "2.5X";
+  case 0:
+  default: return "1X";
+  }
 #else
-  return "STANDARD";
+  return "1X";
 #endif
 }
 
@@ -1095,20 +1099,41 @@ static void draw_screen_panel(RectFS r) {
   draw_text("BACK", screen_back_r.x + screen_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
             screen_back_r.y + screen_back_r.h / 2 - 9 * u, 2.2f * u);
 
+  const char *edge_value = "FIXED CAMERA";
+#ifdef __3DS__
+  if (Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeStandard)
+    edge_value = "STANDARD";
+#endif
   bool hud_hidden = SS_IsHudHidden();
-  static const char *const labels[3] = {"MODE", "WIDE", "TOP HUD"};
-  const char *values[3] = {
-    display_mode_label(), wide_mode_label(), hud_hidden ? "OFF" : "ON",
+  bool wide = false;
+#ifdef __3DS__
+  wide = Platform3DS_GetDisplayMode() == kPlatform3DSDisplayUltraWideMod;
+#else
+  wide = SS_IsWidescreen();
+#endif
+  static const char *const labels[4] = {
+    "DISPLAY MODE", "EDGE MODE", "ZOOM", "TOP HUD",
   };
+  const char *values[4] = {
+    display_mode_label(), edge_value, wide_zoom_label(),
+    hud_hidden ? "OFF" : "ON",
+  };
+  int rows = wide ? 4 : 3;
+  screen_row_r[2] = (RectFS){0};
   float row_h = 58 * u, gap = 14 * u;
   float y0 = r.y + 82 * u;
-  for (int i = 0; i < 3; i++) {
-    RectFS *row = &screen_row_r[i];
-    *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
+  for (int visible = 0; visible < rows; visible++) {
+    int item = !wide && visible == 2 ? 3 : visible;
+    RectFS *row = &screen_row_r[item];
+    *row = (RectFS){
+      r.x + 28 * u, y0 + visible * (row_h + gap),
+      r.w - 56 * u, row_h,
+    };
     draw_settings_row(row, false);
     float ty = row->y + row->h / 2 - 8 * u;
-    draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
-    draw_text(values[i], row->x + row->w - 16 * u - text_width(values[i], 2 * u),
+    draw_text(labels[item], row->x + 16 * u, ty, 2 * u);
+    draw_text(values[item],
+              row->x + row->w - 16 * u - text_width(values[item], 2 * u),
               ty, 2 * u);
   }
 }
@@ -1233,20 +1258,24 @@ static void draw_settings(RectFS r) {
 #else
   snprintf(turbo_value, sizeof(turbo_value), "X5");
 #endif
-  static const char *const labels[5] = {
-    "SCREEN", "TURBO SPEED", "REMAP BUTTONS", "DEVELOPER", "RESTART",
+  static const char *const labels[6] = {
+    "SCREEN", "TURBO SPEED", "REMAP BUTTONS",
+    "DEVELOPER", "RESTART", "SELECT ROM",
   };
-  const char *values[5] = {
-    "", turbo_value, "", "", "GO",
+  const char *values[6] = {
+    "", turbo_value, "", "", NULL, NULL,
   };
   float row_h = 44 * u, gap = 8 * u;
   float y0 = r.y + 55 * u;
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 6; i++) {
     RectFS *row = &settings_row_r[i];
     *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
     draw_settings_row(row, false);
     float ty = row->y + row->h / 2 - 8 * u;
     draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
+    if (!values[i]) {
+      continue;
+    }
     if (values[i][0] == 0) {
       // chevron for sub-screens
       float ax = row->x + row->w - 26 * u, ay = row->y + row->h / 2;
@@ -1599,18 +1628,29 @@ static void handle_tap(float x, float y) {
                    mode == kPlatform3DSDisplayOriginal ? "Original" :
                    mode == kPlatform3DSDisplayStretch ? "Stretch" : "Wide");
       } else if (in_rect(&screen_row_r[1], x, y)) {
-        enum Platform3DSWideMode mode = kPlatform3DSWideStandard;
+        enum Platform3DSWideEdgeMode mode = kPlatform3DSWideEdgeStandard;
 #ifdef __3DS__
-        mode = Platform3DS_GetWideMode() == kPlatform3DSWideFixed ?
-               kPlatform3DSWideStandard : kPlatform3DSWideFixed;
-        Platform3DS_SetWideMode(mode);
+        mode =
+          Platform3DS_GetWideEdgeMode() == kPlatform3DSWideEdgeFixedCamera ?
+          kPlatform3DSWideEdgeStandard : kPlatform3DSWideEdgeFixedCamera;
+        Platform3DS_SetWideEdgeMode(mode);
 #endif
-        SS_Set3DSWideMode((int)mode);
-        update_ini("[General]", "WideMode",
-                   mode == kPlatform3DSWideFixed ? "Fixed" : "Standard");
+        SS_Set3DSWideEdgeMode((int)mode);
         update_ini("[General]", "WideEdgeMode",
-                   mode == kPlatform3DSWideFixed ? "FixedCamera" : "Standard");
+                   mode == kPlatform3DSWideEdgeStandard ? "Standard" : "FixedCamera");
       } else if (in_rect(&screen_row_r[2], x, y)) {
+#ifdef __3DS__
+        if (Platform3DS_GetDisplayMode() == kPlatform3DSDisplayUltraWideMod) {
+          int zoom_index = (Platform3DS_GetWideZoomIndex() + 1) % 5;
+          Platform3DS_SetWideZoomIndex(zoom_index);
+          update_ini("[General]", "WideZoom",
+                     zoom_index == 0 ? "1x" :
+                     zoom_index == 1 ? "1.2x" :
+                     zoom_index == 2 ? "1.5x" :
+                     zoom_index == 3 ? "2x" : "2.5x");
+        }
+#endif
+      } else if (in_rect(&screen_row_r[3], x, y)) {
         bool hide = !SS_IsHudHidden();
         SS_SetHudHidden(hide);
         if (hide) { FILE *f = fopen(".ss_hidehud", "wb"); if (f) fclose(f); }
@@ -1653,6 +1693,10 @@ static void handle_tap(float x, float y) {
         developer_mode = true;
       } else if (in_rect(&settings_row_r[4], x, y)) {
         SS_RequestRestart();
+      } else if (in_rect(&settings_row_r[5], x, y)) {
+#ifdef __3DS__
+        Platform3DS_RequestRomSelection();
+#endif
       }
     }
     return;
@@ -1887,7 +1931,7 @@ static bool ensure_second_screen_worker(void) {
 }
 
 void SecondScreenSDL_BeginFrame(int logic_frames) {
-  if (!ss_enabled)
+  if (!ss_enabled || Platform3DS_IsSystemClosing())
     return;
   static uint32_t frame_no;
   frame_no++;

@@ -21,6 +21,10 @@ GITHUB_RELEASE_WORKFLOW.md
 OPTIMIZATION_PROCESS_SUMMARY.md
 Docs/
 
+# Local native build outputs.
+*.o
+app/jni/src/zelda3
+
 # Local configuration file (sdk path, etc)
 local.properties
 

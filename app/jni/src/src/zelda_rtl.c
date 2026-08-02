@@ -14,6 +14,7 @@
 #include "audio.h"
 #include "assets.h"
 #include "android_logging.h"
+#include "wide_camera.h"
 #ifdef __3DS__
 #include <3ds.h>
 #include "platform_3ds.h"
@@ -26,7 +27,7 @@ ZeldaEnv g_zenv;
 uint8 g_ram[131072];
 
 uint32 g_wanted_zelda_features;
-static bool g_widescreen_fixed_mode;
+static int g_widescreen_edge_mode;
 
 static void Startup_InitializeMemory();
 
@@ -40,14 +41,6 @@ typedef struct SimpleHdma {
 } SimpleHdma;
 static void SimpleHdma_Init(SimpleHdma *c, DmaChannel *dc);
 static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu);
-
-typedef struct FixedWideRenderState {
-  bool active;
-  uint16 visual_x;
-  uint16 bg1_hscroll;
-  uint16 bg2_hscroll;
-  int16 obj_x_offset;
-} FixedWideRenderState;
 
 static const uint8 bAdrOffsets[8][4] = {
   {0, 0, 0, 0},
@@ -159,109 +152,8 @@ static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
   c->rep_count--;
 }
 
-void ZeldaSetWidescreenFixedMode(int enabled) {
-  g_widescreen_fixed_mode = enabled != 0;
-}
-
-int ZeldaGetWidescreenFixedMode(void) {
-  return g_widescreen_fixed_mode;
-}
-
-static bool IsFixedWideOverworldRenderCandidate(void) {
-  if (!g_widescreen_fixed_mode)
-    return false;
-  if (!(enhanced_features0 & kFeatures0_WidescreenVisualFixes))
-    return false;
-  if (g_zenv.ppu->extraLeftRight == 0)
-    return false;
-  if (main_module_index != 9)
-    return false;
-  if (player_is_indoors)
-    return false;
-  return true;
-}
-
-static uint16 GetFixedWideVisualX(void) {
-  int margin = g_zenv.ppu->extraLeftRight;
-  int actual = BG2HOFS_copy2;
-  int left = ow_scroll_vars0.xstart;
-  int right = ow_scroll_vars0.xend;
-
-  if (margin <= 0 || right - left < margin * 2)
-    return (uint16)actual;
-
-  int min_visual = left + margin;
-  int max_visual = right - margin;
-  int visual = actual;
-  int dir = BYTE(overworld_screen_trans_dir_bits);
-
-  if (dir & 1) {
-    // Transitioning east/right: keep the native edge stop at transition start,
-    // then release the visual offset over the first wide margin. This avoids a
-    // hard 72 px jump from the fixed edge view into the native scroll.
-    if (actual >= right) {
-      int distance_past_edge = actual - right;
-      int keep = margin - distance_past_edge;
-      if (keep < 0)
-        keep = 0;
-      visual = actual - keep;
-    } else if (actual > max_visual) {
-      visual = max_visual;
-    }
-  } else if (dir & 2) {
-    // Transitioning west/left: symmetric release of the visual edge offset.
-    if (actual <= left) {
-      int distance_past_edge = left - actual;
-      int keep = margin - distance_past_edge;
-      if (keep < 0)
-        keep = 0;
-      visual = actual + keep;
-    } else if (actual < min_visual) {
-      visual = min_visual;
-    }
-  } else {
-    if (visual < min_visual)
-      visual = min_visual;
-    else if (visual > max_visual)
-      visual = max_visual;
-  }
-  return (uint16)visual;
-}
-
-static FixedWideRenderState BeginFixedWideRender(void) {
-  FixedWideRenderState state = { 0 };
-  state.visual_x = BG2HOFS_copy2;
-
-  if (!IsFixedWideOverworldRenderCandidate())
-    return state;
-
-  state.visual_x = GetFixedWideVisualX();
-  int delta = (int)BG2HOFS_copy2 - (int)state.visual_x;
-  if (delta == 0)
-    return state;
-
-  state.active = true;
-  state.bg1_hscroll = g_zenv.ppu->bgLayer[0].hScroll;
-  state.bg2_hscroll = g_zenv.ppu->bgLayer[1].hScroll;
-  state.obj_x_offset = g_zenv.ppu->renderObjXOffset;
-
-  g_zenv.ppu->bgLayer[0].hScroll =
-    (uint16)((int)g_zenv.ppu->bgLayer[0].hScroll - delta) & 0x3ff;
-  g_zenv.ppu->bgLayer[1].hScroll =
-    (uint16)((int)g_zenv.ppu->bgLayer[1].hScroll - delta) & 0x3ff;
-  g_zenv.ppu->renderObjXOffset = (int16)(state.obj_x_offset + delta);
-  return state;
-}
-
-static void EndFixedWideRender(const FixedWideRenderState *state) {
-  if (!state->active)
-    return;
-  g_zenv.ppu->bgLayer[0].hScroll = state->bg1_hscroll;
-  g_zenv.ppu->bgLayer[1].hScroll = state->bg2_hscroll;
-  g_zenv.ppu->renderObjXOffset = state->obj_x_offset;
-}
-
-static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
+static void ConfigurePpuSideSpace(int visual_x, bool fixed_camera,
+                                  bool horizontal_transition) {
   // Let PPU impl know about the maximum allowed extra space on the sides and bottom
   int extra_right = 0, extra_left = 0, extra_bottom = 0;
 //  printf("main %d, sub %d  (%d, %d, %d)\n", main_module_index, submodule_index, BG2HOFS_copy2, room_bounds_x.v[2 | (quadrant_fullsize_x >> 1)], quadrant_fullsize_x >> 1);
@@ -279,17 +171,34 @@ static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
       extra_bottom = 16;
     } else {
       // outdoors
-      int hscroll = use_camera_x ? camera_x : BG2HOFS_copy2;
-      extra_left = hscroll - ow_scroll_vars0.xstart;
-      extra_right = ow_scroll_vars0.xend - hscroll;
+      if (horizontal_transition) {
+        extra_left = extra_right = kPpuExtraLeftRight;
+      } else if (fixed_camera) {
+        int left = WideCamera_Unwrap16(ow_scroll_vars0.xstart, visual_x);
+        int right = WideCamera_Unwrap16(ow_scroll_vars0.xend, visual_x);
+        extra_left = IntMax(visual_x - left, 0);
+        extra_right = IntMax(right - visual_x, 0);
+      } else {
+        extra_left = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
+        extra_right = ow_scroll_vars0.xend - BG2HOFS_copy2;
+      }
       extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
     }
   } else if (mod == 7) {
     // indoors, except when the light cone is in use
     if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
       int qm = quadrant_fullsize_x >> 1;
-      extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
-      extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
+      if (horizontal_transition) {
+        extra_left = extra_right = kPpuExtraLeftRight;
+      } else if (fixed_camera) {
+        int left = WideCamera_Unwrap16(room_bounds_x.v[qm], visual_x);
+        int right = WideCamera_Unwrap16(room_bounds_x.v[qm + 2], visual_x);
+        extra_left = IntMax(visual_x - left, 0);
+        extra_right = IntMax(right - visual_x, 0);
+      } else {
+        extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
+        extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
+      }
     }
 
     int qy = quadrant_fullsize_y >> 1;
@@ -299,6 +208,312 @@ static void ConfigurePpuSideSpace(uint16 camera_x, bool use_camera_x) {
     extra_bottom = 16;
   }
   PpuSetExtraSideSpace(g_zenv.ppu, extra_left, extra_right, extra_bottom);
+}
+
+typedef struct FixedCameraTracker {
+  bool initialized;
+  bool transition_active;
+  uint8 context;
+  int direction;
+  uint16 last_logical_x;
+  int last_visual_x;
+  uint16 transition_start_x;
+  int transition_end_x;
+  int transition_distance;
+  int transition_start_visual_x;
+  int transition_end_offset;
+} FixedCameraTracker;
+
+static FixedCameraTracker g_fixed_camera_tracker;
+
+static uint8 GetFixedCameraEffectiveContext(void) {
+  int mod = main_module_index;
+  if (mod == 14)
+    mod = saved_module_for_menu;
+  if ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
+      (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
+       mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
+    mod = player_is_indoors ? 7 : 9;
+  return mod == 7 || mod == 9 ? (uint8)mod : 0;
+}
+
+void ZeldaSetWidescreenEdgeMode(int mode) {
+  int new_mode = mode == 1 ? 1 : 0;
+  if (g_widescreen_edge_mode != new_mode)
+    memset(&g_fixed_camera_tracker, 0, sizeof(g_fixed_camera_tracker));
+  g_widescreen_edge_mode = new_mode;
+}
+
+int ZeldaGetWidescreenEdgeMode(void) {
+  return g_widescreen_edge_mode;
+}
+
+int ZeldaGetWidescreenFixedCameraMargin(void) {
+  bool visual_fixes_enabled =
+    (enhanced_features0 & kFeatures0_WidescreenVisualFixes) != 0;
+#ifdef ZELDA_CAMERA_TEST
+  visual_fixes_enabled = true;
+#endif
+  uint8 context = GetFixedCameraEffectiveContext();
+  if (g_widescreen_edge_mode != 1 ||
+      !visual_fixes_enabled ||
+      !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
+      context == 0)
+    return 0;
+  if (main_module_index == 14 && submodule_index == 7 &&
+      overworld_map_state >= 4)
+    return 0;
+  if (context == 7) {
+    if (hdr_dungeon_dark_with_lantern && TS_copy != 0)
+      return 0;
+  }
+  return g_zenv.ppu->extraLeftRight;
+}
+
+typedef struct FixedCameraRenderState {
+  bool active;
+  bool uses_visual_camera;
+  bool horizontal_transition;
+  int visual_x;
+  uint16 ppu_bg1_hscroll;
+  uint16 ppu_bg2_hscroll;
+  int16 ppu_obj_x_offset;
+} FixedCameraRenderState;
+
+static uint8 GetFixedCameraContext(void) {
+  if (!ZeldaGetWidescreenFixedCameraMargin())
+    return 0;
+  return GetFixedCameraEffectiveContext();
+}
+
+static void GetFixedCameraBounds(uint8 context, int reference_x,
+                                 int *left, int *right) {
+  uint16 left_raw, right_raw;
+  if (context == 7) {
+    int qm = quadrant_fullsize_x >> 1;
+    left_raw = room_bounds_x.v[qm];
+    right_raw = room_bounds_x.v[qm + 2];
+  } else {
+    left_raw = ow_scroll_vars0.xstart;
+    right_raw = ow_scroll_vars0.xend;
+  }
+  *left = WideCamera_Unwrap16(left_raw, reference_x);
+  *right = WideCamera_Unwrap16(right_raw, reference_x);
+}
+
+static int GetFixedCameraTransitionDirection(uint8 context) {
+  if (context == 9) {
+    int direction = BYTE(overworld_screen_trans_dir_bits) & 3;
+    return direction == 1 ? 1 : direction == 2 ? -1 : 0;
+  }
+  if ((submodule_index == 1 || submodule_index == 2) &&
+      overworld_screen_transition >= 2) {
+    return overworld_screen_transition == 2 ? 1 :
+           overworld_screen_transition == 3 ? -1 : 0;
+  }
+  return 0;
+}
+
+static int GetFixedCameraTransitionEndX(uint8 context, int direction,
+                                        uint16 start_logical_x) {
+  if (context == 7) {
+    int target = direction > 0 ? left_right_scroll_target :
+                                 left_right_scroll_target_end;
+    return WideCamera_FindDungeonTransitionEnd(
+      start_logical_x, direction, target);
+  }
+
+  uint16 target = direction > 0 ? left_right_scroll_target_end :
+                                  left_right_scroll_target;
+  int end_logical_x = WideCamera_Unwrap16(target, start_logical_x);
+  if ((direction > 0 && end_logical_x <= start_logical_x) ||
+      (direction < 0 && end_logical_x >= start_logical_x))
+    return start_logical_x + direction * 256;
+  return end_logical_x;
+}
+
+static int GetFixedCameraTransitionEndOffset(uint8 context,
+                                             int end_logical_x,
+                                             int margin) {
+  int left, right;
+  if (context == 9) {
+    uint16 destination_left = overworld_offset_base_x << 3;
+    left = WideCamera_Unwrap16(destination_left, end_logical_x);
+    right = left + (BYTE(overworld_area_is_big) ? 0x300 : 0x100);
+  } else {
+    GetFixedCameraBounds(context, end_logical_x, &left, &right);
+  }
+  int end_visual_x =
+    WideCamera_ClampToBounds(end_logical_x, left, right, margin);
+  return end_logical_x - end_visual_x;
+}
+
+static int CalculateFixedCameraVisualX(uint8 context, int margin,
+                                       bool *transitioning) {
+  const uint16 logical_x = BG2HOFS_copy2;
+  int left, right;
+  GetFixedCameraBounds(context, logical_x, &left, &right);
+  int direction = GetFixedCameraTransitionDirection(context);
+  *transitioning = direction != 0;
+
+#ifdef ZELDA_CAMERA_TEST
+  bool was_transition_active = g_fixed_camera_tracker.transition_active;
+  int previous_direction = g_fixed_camera_tracker.direction;
+  uint16 previous_logical_x = g_fixed_camera_tracker.last_logical_x;
+  int previous_visual_x = g_fixed_camera_tracker.last_visual_x;
+#endif
+
+  if (!g_fixed_camera_tracker.initialized ||
+      g_fixed_camera_tracker.context != context) {
+    memset(&g_fixed_camera_tracker, 0, sizeof(g_fixed_camera_tracker));
+    g_fixed_camera_tracker.initialized = true;
+    g_fixed_camera_tracker.context = context;
+    g_fixed_camera_tracker.last_logical_x = logical_x;
+    g_fixed_camera_tracker.last_visual_x =
+      WideCamera_ClampToBounds(logical_x, left, right, margin);
+  }
+
+  int visual_x;
+  if (direction != 0) {
+#ifdef ZELDA_CAMERA_TEST
+    bool started_transition = false;
+#endif
+    if (!g_fixed_camera_tracker.transition_active ||
+        g_fixed_camera_tracker.direction != direction) {
+      int logical_step =
+        (int16)(logical_x - g_fixed_camera_tracker.last_logical_x);
+      int previous_offset =
+        logical_x - g_fixed_camera_tracker.last_visual_x;
+      bool use_previous_frame =
+        logical_step >= -16 && logical_step <= 16 &&
+        previous_offset >= -margin - 16 &&
+        previous_offset <= margin + 16;
+      g_fixed_camera_tracker.transition_start_x = use_previous_frame ?
+        g_fixed_camera_tracker.last_logical_x : logical_x;
+      g_fixed_camera_tracker.transition_start_visual_x = use_previous_frame ?
+        g_fixed_camera_tracker.last_visual_x : logical_x - direction * margin;
+      g_fixed_camera_tracker.transition_end_x =
+        GetFixedCameraTransitionEndX(
+          context, direction, g_fixed_camera_tracker.transition_start_x);
+      g_fixed_camera_tracker.transition_distance =
+        direction > 0 ?
+          g_fixed_camera_tracker.transition_end_x -
+            g_fixed_camera_tracker.transition_start_x :
+          g_fixed_camera_tracker.transition_start_x -
+            g_fixed_camera_tracker.transition_end_x;
+      if (g_fixed_camera_tracker.transition_distance <= 0)
+        g_fixed_camera_tracker.transition_distance = 256;
+      g_fixed_camera_tracker.transition_active = true;
+      g_fixed_camera_tracker.direction = direction;
+#ifdef ZELDA_CAMERA_TEST
+      started_transition = true;
+#endif
+    }
+    if (logical_x == g_fixed_camera_tracker.transition_start_x) {
+      g_fixed_camera_tracker.transition_end_offset =
+        GetFixedCameraTransitionEndOffset(
+          context, g_fixed_camera_tracker.transition_end_x, margin);
+    }
+#ifdef ZELDA_CAMERA_TEST
+    if (started_transition) {
+      fprintf(stderr,
+              "camera transition context=%u dir=%d logical=%u visual=%d "
+              "end=%d distance=%d end_offset=%d "
+              "sub=%u room=%04x bounds=%04x,%04x,%04x,%04x qm=%u "
+              "ow_base=%04x big=%u\n",
+              context, direction,
+              g_fixed_camera_tracker.transition_start_x,
+              g_fixed_camera_tracker.transition_start_visual_x,
+              g_fixed_camera_tracker.transition_end_x,
+              g_fixed_camera_tracker.transition_distance,
+              g_fixed_camera_tracker.transition_end_offset,
+              submodule_index, dungeon_room_index,
+              room_bounds_x.v[0], room_bounds_x.v[1],
+              room_bounds_x.v[2], room_bounds_x.v[3],
+              quadrant_fullsize_x >> 1,
+              overworld_offset_base_x << 3,
+              BYTE(overworld_area_is_big) != 0);
+    }
+#endif
+    visual_x = WideCamera_InterpolateTransition(
+      logical_x,
+      g_fixed_camera_tracker.transition_start_x,
+      g_fixed_camera_tracker.transition_start_visual_x,
+      g_fixed_camera_tracker.transition_end_offset,
+      direction, g_fixed_camera_tracker.transition_distance);
+  } else {
+    g_fixed_camera_tracker.transition_active = false;
+    g_fixed_camera_tracker.direction = 0;
+    visual_x = WideCamera_ClampToBounds(logical_x, left, right, margin);
+  }
+
+#ifdef ZELDA_CAMERA_TEST
+  if (direction != 0 && was_transition_active &&
+      previous_direction == direction) {
+    int logical_step = direction *
+      (int16)(logical_x - previous_logical_x);
+    int visual_step = direction * (visual_x - previous_visual_x);
+    if (logical_step >= 0 && visual_step < 0) {
+      fprintf(stderr,
+              "camera ERROR reversed during transition: context=%u "
+              "dir=%d logical=%u->%u visual=%d->%d\n",
+              context, direction, previous_logical_x, logical_x,
+              previous_visual_x, visual_x);
+    }
+  } else if (direction == 0 && was_transition_active) {
+    int exit_step = visual_x - previous_visual_x;
+    if (exit_step < 0)
+      exit_step = -exit_step;
+    if (exit_step > 4) {
+      fprintf(stderr,
+              "camera ERROR jump after transition: context=%u "
+              "logical=%u visual=%d->%d step=%d\n",
+              context, logical_x, previous_visual_x, visual_x, exit_step);
+    }
+  }
+#endif
+
+  g_fixed_camera_tracker.last_logical_x = logical_x;
+  g_fixed_camera_tracker.last_visual_x = visual_x;
+  return visual_x;
+}
+
+static FixedCameraRenderState BeginFixedCameraRender(void) {
+  FixedCameraRenderState state = {0};
+  state.visual_x = BG2HOFS_copy2;
+  int margin = ZeldaGetWidescreenFixedCameraMargin();
+  uint8 context = GetFixedCameraContext();
+  if (!margin || !context) {
+    memset(&g_fixed_camera_tracker, 0, sizeof(g_fixed_camera_tracker));
+    return state;
+  }
+
+  state.uses_visual_camera = true;
+  state.visual_x = CalculateFixedCameraVisualX(
+    context, margin, &state.horizontal_transition);
+  int delta = (int16)(BG2HOFS_copy2 - (uint16)state.visual_x);
+  if (delta == 0)
+    return state;
+
+  state.active = true;
+  state.ppu_bg1_hscroll = g_zenv.ppu->bgLayer[0].hScroll;
+  state.ppu_bg2_hscroll = g_zenv.ppu->bgLayer[1].hScroll;
+  state.ppu_obj_x_offset = g_zenv.ppu->renderObjXOffset;
+
+  g_zenv.ppu->bgLayer[0].hScroll =
+      (state.ppu_bg1_hscroll - delta) & 0x3ff;
+  g_zenv.ppu->bgLayer[1].hScroll =
+      (state.ppu_bg2_hscroll - delta) & 0x3ff;
+  g_zenv.ppu->renderObjXOffset = state.ppu_obj_x_offset + delta;
+  return state;
+}
+
+static void EndFixedCameraRender(const FixedCameraRenderState *state) {
+  if (!state->active)
+    return;
+  g_zenv.ppu->bgLayer[0].hScroll = state->ppu_bg1_hscroll;
+  g_zenv.ppu->bgLayer[1].hScroll = state->ppu_bg2_hscroll;
+  g_zenv.ppu->renderObjXOffset = state->ppu_obj_x_offset;
 }
 
 static void ZeldaDrawPpuLines(Ppu *ppu, int height,
@@ -418,11 +633,9 @@ void ZeldaShutdownPpuWorker(void) {
       continue;
     __atomic_store_n(&state->running, false, __ATOMIC_RELEASE);
     Result join_result = threadJoin(state->thread, 2000000000ull);
-#ifdef __3DS__
     if (R_FAILED(join_result))
       Platform3DS_LogRuntime("WARNING: PPU worker join timeout: 0x%08lx",
                              (unsigned long)join_result);
-#endif
     threadFree(state->thread);
     state->thread = NULL;
   }
@@ -520,9 +733,13 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       PpuSetMode7PerspectiveCorrection(g_zenv.ppu, 0, 0);
   }
 
-  FixedWideRenderState fixed_wide = BeginFixedWideRender();
-  if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240)
-    ConfigurePpuSideSpace(fixed_wide.visual_x, fixed_wide.active);
+  FixedCameraRenderState fixed_camera_state = BeginFixedCameraRender();
+
+  if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240) {
+    ConfigurePpuSideSpace(fixed_camera_state.visual_x,
+                          fixed_camera_state.uses_visual_camera,
+                          fixed_camera_state.horizontal_transition);
+  }
 
   PpuSetWindow1Ext(g_zenv.ppu, g_spotlight_ext_active ? g_spotlight_ext_left : NULL,
                    g_spotlight_ext_active ? g_spotlight_ext_right : NULL);
@@ -588,7 +805,7 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
     irq_flag = 0;
     zelda_snes_dummy_write(NMITIMEN, 0x81);
   }
-  EndFixedWideRender(&fixed_wide);
+  EndFixedCameraRender(&fixed_camera_state);
 }
 
 void HdmaSetup(uint32 addr6, uint32 addr7, uint8 transfer_unit, uint8 reg6, uint8 reg7, uint8 indirect_bank) {
@@ -1159,6 +1376,16 @@ bool ZeldaRunFrame(int inputs) {
 
   ZeldaPushApuState();
 
+#ifdef ZELDA_CAMERA_TEST
+  if (is_replay && !state_recorder.replay_mode) {
+    SaveLoadSlot(kSaveLoad_Save, 19);
+    SDL_Event event = { .type = SDL_QUIT };
+    SDL_PushEvent(&event);
+    fprintf(stderr, "camera replay completed after %u frames\n",
+            state_recorder.replay_frame_counter);
+  }
+#endif
+
   return is_replay;
 }
 
@@ -1228,6 +1455,7 @@ void SaveLoadSlot(int cmd, int which) {
 
 void SaveLoadSlot(int cmd, int which) {
   char name[128];
+  char path[256];
   SDL_RWops* rwops;
 
   if (which & 256) {
@@ -1238,7 +1466,12 @@ void SaveLoadSlot(int cmd, int which) {
     snprintf(name, sizeof(name), "saves/save%d.sav", which);
   }
 
-  rwops = SDL_RWFromFileInExternal(name, cmd != kSaveLoad_Save ? "rb" : "wb");
+#ifdef __3DS__
+  Platform3DS_FormatSavePath(name, path, sizeof(path));
+#else
+  snprintf(path, sizeof(path), "%s", name);
+#endif
+  rwops = SDL_RWFromFileInExternal(path, cmd != kSaveLoad_Save ? "rb" : "wb");
   if (rwops) {
     printf("*** %s slot %d\n",
            cmd == kSaveLoad_Save ? "Saving" : cmd == kSaveLoad_Load ? "Loading" : "Replaying", which);
@@ -1356,7 +1589,13 @@ SDL_RWops* SDL_RWFromFileInExternal(const char *filename, const char *mode) {
 #endif  // __ANDROID__
 
 void ZeldaReadSram() {
-  SDL_RWops *stream = SDL_RWFromFileInExternal("saves/sram.dat", "rb");
+  char path[256];
+#ifdef __3DS__
+  Platform3DS_FormatSavePath("saves/sram.dat", path, sizeof(path));
+#else
+  snprintf(path, sizeof(path), "%s", "saves/sram.dat");
+#endif
+  SDL_RWops *stream = SDL_RWFromFileInExternal(path, "rb");
   if (stream) {
     size_t bytesRead = SDL_RWread(stream, g_zenv.sram, 1, 8192);
     if (bytesRead != 8192) {
@@ -1381,10 +1620,25 @@ void ZeldaWriteSram() {
     fprintf(stderr, "External storage path not available.\n");
   }
 #else
-  rename("saves/sram.dat", "saves/sram.bak");
+  char old_path[256];
+  char bak_path[256];
+#ifdef __3DS__
+  Platform3DS_FormatSavePath("saves/sram.dat", old_path, sizeof(old_path));
+  Platform3DS_FormatSavePath("saves/sram.bak", bak_path, sizeof(bak_path));
+#else
+  snprintf(old_path, sizeof(old_path), "%s", "saves/sram.dat");
+  snprintf(bak_path, sizeof(bak_path), "%s", "saves/sram.bak");
+#endif
+  rename(old_path, bak_path);
 #endif
 
-  SDL_RWops *stream = SDL_RWFromFileInExternal("saves/sram.dat", "wb");
+  char path[256];
+#ifdef __3DS__
+  Platform3DS_FormatSavePath("saves/sram.dat", path, sizeof(path));
+#else
+  snprintf(path, sizeof(path), "%s", "saves/sram.dat");
+#endif
+  SDL_RWops *stream = SDL_RWFromFileInExternal(path, "wb");
   if (stream) {
     // Fill 'sram' with the data you want to write
     size_t bytesWritten = SDL_RWwrite(stream, g_zenv.sram, 1, 8192);
@@ -1396,3 +1650,6 @@ void ZeldaWriteSram() {
     fprintf(stderr, "Unable to write saves/sram.dat\n");
   }
 }
+#ifdef __3DS__
+#include "platform_3ds.h"
+#endif

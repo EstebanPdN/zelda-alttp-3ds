@@ -79,29 +79,6 @@ enum {
 static const char kWindowTitle[] = "The Legend of Zelda: A Link to the Past";
 #ifdef __3DS__
 static uint32 g_win_flags = SDL_WINDOW_FULLSCREEN;
-
-static int Old3DS_MinRenderDivisor(enum Platform3DSDisplayMode mode) {
-  switch (mode) {
-  case kPlatform3DSDisplayUltraWideMod:
-    return 1;  // render as fast as the Old 3DS CPU allows; logic stays fixed at 60 Hz
-  case kPlatform3DSDisplayOriginal:
-  case kPlatform3DSDisplayStretch:
-  default:
-    return 1;  // do not cap Old 3DS visuals at 30 FPS
-  }
-}
-
-static const char *Old3DS_DisplayModeName(enum Platform3DSDisplayMode mode) {
-  switch (mode) {
-  case kPlatform3DSDisplayOriginal:
-    return "original";
-  case kPlatform3DSDisplayUltraWideMod:
-    return "wide";
-  case kPlatform3DSDisplayStretch:
-  default:
-    return "stretch";
-  }
-}
 #else
 static uint32 g_win_flags = SDL_WINDOW_RESIZABLE;
 #endif
@@ -114,11 +91,10 @@ static int g_input1_state;
 static bool g_display_perf;
 static int g_curr_fps;
 #ifdef __3DS__
-static int g_3ds_visual_fps = 0;
-static int g_3ds_current_fps = 0;
-static int g_3ds_average_fps = 0;
-static uint32 g_3ds_visual_fps_window_start_ms = 0;
-static uint32 g_3ds_visual_fps_window_frames = 0;
+static int g_3ds_current_fps;
+static int g_3ds_average_fps;
+static uint32 g_3ds_visual_fps_window_start_ms;
+static uint32 g_3ds_visual_fps_window_frames;
 static uint32 g_3ds_average_fps_samples[20];
 static uint32 g_3ds_average_fps_sample_count;
 static uint32 g_3ds_average_fps_sample_pos;
@@ -144,9 +120,6 @@ static uint32 TicksToMicroseconds(uint64 ticks) {
 void NORETURN Die(const char *error) {
 #if defined(NDEBUG) && defined(_WIN32)
   SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kWindowTitle, error, NULL);
-#endif
-#ifdef __3DS__
-  Platform3DS_ShowFatalError(error);
 #endif
   fprintf(stderr, "Error: %s\n", error);
   exit(1);
@@ -222,124 +195,6 @@ static SDL_HitTestResult HitTestCallback(SDL_Window *win, const SDL_Point *pt, v
 }
 #endif
 
-#ifdef __3DS__
-static const uint8 *TinyGlyphRows(char ch) {
-  static const uint8 letters[26][7] = {
-    {14,17,17,31,17,17,17}, {30,17,17,30,17,17,30},
-    {14,17,16,16,16,17,14}, {30,17,17,17,17,17,30},
-    {31,16,16,30,16,16,31}, {31,16,16,30,16,16,16},
-    {14,17,16,23,17,17,14}, {17,17,17,31,17,17,17},
-    {14,4,4,4,4,4,14}, {7,2,2,2,18,18,12},
-    {17,18,20,24,20,18,17}, {16,16,16,16,16,16,31},
-    {17,27,21,21,17,17,17}, {17,25,21,19,17,17,17},
-    {14,17,17,17,17,17,14}, {30,17,17,30,16,16,16},
-    {14,17,17,17,21,18,13}, {30,17,17,30,20,18,17},
-    {15,16,16,14,1,1,30}, {31,4,4,4,4,4,4},
-    {17,17,17,17,17,17,14}, {17,17,17,17,17,10,4},
-    {17,17,17,21,21,21,10}, {17,17,10,4,10,17,17},
-    {17,17,10,4,4,4,4}, {31,1,2,4,8,16,31},
-  };
-  static const uint8 digits[10][7] = {
-    {14,17,19,21,25,17,14}, {4,12,4,4,4,4,14},
-    {14,17,1,2,4,8,31}, {30,1,1,14,1,1,30},
-    {2,6,10,18,31,2,2}, {31,16,30,1,1,17,14},
-    {6,8,16,30,17,17,14}, {31,1,2,4,8,8,8},
-    {14,17,17,14,17,17,14}, {14,17,17,15,1,2,12},
-  };
-  static const uint8 dot[7] = {0,0,0,0,0,12,12};
-  static const uint8 dash[7] = {0,0,0,31,0,0,0};
-  if (ch >= 'A' && ch <= 'Z')
-    return letters[ch - 'A'];
-  if (ch >= '0' && ch <= '9')
-    return digits[ch - '0'];
-  if (ch == '.')
-    return dot;
-  if (ch == '-')
-    return dash;
-  return NULL;
-}
-
-static void FillArgbRect(uint8 *pixels, int pitch, int width, int height,
-                         int x, int y, int w, int h, uint32 color) {
-  int x0 = IntMax(x, 0);
-  int y0 = IntMax(y, 0);
-  int x1 = IntMin(x + w, width);
-  int y1 = IntMin(y + h, height);
-  for (int yy = y0; yy < y1; yy++) {
-    uint32 *row = (uint32 *)(pixels + yy * pitch);
-    for (int xx = x0; xx < x1; xx++)
-      row[xx] = color;
-  }
-}
-
-static int TinyTextWidth(const char *text, int scale) {
-  int width = 0;
-  for (; *text; text++)
-    width += (*text == ' ' ? 4 : 6) * scale;
-  return width;
-}
-
-static void DrawTinyText(uint8 *pixels, int pitch, int width, int height,
-                         const char *text, int x, int y, int scale,
-                         uint32 color) {
-  for (; *text; text++) {
-    const uint8 *rows = TinyGlyphRows(*text);
-    if (rows) {
-      for (int yy = 0; yy < 7; yy++) {
-        for (int xx = 0; xx < 5; xx++) {
-          if (rows[yy] & (1 << (4 - xx))) {
-            FillArgbRect(pixels, pitch, width, height,
-                         x + xx * scale, y + yy * scale,
-                         scale, scale, color);
-          }
-        }
-      }
-    }
-    x += (*text == ' ' ? 4 : 6) * scale;
-  }
-}
-
-static void Draw3DSVersionOverlay(uint8 *pixels, int pitch,
-                                  int width, int height, int render_scale) {
-  if (!Platform3DS_IsVersionOverlayVisible() || !pixels)
-    return;
-  int scale = render_scale > 1 ? render_scale : 2;
-  const char *profile = Platform3DS_IsNew3DS() ?
-    "NEW 3DS" : "OLD 3DS";
-  char fps_text[32];
-  char version_text[32];
-  snprintf(fps_text, sizeof(fps_text), "FPS %d", g_3ds_visual_fps);
-  snprintf(version_text, sizeof(version_text), "VERSION %s",
-           ZELDA3_3DS_VERSION);
-  int text_w = IntMax(TinyTextWidth(version_text, scale),
-                      IntMax(TinyTextWidth(profile, scale),
-                             TinyTextWidth(fps_text, scale)));
-  int box_w = IntMin(text_w + 24 * scale, width - 16 * scale);
-  int box_h = 38 * scale;
-  int x = (width - box_w) / 2;
-  int y = (height - box_h) / 2;
-  FillArgbRect(pixels, pitch, width, height,
-               x, y, box_w, box_h, 0x000000u);
-  FillArgbRect(pixels, pitch, width, height,
-               x, y, box_w, 2 * scale, 0xe8c260u);
-  FillArgbRect(pixels, pitch, width, height,
-               x, y + box_h - 2 * scale, box_w, 2 * scale, 0xe8c260u);
-  FillArgbRect(pixels, pitch, width, height,
-               x, y, 2 * scale, box_h, 0xe8c260u);
-  FillArgbRect(pixels, pitch, width, height,
-               x + box_w - 2 * scale, y, 2 * scale, box_h, 0xe8c260u);
-  DrawTinyText(pixels, pitch, width, height, version_text,
-               x + (box_w - TinyTextWidth(version_text, scale)) / 2,
-               y + 7 * scale, scale, 0xffffffu);
-  DrawTinyText(pixels, pitch, width, height, profile,
-               x + (box_w - TinyTextWidth(profile, scale)) / 2,
-               y + 18 * scale, scale, 0xe8c260u);
-  DrawTinyText(pixels, pitch, width, height, fps_text,
-               x + (box_w - TinyTextWidth(fps_text, scale)) / 2,
-               y + 29 * scale, scale, 0xc8c8c8u);
-}
-#endif
-
 static void DrawPpuFrameWithPerf() {
   int render_scale = PpuGetCurrentRenderScale(g_zenv.ppu, g_ppu_render_flags);
   uint8 *pixel_buffer = 0;
@@ -389,10 +244,6 @@ static void DrawPpuFrameWithPerf() {
   g_3ds_last_capture_us =
     TicksToMicroseconds(SDL_GetPerformanceCounter() - section_start);
   section_start = SDL_GetPerformanceCounter();
-  Draw3DSVersionOverlay(pixel_buffer, pitch,
-                        g_snes_width * render_scale,
-                        g_snes_height * render_scale,
-                        render_scale);
 #endif
   g_renderer_funcs.EndDraw();
 #ifdef __3DS__
@@ -634,10 +485,21 @@ static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pi
 static void SdlRenderer_EndDraw() {
 
 #ifdef __3DS__
+  int focus_x = -1;
+  int focus_y = -1;
+  if ((main_module_index == 7 || main_module_index == 9) &&
+      submodule_index == 0) {
+    focus_x = (int)(uint16)(link_x_coord - BG2HOFS_copy2) + 8;
+    focus_y = (int)(uint16)(link_y_coord - BG2VOFS_copy2) + 12;
+    if (g_sdl_renderer_rect.w > 256)
+      focus_x += (g_sdl_renderer_rect.w - 256) / 2;
+  }
   Platform3DS_PresentTopFrame(g_3ds_top_pixels,
                               k3DSTopTextureWidth * 4,
                               g_sdl_renderer_rect.w,
-                              g_sdl_renderer_rect.h);
+                              g_sdl_renderer_rect.h,
+                              focus_x,
+                              focus_y);
 #else
 //  uint64 before = SDL_GetPerformanceCounter();
   SDL_UnlockTexture(g_texture);
@@ -699,11 +561,8 @@ void ZeldaSet3DSDisplayMode(int mode) {
 
   g_config.ignore_aspect_ratio = display_mode == kPlatform3DSDisplayStretch;
   g_config.extended_aspect_ratio = extra;
-  g_config.features0 &= ~ws_features;
-  if (wide)
-    g_config.features0 |= kFeatures0_WidescreenVisualFixes;
-  ZeldaSetWidescreenFixedMode(
-    wide && Platform3DS_GetWideMode() == kPlatform3DSWideFixed);
+  g_config.features0 = wide ? (g_config.features0 | ws_features) :
+                               (g_config.features0 & ~ws_features);
   g_wanted_zelda_features = g_config.features0;
   g_zenv.ppu->extraLeftRight = UintMin(extra, kPpuExtraLeftRight);
   if (!wide)
@@ -711,11 +570,6 @@ void ZeldaSet3DSDisplayMode(int mode) {
   g_snes_width = extra * 2 + 256;
   ZeldaApplyRendererSize();
   Platform3DS_SetDisplayMode(display_mode);
-}
-
-void ZeldaSet3DSWideMode(int mode) {
-  Platform3DS_SetWideMode((enum Platform3DSWideMode)mode);
-  ZeldaSet3DSDisplayMode((int)Platform3DS_GetDisplayMode());
 }
 #endif
 
@@ -735,14 +589,18 @@ int main(int argc, char** argv) {
   if (argc >= 2 && strcmp(argv[0], "--config") == 0) {
     config_file = argv[1];
     argc -= 2, argv += 2;
-  } else {
+  }
 #ifdef __3DS__
+restart_3ds_runtime:
+  if (!config_file) {
     if (!Platform3DS_PrepareStorage())
       return 0;
-#else
-    SwitchDirectory();
-#endif
   }
+#else
+  if (!config_file) {
+    SwitchDirectory();
+  }
+#endif
 
   ParseConfigFile(config_file);
 #ifdef __3DS__
@@ -758,6 +616,7 @@ int main(int argc, char** argv) {
 
   ZeldaInitialize();
 #ifdef __3DS__
+  ZeldaSetWidescreenEdgeMode(Platform3DS_GetWideEdgeMode());
   Platform3DS_LogRuntime("Game engine initialized");
 #endif
   g_zenv.ppu->extraLeftRight = UintMin(g_config.extended_aspect_ratio, kPpuExtraLeftRight);
@@ -920,12 +779,6 @@ int main(int argc, char** argv) {
   bool audiopaused = true;
 #ifdef __3DS__
   bool system_exit_requested = false;
-  int old3ds_render_divisor = 1;
-  int old3ds_render_ticks = 0;
-  int old3ds_under_budget_frames = 0;
-  int old3ds_over_budget_frames = 0;
-  enum Platform3DSDisplayMode old3ds_last_display_mode =
-    Platform3DS_GetDisplayMode();
 #endif
 
   if (g_config.autosave)
@@ -1046,7 +899,6 @@ int main(int argc, char** argv) {
         g_3ds_current_fps =
           (int)((uint64)g_3ds_visual_fps_window_frames * 1000ull /
                 (elapsed_ms ? elapsed_ms : 1));
-        g_3ds_visual_fps = g_3ds_current_fps;
         g_3ds_average_fps_samples[g_3ds_average_fps_sample_pos] =
           (uint32)g_3ds_current_fps;
         g_3ds_average_fps_sample_pos =
@@ -1065,6 +917,7 @@ int main(int argc, char** argv) {
         g_3ds_visual_fps_window_frames = 0;
       }
     }
+    last_render_counter = frame_work_start;
 
     bool turbo_held;
     int turbo_multiplier;
@@ -1091,31 +944,6 @@ int main(int argc, char** argv) {
       frameCtr++;
     }
     uint64 logic_work_ticks = SDL_GetPerformanceCounter() - frame_work_start;
-    SecondScreenSDL_BeginFrame(rendered_logic_frames);
-    if (!Platform3DS_IsNew3DS() && !Platform3DS_IsVersionOverlayVisible() &&
-        !g_turbo) {
-      enum Platform3DSDisplayMode display_mode = Platform3DS_GetDisplayMode();
-      int min_render_divisor = Old3DS_MinRenderDivisor(display_mode);
-      if (display_mode != old3ds_last_display_mode ||
-          old3ds_render_divisor < min_render_divisor) {
-        old3ds_last_display_mode = display_mode;
-        old3ds_render_divisor = min_render_divisor;
-        old3ds_render_ticks = 0;
-        old3ds_under_budget_frames = 0;
-        old3ds_over_budget_frames = 0;
-        Platform3DS_LogRuntime(
-          "Old3DS adaptive render: mode=%s divisor=%d visual_hz=%d",
-          Old3DS_DisplayModeName(display_mode), old3ds_render_divisor,
-          60 / old3ds_render_divisor);
-      }
-      old3ds_render_ticks += scheduled_logic_frames;
-      if (old3ds_render_ticks < old3ds_render_divisor) {
-        SecondScreenSDL_Update(rendered_logic_frames);
-        continue;
-      }
-      old3ds_render_ticks = 0;
-    }
-    last_render_counter = frame_work_start;
 #else
     // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
     inputs = g_input1_state;
@@ -1138,6 +966,7 @@ int main(int argc, char** argv) {
 #endif
 
 #ifdef __3DS__
+    SecondScreenSDL_BeginFrame(rendered_logic_frames);
     uint64 top_draw_start = SDL_GetPerformanceCounter();
 #endif
     DrawPpuFrameWithPerf();
@@ -1164,47 +993,6 @@ int main(int argc, char** argv) {
       (uint32)(bottom_work_ticks * 1000000ull / performance_frequency) : 0;
     uint32 total_work_us = performance_frequency != 0 ?
       (uint32)(total_work_ticks * 1000000ull / performance_frequency) : 0;
-    if (!Platform3DS_IsNew3DS() && !Platform3DS_IsVersionOverlayVisible() &&
-        !g_turbo) {
-      enum Platform3DSDisplayMode display_mode = Platform3DS_GetDisplayMode();
-      int min_render_divisor = Old3DS_MinRenderDivisor(display_mode);
-      const int max_render_divisor = 1;
-      uint32 budget_us = (uint32)old3ds_render_divisor * 16667u;
-      if (total_work_us + 1000u > budget_us) {
-        old3ds_over_budget_frames++;
-        old3ds_under_budget_frames = 0;
-      } else if ((uint64)total_work_us * 3u < (uint64)budget_us * 2u) {
-        old3ds_under_budget_frames++;
-        old3ds_over_budget_frames = 0;
-      } else {
-        old3ds_over_budget_frames = 0;
-        old3ds_under_budget_frames = 0;
-      }
-
-      if (old3ds_over_budget_frames >= 3 &&
-          old3ds_render_divisor < max_render_divisor) {
-        old3ds_render_divisor++;
-        old3ds_render_ticks = 0;
-        old3ds_over_budget_frames = 0;
-        old3ds_under_budget_frames = 0;
-        Platform3DS_LogRuntime(
-          "Old3DS adaptive render: slower mode=%s divisor=%d visual_hz=%d "
-          "last_total_us=%u",
-          Old3DS_DisplayModeName(display_mode), old3ds_render_divisor,
-          60 / old3ds_render_divisor, total_work_us);
-      } else if (old3ds_under_budget_frames >= 180 &&
-                 old3ds_render_divisor > min_render_divisor) {
-        old3ds_render_divisor--;
-        old3ds_render_ticks = 0;
-        old3ds_over_budget_frames = 0;
-        old3ds_under_budget_frames = 0;
-        Platform3DS_LogRuntime(
-          "Old3DS adaptive render: faster mode=%s divisor=%d visual_hz=%d "
-          "last_total_us=%u",
-          Old3DS_DisplayModeName(display_mode), old3ds_render_divisor,
-          60 / old3ds_render_divisor, total_work_us);
-      }
-    }
     Platform3DS_RecordFrameTiming(logic_work_us, top_draw_us,
                                   g_3ds_last_ppu_draw_us,
                                   g_3ds_last_capture_us,
@@ -1246,7 +1034,6 @@ int main(int argc, char** argv) {
 #ifdef __3DS__
     if (system_exit_requested && device)
       SDL_PauseAudioDevice(device, 1);
-    Platform3DS_LogRuntime("Shutdown: autosave");
 #endif
     HandleCommand(kKeys_Save + 0, true);
   }
@@ -1266,6 +1053,10 @@ int main(int argc, char** argv) {
   SecondScreenSDL_Shutdown();
   SDL_DestroyWindow(window);
   SDL_Quit();
+#ifdef __3DS__
+  if (Platform3DS_TakeRomSelectionRequest())
+    goto restart_3ds_runtime;
+#endif
   //SaveConfigFile();
   return 0;
 }

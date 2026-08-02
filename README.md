@@ -1,7 +1,5 @@
 # Zelda A Link to the Past 3DS
 
-![Zelda A Link to the Past 3DS running on Nintendo 3DS](Git3DS.png)
-
 Nintendo 3DS dual-screen port of Zelda3, built with help from Codex.
 
 This project is based on open-source work from:
@@ -15,24 +13,27 @@ No ROM or extracted game asset package is distributed in this repository. Each
 user must provide their own legally obtained USA, unheadered ROM on their own
 3DS SD card.
 
-## Join my Discord
-https://discord.gg/SMW49UMkw
-
-## Support me:
-https://ko-fi.com/estebanpdn
-
-## Features
+## Nintendo 3DS Features
 
 - Top screen: 400x240 gameplay.
-- Bottom screen: live map, dungeon map, gear view, item section and settings.
+- Bottom screen: 320x240 live map, dungeon map, gear view, item selection and
+  touch settings.
 - First launch extracts `zelda3_assets.dat` locally from the user's ROM.
-- ROM files can use any filename, though short names are recommended.
-- Screen menu with `Original`, `Stretch` and `Wide` display modes.
-- Turbo speed support on New 3DS.
+- Display modes: wide mod, stretched original and original aspect.
+- Turbo speed: off, x2, x3, x4 or x5.
+- New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
 - Quick diagnostics: press `L + R + A` to create a dump with memory files plus
   top and bottom screenshots.
-- Use diagnostics for any bug or issue report so I can fix problems more
-  easily.
+- PICA200/Citro2D presentation for both screens with nearest-neighbor sampling
+  and RGB565 display output.
+- Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making
+  game speed depend on when a VBlank wait returns.
+- Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
+  with persistent tile-row caches and frame-time diagnostics in quick dumps.
+- HOME Menu metadata is versioned for each build. v2.4 appears as
+  `Zelda ALttP 3DS` / `Zelda A Link to the Past 3DS v2.4`.
+- HOME Menu banner uses a lightweight CGFX 3D box model with the supplied
+  hover sound converted to a short PCM WAV.
 
 ## Installation
 
@@ -42,13 +43,8 @@ Install the CIA, then create this directory on the SD card:
 sdmc:/3ds/Zelda 3DS/
 ```
 
-Place a legally obtained USA, unheadered ROM there. The ROM can use any `.sfc`
-or `.smc` filename, though short names are recommended.
-
-The port can also use certain translated ROMs, and some Spanish translations
-should work correctly. Keep the original USA ROM and the translated ROM as
-separate files in the same folder. If a translated ROM is missing some data or
-assets, the port can use the original USA version to build the missing parts.
+Place a legally obtained USA, unheadered ROM there. The preferred filename is
+`zelda3.sfc`, but the setup also accepts other `.sfc` or `.smc` filenames.
 
 On first launch, press A to validate the ROM and extract the assets. The ROM is
 read locally and is never copied into the CIA.
@@ -69,11 +65,10 @@ Every GitHub release includes:
 - installable CIA
 - Homebrew Launcher 3DSX
 - QR code for scanning the CIA URL from FBI on a 3DS
-- clean source-code zip for that exact version
 
-Release binaries and QR images are kept on the GitHub Releases page, not in the
-repository source tree. The release page itself shows the QR code, legal notice
-and a short changelog.
+GitHub supplies automatic source-code archives for each tag.
+The release page itself shows the QR code, legal notice and a short changelog.
+Detailed development notes are preserved inside the source snapshot.
 
 Latest release:
 

@@ -14,7 +14,9 @@
 
 #include "assets.h"
 #include "config.h"
+#include "setup_audio_assets.h"
 #include "features.h"
+#include "setup_selector_assets.h"
 #include "types.h"
 #include "util.h"
 #include "zelda_rtl.h"
@@ -22,28 +24,37 @@
 extern void SecondScreenSDL_OpenDeveloperOverlay(void);
 
 static const char kStorageDirectory[] = "sdmc:/3ds/Zelda 3DS";
+static const char kProfilesDirectory[] = "profiles";
+static const char kSelectedRomFile[] = "selected_rom.ini";
+static const char kForceSelectorFile[] = "select-rom.flag";
 static const char kAssetsFilename[] = "zelda3_assets.dat";
 static const char kTemporaryAssetsFilename[] = "zelda3_assets.tmp";
 static const char kBundledPatch[] = "romfs:/zelda3_assets.bps";
 static const char kBundledConfig[] = "romfs:/zelda3.ini";
 
 static enum Platform3DSDisplayMode g_display_mode =
-  kPlatform3DSDisplayStretch;
-static enum Platform3DSWideMode g_wide_mode = kPlatform3DSWideStandard;
+  kPlatform3DSDisplayOriginal;
+static enum Platform3DSWideEdgeMode g_wide_edge_mode =
+  kPlatform3DSWideEdgeStandard;
+static int g_wide_zoom_index;
+static bool g_display_mode_auto = true;
+static bool g_wide_edge_mode_auto = true;
+static bool g_display_mode_legacy_stretch;
+static bool g_runtime_wide_edge_seen;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_quick_dump_requested;
+static bool g_rom_selection_requested;
 static aptHookCookie g_apt_hook_cookie;
 static bool g_apt_hook_registered;
 static volatile bool g_system_exit_requested;
 static volatile bool g_system_suspended;
-static bool g_irrst_initialized;
+static char g_active_save_directory[512] = "saves";
 static bool g_is_new_3ds;
 static bool g_model_detected;
+static bool g_irrst_initialized;
 static bool g_core1_time_enabled;
 static int g_core1_time_limit_percent;
-static bool g_version_overlay_visible;
-static uint64_t g_version_overlay_hide_time_ms;
 static uint64_t g_frame_timing_samples;
 static uint64_t g_top_work_total_us;
 static uint64_t g_total_work_total_us;
@@ -79,11 +90,48 @@ static C3D_Tex g_top_texture;
 static C3D_Tex g_bottom_texture;
 static Tex3DS_SubTexture g_top_subtexture;
 static Tex3DS_SubTexture g_bottom_subtexture;
+static uint16_t g_setup_top_pixels[400 * 240];
+static uint16_t g_setup_bottom_pixels[320 * 240];
+static bool g_setup_audio_initialized;
+static int16_t *g_setup_music_buffer;
+static int16_t *g_setup_move_buffer;
+static ndspWaveBuf g_setup_music_wavebuf;
+static ndspWaveBuf g_setup_move_wavebuf;
 
 enum {
   kTopTextureWidth = 512,
   kTopTextureHeight = 256,
 };
+
+static bool WriteBlob(const char *path, const void *data, size_t size);
+static bool EnsureDirectory(const char *path);
+static void MakeTimestamp(char *stamp, size_t stamp_size);
+static bool RomFileShouldBeIgnored(const char *name);
+static uint32 ReadU32LE(const uint8 *data);
+
+static void Platform3DS_DetectModel(void) {
+  if (g_model_detected)
+    return;
+  bool is_new_3ds = false;
+  if (R_SUCCEEDED(APT_CheckNew3DS(&is_new_3ds)))
+    g_is_new_3ds = is_new_3ds;
+  else
+    g_is_new_3ds = false;
+  g_model_detected = true;
+}
+
+static void Platform3DS_ApplyAutoDisplayDefaults(void) {
+  if (g_display_mode_legacy_stretch && !g_runtime_wide_edge_seen) {
+    g_display_mode_auto = true;
+    g_wide_edge_mode_auto = true;
+  }
+  if (g_display_mode_auto)
+    g_display_mode = g_is_new_3ds ? kPlatform3DSDisplayUltraWideMod :
+                                    kPlatform3DSDisplayOriginal;
+  if (g_wide_edge_mode_auto)
+    g_wide_edge_mode = g_is_new_3ds ? kPlatform3DSWideEdgeFixedCamera :
+                                      kPlatform3DSWideEdgeStandard;
+}
 
 static void LogSetup(const char *format, ...) {
   FILE *log = fopen("setup-progress.txt", "ab");
@@ -135,17 +183,6 @@ static void Platform3DS_RegisterAptHook(void) {
   g_apt_hook_registered = true;
 }
 
-static void Platform3DS_DetectModel(void) {
-  if (g_model_detected)
-    return;
-  bool is_new_3ds = false;
-  if (R_SUCCEEDED(APT_CheckNew3DS(&is_new_3ds)))
-    g_is_new_3ds = is_new_3ds;
-  else
-    g_is_new_3ds = false;
-  g_model_detected = true;
-}
-
 static bool CStickIsHeld(u32 keys) {
   if (keys & (KEY_CSTICK_UP | KEY_CSTICK_DOWN |
               KEY_CSTICK_LEFT | KEY_CSTICK_RIGHT))
@@ -162,6 +199,27 @@ static bool CStickIsHeld(u32 keys) {
 uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   hidScanInput();
   u32 keys = hidKeysHeld();
+  u32 keys_up = hidKeysUp();
+  static uint64_t old_3ds_x_hold_start_ms;
+  static bool old_3ds_x_turbo_was_active;
+  bool old_3ds_x_turbo = false;
+  bool old_3ds_x_tap = false;
+  if (!g_is_new_3ds && (keys & KEY_X)) {
+    uint64_t now_ms = osGetTime();
+    if (old_3ds_x_hold_start_ms == 0)
+      old_3ds_x_hold_start_ms = now_ms;
+    old_3ds_x_turbo = now_ms - old_3ds_x_hold_start_ms >= 1000;
+    if (old_3ds_x_turbo)
+      old_3ds_x_turbo_was_active = true;
+  } else {
+    if (!g_is_new_3ds && (keys_up & KEY_X) &&
+        old_3ds_x_hold_start_ms != 0 &&
+        !old_3ds_x_turbo_was_active &&
+        osGetTime() - old_3ds_x_hold_start_ms < 1000)
+      old_3ds_x_tap = true;
+    old_3ds_x_hold_start_ms = 0;
+    old_3ds_x_turbo_was_active = false;
+  }
   static bool quick_dump_combo_was_held;
   static bool version_combo_was_held;
   bool quick_dump_combo =
@@ -172,15 +230,8 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
 
   bool version_combo =
     (keys & (KEY_L | KEY_R | KEY_B)) == (KEY_L | KEY_R | KEY_B);
-  if (version_combo && !version_combo_was_held) {
-    g_version_overlay_visible = false;
-    g_version_overlay_hide_time_ms = 0;
+  if (version_combo && !version_combo_was_held)
     SecondScreenSDL_OpenDeveloperOverlay();
-  } else if (g_version_overlay_visible &&
-             osGetTime() >= g_version_overlay_hide_time_ms) {
-    g_version_overlay_visible = false;
-    g_version_overlay_hide_time_ms = 0;
-  }
   version_combo_was_held = version_combo;
 
   circlePosition circle;
@@ -194,14 +245,15 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   if (keys & KEY_SELECT) input |= 1u << 2;
   if (keys & KEY_START) input |= 1u << 3;
   if ((keys & KEY_A) && !quick_dump_combo) input |= 1u << 8;
-  if ((keys & KEY_B) && !g_version_overlay_visible && !version_combo)
-    input |= 1u << 0;
-  if (keys & KEY_X) input |= 1u << 9;
+  if ((keys & KEY_B) && !version_combo) input |= 1u << 0;
+  if (g_is_new_3ds ? (keys & KEY_X) : old_3ds_x_tap)
+    input |= 1u << 9;
   if (keys & KEY_Y) input |= 1u << 1;
   if ((keys & KEY_L) && !version_combo) input |= 1u << 10;
   if ((keys & KEY_R) && !version_combo) input |= 1u << 11;
   *turbo_held = g_turbo_multiplier > 0 &&
-                ((keys & (KEY_ZL | KEY_ZR)) != 0 || CStickIsHeld(keys));
+                ((keys & (KEY_ZL | KEY_ZR)) != 0 || CStickIsHeld(keys) ||
+                 old_3ds_x_turbo);
   *turbo_multiplier = g_turbo_multiplier > 0 ? g_turbo_multiplier : 1;
   return input;
 }
@@ -220,32 +272,43 @@ static char *Trim(char *text) {
 
 static void LoadRuntimeSetting(const char *key, const char *value) {
   if (strcasecmp(key, "DisplayMode") == 0) {
-    if (strcasecmp(value, "Original") == 0) {
+    g_display_mode_legacy_stretch = false;
+    if (strcasecmp(value, "Auto") == 0) {
+      g_display_mode_auto = true;
+    } else if (strcasecmp(value, "Original") == 0) {
+      g_display_mode_auto = false;
       g_display_mode = kPlatform3DSDisplayOriginal;
     } else if (strcasecmp(value, "Stretch") == 0 ||
-               strcasecmp(value, "Standard") == 0 ||
                strcasecmp(value, "UltraWideStretch") == 0) {
+      g_display_mode_auto = false;
       g_display_mode = kPlatform3DSDisplayStretch;
-    } else if (strcasecmp(value, "ForceWide") == 0 ||
-               strcasecmp(value, "Force Wide") == 0 ||
-               strcasecmp(value, "UltraWideMod") == 0) {
-      g_display_mode = kPlatform3DSDisplayUltraWideMod;
-      g_wide_mode = kPlatform3DSWideFixed;
+      g_display_mode_legacy_stretch = true;
     } else {
+      g_display_mode_auto = false;
       g_display_mode = kPlatform3DSDisplayUltraWideMod;
     }
-  } else if (strcasecmp(key, "WideMode") == 0 ||
-             strcasecmp(key, "WideEdgeMode") == 0) {
-    if (strcasecmp(value, "Fixed") == 0 ||
-        strcasecmp(value, "FixedCamera") == 0 ||
-        strcasecmp(value, "Force") == 0 ||
-        strcasecmp(value, "ForceWide") == 0 ||
-        strcasecmp(value, "LogicWide") == 0 ||
-        strcasecmp(value, "Logic") == 0 ||
-        strcasecmp(value, "ExtendedSprites") == 0)
-      g_wide_mode = kPlatform3DSWideFixed;
-    else
-      g_wide_mode = kPlatform3DSWideStandard;
+  } else if (strcasecmp(key, "WideEdgeMode") == 0) {
+    g_runtime_wide_edge_seen = true;
+    if (strcasecmp(value, "Auto") == 0) {
+      g_wide_edge_mode_auto = true;
+    } else if (strcasecmp(value, "FixedCamera") == 0) {
+      g_wide_edge_mode_auto = false;
+      g_wide_edge_mode = kPlatform3DSWideEdgeFixedCamera;
+    } else {
+      g_wide_edge_mode_auto = false;
+      g_wide_edge_mode = kPlatform3DSWideEdgeStandard;
+    }
+  } else if (strcasecmp(key, "WideZoom") == 0) {
+    int zoom_index = 0;
+    if (strcasecmp(value, "1.2") == 0 || strcasecmp(value, "1.2x") == 0)
+      zoom_index = 1;
+    else if (strcasecmp(value, "1.5") == 0 || strcasecmp(value, "1.5x") == 0)
+      zoom_index = 2;
+    else if (strcasecmp(value, "2") == 0 || strcasecmp(value, "2x") == 0)
+      zoom_index = 3;
+    else if (strcasecmp(value, "2.5") == 0 || strcasecmp(value, "2.5x") == 0)
+      zoom_index = 4;
+    g_wide_zoom_index = zoom_index;
   } else if (strcasecmp(key, "CStickMode") == 0) {
     if (strcasecmp(value, "Disabled") == 0 ||
         strcasecmp(value, "Off") == 0) {
@@ -271,9 +334,15 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
 }
 
 void Platform3DS_LoadRuntimeSettings(void) {
+  g_display_mode_auto = true;
+  g_wide_edge_mode_auto = true;
+  g_display_mode_legacy_stretch = false;
+  g_runtime_wide_edge_seen = false;
   FILE *file = fopen("zelda3.ini", "rb");
-  if (!file)
+  if (!file) {
+    Platform3DS_ApplyAutoDisplayDefaults();
     return;
+  }
   bool in_general = false;
   char line[256];
   while (fgets(line, sizeof(line), file)) {
@@ -293,6 +362,7 @@ void Platform3DS_LoadRuntimeSettings(void) {
     LoadRuntimeSetting(Trim(text), Trim(equals + 1));
   }
   fclose(file);
+  Platform3DS_ApplyAutoDisplayDefaults();
 }
 
 enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void) {
@@ -300,45 +370,79 @@ enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void) {
 }
 
 void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode) {
-  Platform3DS_DetectModel();
   if (mode > kPlatform3DSDisplayStretch)
     mode = kPlatform3DSDisplayUltraWideMod;
+  g_display_mode_auto = false;
+  g_display_mode_legacy_stretch = false;
   g_display_mode = mode;
-  ZeldaSetWidescreenFixedMode(
-    g_display_mode == kPlatform3DSDisplayUltraWideMod &&
-    g_wide_mode == kPlatform3DSWideFixed);
   Platform3DS_LogRuntime("Display mode set: %d", (int)g_display_mode);
 }
 
-bool Platform3DS_IsNew3DS(void) {
-  Platform3DS_DetectModel();
-  return g_is_new_3ds;
+enum Platform3DSWideEdgeMode Platform3DS_GetWideEdgeMode(void) {
+  return g_wide_edge_mode;
 }
 
-bool Platform3DS_CanUseCore1PpuWorker(void) {
-  return g_core1_time_enabled && g_core1_time_limit_percent > 0;
+void Platform3DS_SetWideEdgeMode(enum Platform3DSWideEdgeMode mode) {
+  if (mode > kPlatform3DSWideEdgeFixedCamera)
+    mode = kPlatform3DSWideEdgeFixedCamera;
+  g_wide_edge_mode_auto = false;
+  g_wide_edge_mode = mode;
+  ZeldaSetWidescreenEdgeMode((int)g_wide_edge_mode);
+  Platform3DS_LogRuntime("Wide edge mode set: %d", (int)g_wide_edge_mode);
 }
 
-bool Platform3DS_IsVersionOverlayVisible(void) {
-  g_version_overlay_visible = false;
-  g_version_overlay_hide_time_ms = 0;
-  return false;
+int Platform3DS_GetWideZoomIndex(void) {
+  return g_wide_zoom_index;
 }
 
-enum Platform3DSWideMode Platform3DS_GetWideMode(void) {
-  return g_wide_mode;
+void Platform3DS_SetWideZoomIndex(int zoom_index) {
+  if (zoom_index < 0)
+    zoom_index = 0;
+  if (zoom_index > 4)
+    zoom_index = 4;
+  g_wide_zoom_index = zoom_index;
+  Platform3DS_LogRuntime("Wide zoom set: %d", g_wide_zoom_index);
 }
 
-void Platform3DS_SetWideMode(enum Platform3DSWideMode mode) {
-  if (mode > kPlatform3DSWideFixed)
-    mode = kPlatform3DSWideStandard;
-  g_wide_mode = mode;
-  g_config.features0 &= ~kFeatures0_ExtendScreen64;
-  ZeldaSetWidescreenFixedMode(
-    g_display_mode == kPlatform3DSDisplayUltraWideMod &&
-    g_wide_mode == kPlatform3DSWideFixed);
-  g_wanted_zelda_features = g_config.features0;
-  Platform3DS_LogRuntime("Wide mode set: %d", (int)g_wide_mode);
+enum Platform3DSCStickMode Platform3DS_GetCStickMode(void) {
+  return g_cstick_mode;
+}
+
+void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode) {
+  if (mode > kPlatform3DSCStickDisabled)
+    mode = kPlatform3DSCStickTurbo;
+  g_cstick_mode = mode;
+  Platform3DS_LogRuntime("C-stick mode set: %d", (int)g_cstick_mode);
+}
+
+int Platform3DS_GetTurboMultiplier(void) {
+  return g_turbo_multiplier;
+}
+
+bool Platform3DS_TakeQuickDumpRequest(void) {
+  bool requested = g_quick_dump_requested;
+  g_quick_dump_requested = false;
+  return requested;
+}
+
+void Platform3DS_RequestRomSelection(void) {
+  Platform3DS_BlankScreens();
+  FILE *file = fopen("sdmc:/3ds/Zelda 3DS/select-rom.flag", "wb");
+  if (file) {
+    fputs("1\n", file);
+    fclose(file);
+  }
+  g_rom_selection_requested = true;
+  g_system_exit_requested = true;
+  Platform3DS_LogRuntime("ROM selector requested from settings");
+}
+
+bool Platform3DS_TakeRomSelectionRequest(void) {
+  bool requested = g_rom_selection_requested;
+  g_rom_selection_requested = false;
+  if (requested)
+    g_system_exit_requested = false;
+  return requested;
 }
 
 bool Platform3DS_ShouldExit(void) {
@@ -363,29 +467,40 @@ bool Platform3DS_ShouldExit(void) {
   return false;
 }
 
+void Platform3DS_BlankScreens(void) {
+  if (!g_gpu_presenter_initialized)
+    return;
+  if (g_gpu_frame_active) {
+    C3D_FrameEnd(0);
+    g_gpu_frame_active = false;
+  }
+  for (int i = 0; i < 3; i++) {
+    if (!C3D_FrameBegin(0))
+      return;
+    C2D_TargetClear(g_top_target, C2D_Color32(0, 0, 0, 255));
+    C2D_SceneBegin(g_top_target);
+    C2D_TargetClear(g_bottom_target, C2D_Color32(0, 0, 0, 255));
+    C2D_SceneBegin(g_bottom_target);
+    C3D_FrameEnd(0);
+    gspWaitForVBlank();
+  }
+}
+
 bool Platform3DS_IsSystemClosing(void) {
   return g_system_exit_requested || aptShouldClose();
 }
 
-enum Platform3DSCStickMode Platform3DS_GetCStickMode(void) {
-  return g_cstick_mode;
+bool Platform3DS_IsNew3DS(void) {
+  Platform3DS_DetectModel();
+  return g_is_new_3ds;
 }
 
-void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode) {
-  if (mode > kPlatform3DSCStickDisabled)
-    mode = kPlatform3DSCStickTurbo;
-  g_cstick_mode = mode;
-  Platform3DS_LogRuntime("C-stick mode set: %d", (int)g_cstick_mode);
+bool Platform3DS_CanUseCore1PpuWorker(void) {
+  return g_core1_time_enabled && g_core1_time_limit_percent > 0;
 }
 
-int Platform3DS_GetTurboMultiplier(void) {
-  return g_turbo_multiplier;
-}
-
-bool Platform3DS_TakeQuickDumpRequest(void) {
-  bool requested = g_quick_dump_requested;
-  g_quick_dump_requested = false;
-  return requested;
+bool Platform3DS_IsVersionOverlayVisible(void) {
+  return false;
 }
 
 void Platform3DS_SetTurboMultiplier(int multiplier) {
@@ -411,16 +526,10 @@ bool Platform3DS_InitTopPresenter(void) {
   aptSetSleepAllowed(true);
 
   // Reserve part of the system core for a parallel PPU segment.
-  //
-  // Some systems accept the APT call but report 0% for small requests. Try the
-  // libctru/homebrew maximum first and fall back until APT gives us a real,
-  // non-zero budget. If all requests become 0%, Core 1 is not usable and the
-  // renderer must not create a worker there.
   const u32 core1_candidates[] = {80, 70, 50, 30};
   g_core1_time_enabled = false;
   g_core1_time_limit_percent = 0;
-  for (size_t i = 0; i < sizeof(core1_candidates) / sizeof(core1_candidates[0]);
-       i++) {
+  for (size_t i = 0; i < countof(core1_candidates); i++) {
     Result set_result = APT_SetAppCpuTimeLimit(core1_candidates[i]);
     if (R_SUCCEEDED(set_result)) {
       u32 actual_percent = 0;
@@ -430,12 +539,11 @@ bool Platform3DS_InitTopPresenter(void) {
         (unsigned long)core1_candidates[i],
         (unsigned long)actual_percent,
         (unsigned long)get_result);
-      if (actual_percent > 0) {
+      if (R_SUCCEEDED(get_result) && actual_percent > 0) {
         g_core1_time_limit_percent = (int)actual_percent;
         g_core1_time_enabled = true;
         break;
       }
-      g_core1_time_limit_percent = 0;
     } else {
       Platform3DS_LogRuntime(
         "Core 1 PPU budget request failed: wanted=%lu%% result=0x%08lx",
@@ -619,7 +727,8 @@ static void ConfigureArgbTextureEnv(void) {
 }
 
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
-                                 int width, int height) {
+                                 int width, int height,
+                                 int focus_x, int focus_y) {
   if (!g_gpu_presenter_initialized || !pixels ||
       pitch != kTopTextureWidth * 4 ||
       width <= 0 || width > kTopTextureWidth ||
@@ -643,17 +752,42 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
 
   const bool stretch = g_display_mode == kPlatform3DSDisplayStretch;
+  const bool wide = g_display_mode == kPlatform3DSDisplayUltraWideMod;
+  static const float zoom_values[5] = { 1.0f, 1.2f, 1.5f, 2.0f, 2.5f };
+  float zoom = wide ? zoom_values[g_wide_zoom_index] : 1.0f;
+  float source_width = (float)width / zoom;
+  float source_height = (float)height / zoom;
+  if (source_width < 1.0f)
+    source_width = 1.0f;
+  if (source_height < 1.0f)
+    source_height = 1.0f;
+  float source_left = ((float)width - source_width) * 0.5f;
+  float source_top = ((float)height - source_height) * 0.5f;
+  if (wide && g_wide_zoom_index > 0 &&
+      focus_x >= 0 && focus_x < width &&
+      focus_y >= 0 && focus_y < height) {
+    source_left = (float)focus_x - source_width * 0.5f;
+    source_top = (float)focus_y - source_height * 0.5f;
+    if (source_left < 0.0f)
+      source_left = 0.0f;
+    if (source_top < 0.0f)
+      source_top = 0.0f;
+    if (source_left + source_width > (float)width)
+      source_left = (float)width - source_width;
+    if (source_top + source_height > (float)height)
+      source_top = (float)height - source_height;
+  }
   const float draw_width = stretch ? (float)GSP_SCREEN_HEIGHT_TOP :
                                      (float)width;
-  const float draw_height =
-    height < GSP_SCREEN_WIDTH ? (float)height : (float)GSP_SCREEN_WIDTH;
+  const float draw_height = (stretch || wide) ? (float)GSP_SCREEN_WIDTH :
+    (height < GSP_SCREEN_WIDTH ? (float)height : (float)GSP_SCREEN_WIDTH);
   g_top_subtexture = (Tex3DS_SubTexture){
-    .width = (u16)width,
-    .height = (u16)height,
-    .left = 0.0f,
-    .top = 1.0f,
-    .right = (float)width / kTopTextureWidth,
-    .bottom = 1.0f - (float)height / kTopTextureHeight,
+    .width = (u16)source_width,
+    .height = (u16)source_height,
+    .left = source_left / kTopTextureWidth,
+    .top = 1.0f - source_top / kTopTextureHeight,
+    .right = (source_left + source_width) / kTopTextureWidth,
+    .bottom = 1.0f - (source_top + source_height) / kTopTextureHeight,
   };
   C2D_Image image = {
     .tex = &g_top_texture,
@@ -679,18 +813,11 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
 
 void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
                                     int width, int height) {
-  if (!pixels || pitch != kTopTextureWidth * 4 ||
+  if (!g_gpu_frame_active || !pixels ||
+      pitch != kTopTextureWidth * 4 ||
       width <= 0 || width > kTopTextureWidth ||
       height <= 0 || height > kTopTextureHeight)
     return;
-
-  bool bottom_only_frame = false;
-  if (!g_gpu_frame_active) {
-    if (!C3D_FrameBegin(0))
-      return;
-    g_gpu_frame_active = true;
-    bottom_only_frame = true;
-  }
 
   GSPGPU_FlushDataCache(pixels,
                         kTopTextureWidth * kTopTextureHeight * 4);
@@ -732,8 +859,6 @@ void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
   C2D_SceneBegin(g_bottom_target);
   C2D_DrawImage(image, &params, NULL);
   ConfigureArgbTextureEnv();
-  if (bottom_only_frame)
-    Platform3DS_EndFrame();
 }
 
 void Platform3DS_EndFrame(void) {
@@ -857,21 +982,73 @@ static bool CopyFileIfMissing(const char *source, const char *destination) {
   return success;
 }
 
-static bool AssetsFileLooksValid(const char *path) {
-  FILE *file = fopen(path, "rb");
-  if (!file)
+static bool CopyFileReplacing(const char *source, const char *destination) {
+  FILE *input = fopen(source, "rb");
+  if (!input)
+    return false;
+  char temporary[512];
+  snprintf(temporary, sizeof(temporary), "%s.tmp", destination);
+  FILE *output = fopen(temporary, "wb");
+  if (!output) {
+    fclose(input);
+    return false;
+  }
+
+  bool success = true;
+  char buffer[4096];
+  size_t count;
+  while ((count = fread(buffer, 1, sizeof(buffer), input)) != 0) {
+    if (fwrite(buffer, 1, count, output) != count) {
+      success = false;
+      break;
+    }
+  }
+  if (ferror(input))
+    success = false;
+  if (fclose(output) != 0)
+    success = false;
+  fclose(input);
+  if (!success) {
+    remove(temporary);
+    return false;
+  }
+  remove(destination);
+  if (rename(temporary, destination) != 0) {
+    remove(temporary);
+    return false;
+  }
+  return true;
+}
+
+static bool AssetsBlobLooksValid(const uint8 *data, size_t size) {
+  if (size < 88)
+    return false;
+  static const char signature[] = { kAssets_Sig };
+  uint32 count = ReadU32LE(data + 80);
+  uint32 names_size = ReadU32LE(data + 84);
+  if (memcmp(data, signature, sizeof(signature)) != 0 ||
+      count != kNumberOfAssets ||
+      size < 88 + count * 4 + names_size)
     return false;
 
-  uint8 header[88];
-  bool valid = fread(header, 1, sizeof(header), file) == sizeof(header);
-  if (valid) {
-    static const char signature[] = { kAssets_Sig };
-    uint32 count;
-    memcpy(&count, header + 80, sizeof(count));
-    valid = memcmp(header, signature, sizeof(signature)) == 0 &&
-            count == kNumberOfAssets;
+  size_t offset = 88 + count * 4 + names_size;
+  for (uint32 i = 0; i < count; i++) {
+    uint32 asset_size = ReadU32LE(data + 88 + i * 4);
+    offset = (offset + 3) & ~3;
+    if (offset + asset_size > size)
+      return false;
+    offset += asset_size;
   }
-  fclose(file);
+  return true;
+}
+
+static bool AssetsFileLooksValid(const char *path) {
+  size_t size = 0;
+  uint8 *data = ReadWholeFile(path, &size);
+  if (!data)
+    return false;
+  bool valid = AssetsBlobLooksValid(data, size);
+  free(data);
   return valid;
 }
 
@@ -896,6 +1073,7 @@ static bool FindRom(char *path, size_t path_size) {
   while ((entry = readdir(directory)) != NULL) {
     if ((HasExtension(entry->d_name, ".sfc") ||
          HasExtension(entry->d_name, ".smc")) &&
+        !RomFileShouldBeIgnored(entry->d_name) &&
         IsRegularFile(entry->d_name)) {
       snprintf(path, path_size, "%s", entry->d_name);
       found = true;
@@ -906,27 +1084,215 @@ static bool FindRom(char *path, size_t path_size) {
   return found;
 }
 
+typedef struct RomEntry {
+  char filename[256];
+  char profile[320];
+  uint32_t hash;
+} RomEntry;
+
+static RomEntry g_rom_entries[64];
+
+static uint32_t HashRomFile(const char *path) {
+  FILE *file = fopen(path, "rb");
+  if (!file)
+    return 0;
+  uint32_t hash = 2166136261u;
+  uint8_t buffer[4096];
+  size_t count;
+  while ((count = fread(buffer, 1, sizeof(buffer), file)) != 0) {
+    for (size_t i = 0; i < count; i++) {
+      hash ^= buffer[i];
+      hash *= 16777619u;
+    }
+  }
+  fclose(file);
+  return hash ? hash : 1;
+}
+
+static void SanitizeProfileName(const char *filename, char *out,
+                                size_t out_size) {
+  size_t j = 0;
+  for (size_t i = 0; filename[i] && j + 1 < out_size; i++) {
+    char c = filename[i];
+    if (c == '.')
+      break;
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') || c == '-' || c == '_') {
+      out[j++] = c;
+    } else if (c == ' ' && j > 0 && out[j - 1] != '-') {
+      out[j++] = '-';
+    }
+  }
+  while (j > 0 && out[j - 1] == '-')
+    j--;
+  if (j == 0 && out_size > 1) {
+    out[j++] = 'r';
+    out[j++] = 'o';
+    out[j++] = 'm';
+  }
+  out[j] = 0;
+}
+
+static void MakeProfilePath(const char *filename, uint32_t hash,
+                            char *out, size_t out_size) {
+  char clean[128];
+  SanitizeProfileName(filename, clean, sizeof(clean));
+  snprintf(out, out_size, "%s/%s-%08lx",
+           kProfilesDirectory, clean, (unsigned long)hash);
+}
+
+static bool RomFileShouldBeIgnored(const char *name) {
+  return strncmp(name, "._", 2) == 0;
+}
+
+static int ScanRoms(RomEntry *roms, int max_roms) {
+  DIR *directory = opendir(".");
+  if (!directory)
+    return 0;
+  int count = 0;
+  struct dirent *entry;
+  while ((entry = readdir(directory)) != NULL && count < max_roms) {
+    if (RomFileShouldBeIgnored(entry->d_name) ||
+        !(HasExtension(entry->d_name, ".sfc") ||
+          HasExtension(entry->d_name, ".smc")) ||
+        !IsRegularFile(entry->d_name))
+      continue;
+    snprintf(roms[count].filename, sizeof(roms[count].filename),
+             "%s", entry->d_name);
+    roms[count].hash = HashRomFile(entry->d_name);
+    MakeProfilePath(roms[count].filename, roms[count].hash,
+                    roms[count].profile, sizeof(roms[count].profile));
+    count++;
+  }
+  closedir(directory);
+  return count;
+}
+
+static void SetupAudioStop(void) {
+  if (!g_setup_audio_initialized)
+    return;
+  ndspChnWaveBufClear(0);
+  ndspChnWaveBufClear(1);
+  ndspExit();
+  g_setup_audio_initialized = false;
+  if (g_setup_music_buffer) {
+    linearFree(g_setup_music_buffer);
+    g_setup_music_buffer = NULL;
+  }
+  if (g_setup_move_buffer) {
+    linearFree(g_setup_move_buffer);
+    g_setup_move_buffer = NULL;
+  }
+}
+
+static void SetupAudioStart(void) {
+  if (g_setup_audio_initialized)
+    return;
+  if (R_FAILED(ndspInit())) {
+    LogSetup("Setup audio unavailable");
+    return;
+  }
+  g_setup_audio_initialized = true;
+  size_t music_size = sizeof(kSetupMusicSamples);
+  size_t move_size = sizeof(kSetupMoveSamples);
+  g_setup_music_buffer = (int16_t *)linearAlloc(music_size);
+  g_setup_move_buffer = (int16_t *)linearAlloc(move_size);
+  if (!g_setup_music_buffer || !g_setup_move_buffer) {
+    LogSetup("Setup audio allocation failed");
+    SetupAudioStop();
+    return;
+  }
+  memcpy(g_setup_music_buffer, kSetupMusicSamples, music_size);
+  memcpy(g_setup_move_buffer, kSetupMoveSamples, move_size);
+  DSP_FlushDataCache(g_setup_music_buffer, music_size);
+  DSP_FlushDataCache(g_setup_move_buffer, move_size);
+
+  ndspSetOutputMode(NDSP_OUTPUT_MONO);
+  ndspSetMasterVol(0.75f);
+  for (int channel = 0; channel < 2; channel++) {
+    float mix[12] = {0};
+    mix[0] = channel == 0 ? 0.55f : 0.75f;
+    mix[1] = channel == 0 ? 0.55f : 0.75f;
+    ndspChnReset(channel);
+    ndspChnSetInterp(channel, NDSP_INTERP_LINEAR);
+    ndspChnSetRate(channel, (float)kSetupAudioRate);
+    ndspChnSetFormat(channel, NDSP_FORMAT_MONO_PCM16);
+    ndspChnSetMix(channel, mix);
+  }
+
+  memset(&g_setup_music_wavebuf, 0, sizeof(g_setup_music_wavebuf));
+  g_setup_music_wavebuf.data_pcm16 = g_setup_music_buffer;
+  g_setup_music_wavebuf.nsamples = kSetupMusicSampleCount;
+  g_setup_music_wavebuf.looping = true;
+  ndspChnWaveBufAdd(0, &g_setup_music_wavebuf);
+  LogSetup("Setup audio started");
+}
+
+static void SetupAudioPlayMove(void) {
+  if (!g_setup_audio_initialized || !g_setup_move_buffer)
+    return;
+  ndspChnWaveBufClear(1);
+  memset(&g_setup_move_wavebuf, 0, sizeof(g_setup_move_wavebuf));
+  g_setup_move_wavebuf.data_pcm16 = g_setup_move_buffer;
+  g_setup_move_wavebuf.nsamples = kSetupMoveSampleCount;
+  g_setup_move_wavebuf.looping = false;
+  ndspChnWaveBufAdd(1, &g_setup_move_wavebuf);
+}
+
+static void PresentSetupConsole(void);
+
 static void BeginSetupConsole(void) {
   if (g_setup_console_active)
     return;
   gfxInitDefault();
-  consoleInit(GFX_TOP, NULL);
-  consoleClear();
+  gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);
+  gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
   aptSetHomeAllowed(true);
   aptSetSleepAllowed(true);
+  consoleInit(GFX_TOP, NULL);
+  consoleClear();
+  memset(g_setup_top_pixels, 0, sizeof(g_setup_top_pixels));
+  memset(g_setup_bottom_pixels, 0, sizeof(g_setup_bottom_pixels));
   g_setup_console_active = true;
+  PresentSetupConsole();
+  PresentSetupConsole();
 }
 
 static void PresentSetupConsole(void) {
+  u16 fb_w = 0, fb_h = 0;
+  uint16_t *top =
+    (uint16_t *)gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &fb_w, &fb_h);
+  if (top) {
+    for (int x = 0; x < 400; x++) {
+      for (int y = 0; y < 240; y++)
+        top[x * 240 + (239 - y)] = g_setup_top_pixels[y * 400 + x];
+    }
+  }
+  uint16_t *bottom =
+    (uint16_t *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, &fb_w, &fb_h);
+  if (bottom) {
+    for (int x = 0; x < 320; x++) {
+      for (int y = 0; y < 240; y++)
+        bottom[x * 240 + (239 - y)] = g_setup_bottom_pixels[y * 320 + x];
+    }
+  }
   gfxFlushBuffers();
   gfxSwapBuffers();
   gspWaitForVBlank();
+}
+
+static void PresentSetupStable(void (*draw)(void *context), void *context) {
+  draw(context);
+  PresentSetupConsole();
+  draw(context);
+  PresentSetupConsole();
 }
 
 static void EndSetupConsole(void) {
   if (!g_setup_console_active)
     return;
   PresentSetupConsole();
+  SetupAudioStop();
   gfxExit();
   g_setup_console_active = false;
 }
@@ -942,17 +1308,399 @@ static u32 WaitForButtons(u32 accepted) {
   return KEY_B;
 }
 
+static bool SaveRgb565FramebufferBmp(const char *path, gfxScreen_t screen) {
+  const int width = screen == GFX_TOP ? 400 : 320;
+  const int height = 240;
+  u16 fb_w = 0, fb_h = 0;
+  uint16_t *fb =
+    (uint16_t *)gfxGetFramebuffer(screen, GFX_LEFT, &fb_w, &fb_h);
+  if (!fb)
+    return false;
+  (void)fb_w;
+  (void)fb_h;
+
+  FILE *file = fopen(path, "wb");
+  if (!file)
+    return false;
+  int row_size = (width * 3 + 3) & ~3;
+  uint32_t file_size = 54u + (uint32_t)row_size * (uint32_t)height;
+  uint8_t header[54] = {
+    'B', 'M',
+    (uint8_t)file_size, (uint8_t)(file_size >> 8),
+    (uint8_t)(file_size >> 16), (uint8_t)(file_size >> 24),
+    0, 0, 0, 0, 54, 0, 0, 0,
+    40, 0, 0, 0,
+    (uint8_t)width, (uint8_t)(width >> 8),
+    (uint8_t)(width >> 16), (uint8_t)(width >> 24),
+    (uint8_t)height, (uint8_t)(height >> 8),
+    (uint8_t)(height >> 16), (uint8_t)(height >> 24),
+    1, 0, 24, 0,
+  };
+  bool ok = fwrite(header, 1, sizeof(header), file) == sizeof(header);
+  uint8_t *row = malloc((size_t)row_size);
+  if (!row)
+    ok = false;
+  for (int y = height - 1; ok && y >= 0; y--) {
+    memset(row, 0, (size_t)row_size);
+    for (int x = 0; x < width; x++) {
+      uint16_t color = fb[x * height + (height - 1 - y)];
+      row[x * 3 + 0] = (uint8_t)((color & 31) * 255 / 31);
+      row[x * 3 + 1] = (uint8_t)(((color >> 5) & 63) * 255 / 63);
+      row[x * 3 + 2] = (uint8_t)(((color >> 11) & 31) * 255 / 31);
+    }
+    ok = fwrite(row, 1, (size_t)row_size, file) == (size_t)row_size;
+  }
+  free(row);
+  if (fclose(file) != 0)
+    ok = false;
+  if (!ok)
+    remove(path);
+  return ok;
+}
+
+static void CreateSetupDump(const char *screen_name) {
+  char directory[192];
+  char stamp[32];
+  MakeTimestamp(stamp, sizeof(stamp));
+  EnsureDirectory("dumps");
+  snprintf(directory, sizeof(directory), "dumps/setup-%s", stamp);
+  if (!EnsureDirectory(directory))
+    return;
+  char path[256];
+  snprintf(path, sizeof(path), "%s/info.txt", directory);
+  FILE *info = fopen(path, "wb");
+  if (info) {
+    fprintf(info, "Zelda 3DS v%s setup dump\n", ZELDA3_3DS_VERSION);
+    fprintf(info, "Screen: %s\n", screen_name ? screen_name : "unknown");
+    fprintf(info, "Working directory: %s\n", kStorageDirectory);
+    fclose(info);
+  }
+  snprintf(path, sizeof(path), "%s/top-framebuffer-rgb565.bin", directory);
+  u16 width = 0, height = 0;
+  u8 *top = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &width, &height);
+  if (top) {
+    WriteBlob(path, top, (size_t)width * height * 2);
+    snprintf(path, sizeof(path), "%s/top.bmp", directory);
+    SaveRgb565FramebufferBmp(path, GFX_TOP);
+  }
+  snprintf(path, sizeof(path), "%s/bottom-framebuffer-rgb565.bin", directory);
+  u8 *bottom = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, &width, &height);
+  if (bottom) {
+    WriteBlob(path, bottom, (size_t)width * height * 2);
+    snprintf(path, sizeof(path), "%s/bottom.bmp", directory);
+    SaveRgb565FramebufferBmp(path, GFX_BOTTOM);
+  }
+}
+
+static u32 WaitForSetupButtons(u32 accepted, const char *screen_name) {
+  static bool dump_combo_was_held;
+  while (aptMainLoop()) {
+    hidScanInput();
+    u32 held = hidKeysHeld();
+    u32 down = hidKeysDown();
+    bool dump_combo =
+      (held & (KEY_L | KEY_R | KEY_A)) == (KEY_L | KEY_R | KEY_A);
+    if (dump_combo && !dump_combo_was_held)
+      CreateSetupDump(screen_name);
+    dump_combo_was_held = dump_combo;
+    if (down & accepted)
+      return down & accepted;
+    gspWaitForVBlank();
+  }
+  return KEY_B;
+}
+
+static uint16_t SetupRgb565(int r, int g, int b) {
+  return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+static void SetupPutPixel(gfxScreen_t screen, int x, int y, uint16_t color) {
+  const int logical_w = screen == GFX_TOP ? 400 : 320;
+  const int logical_h = 240;
+  if (x < 0 || y < 0 || x >= logical_w || y >= logical_h)
+    return;
+  if (screen == GFX_TOP)
+    g_setup_top_pixels[y * logical_w + x] = color;
+  else
+    g_setup_bottom_pixels[y * logical_w + x] = color;
+}
+
+static void SetupFillRect(gfxScreen_t screen, int x, int y,
+                          int w, int h, uint16_t color) {
+  for (int yy = y; yy < y + h; yy++)
+    for (int xx = x; xx < x + w; xx++)
+      SetupPutPixel(screen, xx, yy, color);
+}
+
+static void SetupDrawRgb565Image(gfxScreen_t screen, int x, int y,
+                                 int w, int h,
+                                 const uint16_t *pixels) {
+  for (int yy = 0; yy < h; yy++)
+    for (int xx = 0; xx < w; xx++)
+      SetupPutPixel(screen, x + xx, y + yy, pixels[yy * w + xx]);
+}
+
+static void SetupDrawMaskedRgb565Image(gfxScreen_t screen, int x, int y,
+                                       int w, int h,
+                                       const uint16_t *pixels,
+                                       const uint8_t *mask) {
+  for (int yy = 0; yy < h; yy++) {
+    for (int xx = 0; xx < w; xx++) {
+      int index = yy * w + xx;
+      if (mask[index])
+        SetupPutPixel(screen, x + xx, y + yy, pixels[index]);
+    }
+  }
+}
+
+static void SetupRect(gfxScreen_t screen, int x, int y, int w, int h,
+                      uint16_t color) {
+  SetupFillRect(screen, x, y, w, 2, color);
+  SetupFillRect(screen, x, y + h - 2, w, 2, color);
+  SetupFillRect(screen, x, y, 2, h, color);
+  SetupFillRect(screen, x + w - 2, y, 2, h, color);
+}
+
+static uint8_t SetupGlyph(char c, int row) {
+  if (c >= 'a' && c <= 'z')
+    c = (char)(c - 'a' + 'A');
+  static const uint8_t digits[10][7] = {
+    {14,17,19,21,25,17,14}, {4,12,4,4,4,4,14},
+    {14,17,1,2,4,8,31}, {30,1,1,14,1,1,30},
+    {2,6,10,18,31,2,2}, {31,16,30,1,1,17,14},
+    {6,8,16,30,17,17,14}, {31,1,2,4,8,8,8},
+    {14,17,17,14,17,17,14}, {14,17,17,15,1,2,12},
+  };
+  static const uint8_t letters[26][7] = {
+    {14,17,17,31,17,17,17}, {30,17,17,30,17,17,30},
+    {14,17,16,16,16,17,14}, {30,17,17,17,17,17,30},
+    {31,16,16,30,16,16,31}, {31,16,16,30,16,16,16},
+    {14,17,16,23,17,17,14}, {17,17,17,31,17,17,17},
+    {14,4,4,4,4,4,14}, {7,2,2,2,18,18,12},
+    {17,18,20,24,20,18,17}, {16,16,16,16,16,16,31},
+    {17,27,21,21,17,17,17}, {17,25,21,19,17,17,17},
+    {14,17,17,17,17,17,14}, {30,17,17,30,16,16,16},
+    {14,17,17,17,21,18,13}, {30,17,17,30,20,18,17},
+    {15,16,16,14,1,1,30}, {31,4,4,4,4,4,4},
+    {17,17,17,17,17,17,14}, {17,17,17,17,17,10,4},
+    {17,17,17,21,21,21,10}, {17,17,10,4,10,17,17},
+    {17,17,10,4,4,4,4}, {31,1,2,4,8,16,31},
+  };
+  if (c >= '0' && c <= '9')
+    return digits[c - '0'][row];
+  if (c >= 'A' && c <= 'Z')
+    return letters[c - 'A'][row];
+  switch (c) {
+    case '.': return row == 6 ? 4 : 0;
+    case '-': return row == 3 ? 31 : 0;
+    case '_': return row == 6 ? 31 : 0;
+    case '/': return (uint8_t)(1 << (6 - row));
+    case ':': return row == 2 || row == 5 ? 4 : 0;
+    case '(': return row == 0 ? 2 : row == 6 ? 2 : 4;
+    case ')': return row == 0 ? 8 : row == 6 ? 8 : 4;
+    case '[': return row == 0 || row == 6 ? 14 : 8;
+    case ']': return row == 0 || row == 6 ? 14 : 2;
+    case '+': return row == 3 ? 31 : (row >= 1 && row <= 5 ? 4 : 0);
+    case '!': return row < 5 ? 4 : (row == 6 ? 4 : 0);
+    case '>': return row < 3 ? (1 << row) : (1 << (6 - row));
+    default: return 0;
+  }
+}
+
+static int SetupTextWidth(const char *text, int scale) {
+  return text ? (int)strlen(text) * 6 * scale : 0;
+}
+
+static void SetupDrawChar(gfxScreen_t screen, char c, int x, int y,
+                          int scale, uint16_t color) {
+  if (c == ' ')
+    return;
+  for (int row = 0; row < 7; row++) {
+    uint8_t bits = SetupGlyph(c, row);
+    for (int col = 0; col < 5; col++) {
+      if (bits & (1 << (4 - col)))
+        SetupFillRect(screen, x + col * scale, y + row * scale,
+                      scale, scale, color);
+    }
+  }
+}
+
+static void SetupDrawText(gfxScreen_t screen, const char *text, int x, int y,
+                          int scale, uint16_t color, int max_width) {
+  if (!text)
+    return;
+  int cursor = x;
+  int last = x + max_width;
+  for (size_t i = 0; text[i]; i++) {
+    if (max_width > 0 && cursor + 6 * scale > last)
+      break;
+    SetupDrawChar(screen, text[i], cursor, y, scale, color);
+    cursor += 6 * scale;
+  }
+}
+
+static void SetupDrawCharScaleXY(gfxScreen_t screen, char c, int x, int y,
+                                 int sx, int sy, uint16_t color) {
+  if (c == ' ')
+    return;
+  for (int row = 0; row < 7; row++) {
+    uint8_t bits = SetupGlyph(c, row);
+    for (int col = 0; col < 5; col++) {
+      if (bits & (1 << (4 - col)))
+        SetupFillRect(screen, x + col * sx, y + row * sy, sx, sy, color);
+    }
+  }
+}
+
+static void SetupDrawTextScaleXY(gfxScreen_t screen, const char *text,
+                                 int x, int y, int sx, int sy,
+                                 uint16_t color, int max_width) {
+  if (!text)
+    return;
+  int cursor = x;
+  int last = x + max_width;
+  for (size_t i = 0; text[i]; i++) {
+    if (max_width > 0 && cursor + 6 * sx > last)
+      break;
+    SetupDrawCharScaleXY(screen, text[i], cursor, y, sx, sy, color);
+    cursor += 6 * sx;
+  }
+}
+
+static int SetupTextWidthRational(const char *text, int num, int den) {
+  return text ? (int)(strlen(text) * 6 * num / den) : 0;
+}
+
+static void SetupDrawCharRational(gfxScreen_t screen, char c, int x, int y,
+                                  int num, int den, uint16_t color) {
+  if (c == ' ')
+    return;
+  for (int row = 0; row < 7; row++) {
+    uint8_t bits = SetupGlyph(c, row);
+    for (int col = 0; col < 5; col++) {
+      if (!(bits & (1 << (4 - col))))
+        continue;
+      int x0 = x + col * num / den;
+      int x1 = x + (col + 1) * num / den;
+      int y0 = y + row * num / den;
+      int y1 = y + (row + 1) * num / den;
+      if (x1 <= x0)
+        x1 = x0 + 1;
+      if (y1 <= y0)
+        y1 = y0 + 1;
+      SetupFillRect(screen, x0, y0, x1 - x0, y1 - y0, color);
+    }
+  }
+}
+
+static void SetupDrawTextRational(gfxScreen_t screen, const char *text,
+                                  int x, int y, int num, int den,
+                                  uint16_t color) {
+  if (!text)
+    return;
+  int cursor = x;
+  for (size_t i = 0; text[i]; i++) {
+    SetupDrawCharRational(screen, text[i], cursor, y, num, den, color);
+    cursor += 6 * num / den;
+  }
+}
+
+static void SetupDrawCentered(gfxScreen_t screen, const char *text, int y,
+                              int scale, uint16_t color) {
+  int w = screen == GFX_TOP ? 400 : 320;
+  int x = (w - SetupTextWidth(text, scale)) / 2;
+  SetupDrawText(screen, text, x, y, scale, color, 0);
+}
+
+static void SetupClearScreens(void) {
+  const uint16_t bg = SetupRgb565(8, 12, 24);
+  const uint16_t shadow = SetupRgb565(2, 4, 10);
+  SetupFillRect(GFX_TOP, 0, 0, 400, 240, bg);
+  SetupFillRect(GFX_BOTTOM, 0, 0, 320, 240, bg);
+  for (int y = 0; y < 240; y += 16) {
+    SetupFillRect(GFX_TOP, 0, y, 400, 1, shadow);
+    SetupFillRect(GFX_BOTTOM, 0, y, 320, 1, shadow);
+  }
+}
+
+static void SetupDrawPanel(gfxScreen_t screen, int x, int y, int w, int h,
+                           bool active) {
+  const uint16_t blue = SetupRgb565(16, 38, 86);
+  const uint16_t blue2 = SetupRgb565(10, 24, 58);
+  const uint16_t gold = SetupRgb565(232, 184, 72);
+  const uint16_t gray = SetupRgb565(92, 112, 142);
+  SetupFillRect(screen, x + 4, y + 4, w, h, SetupRgb565(0, 0, 0));
+  SetupFillRect(screen, x, y, w, h, blue2);
+  SetupFillRect(screen, x + 4, y + 4, w - 8, h - 8, blue);
+  SetupRect(screen, x, y, w, h, active ? gold : gray);
+  if (active)
+    SetupRect(screen, x + 3, y + 3, w - 6, h - 6, SetupRgb565(248, 224, 128));
+}
+
+static void SetupCopyDisplayText(const char *source,
+                                 char *out, size_t out_size) {
+  if (!out || out_size == 0)
+    return;
+  out[0] = 0;
+  if (!source)
+    return;
+  size_t length = strlen(source);
+  const size_t max_chars = out_size - 1;
+  if (length <= max_chars) {
+    snprintf(out, out_size, "%s", source);
+    return;
+  }
+  if (max_chars < 4)
+    return;
+  size_t prefix = (max_chars - 3) / 2;
+  size_t suffix = max_chars - 3 - prefix;
+  memcpy(out, source, prefix);
+  out[prefix + 0] = '.';
+  out[prefix + 1] = '.';
+  out[prefix + 2] = '.';
+  memcpy(out + prefix + 3, source + length - suffix, suffix);
+  out[max_chars] = 0;
+}
+
+static void DrawSetupMessage(const char *title, const char *line1,
+                             const char *line2, const char *line3) {
+  const uint16_t white = SetupRgb565(232, 240, 248);
+  const uint16_t gold = SetupRgb565(232, 184, 72);
+  SetupClearScreens();
+  SetupDrawPanel(GFX_TOP, 42, 42, 316, 122, true);
+  SetupDrawCentered(GFX_TOP, title, 64, 3, gold);
+  if (line1) SetupDrawCentered(GFX_TOP, line1, 110, 2, white);
+  if (line2) SetupDrawCentered(GFX_BOTTOM, line2, 82, 2, white);
+  if (line3) SetupDrawCentered(GFX_BOTTOM, line3, 118, 2, gold);
+}
+
+typedef struct SetupMessageContext {
+  const char *title;
+  const char *line1;
+  const char *line2;
+  const char *line3;
+} SetupMessageContext;
+
+static void DrawSetupMessageFrame(void *context) {
+  SetupMessageContext *message = (SetupMessageContext *)context;
+  DrawSetupMessage(message->title, message->line1,
+                   message->line2, message->line3);
+}
+
+static void PresentSetupMessage(const char *title, const char *line1,
+                                const char *line2, const char *line3) {
+  SetupMessageContext context = { title, line1, line2, line3 };
+  PresentSetupStable(DrawSetupMessageFrame, &context);
+}
+
 static void ShowFatalSetupError(const char *message) {
   FILE *log = fopen("setup-error.txt", "wb");
   if (log) {
     fprintf(log, "Zelda 3DS v%s\n%s\n", ZELDA3_3DS_VERSION, message);
     fclose(log);
   }
-  consoleClear();
-  printf("\x1b[2;2HZelda 3DS v%s\n\n", ZELDA3_3DS_VERSION);
-  printf("%s\n\n", message);
-  printf("Press B to exit.");
-  PresentSetupConsole();
+  PresentSetupMessage("SETUP ERROR", "CHECK SETUP-ERROR.TXT",
+                      "PRESS B TO EXIT", NULL);
   WaitForButtons(KEY_B | KEY_START);
 }
 
@@ -969,16 +1717,8 @@ void Platform3DS_ShowFatalError(const char *message) {
 }
 
 static bool ConfirmExtraction(void) {
-  consoleClear();
-  printf("\x1b[2;2HZelda 3DS v%s\n\n", ZELDA3_3DS_VERSION);
-  printf("Game assets were not found.\n\n");
-  printf("Place your legal ROM in:\n");
-  printf("sdmc:/3ds/Zelda 3DS/\n\n");
-  printf("Accepted formats: .sfc or .smc\n");
-  printf("Required region: USA, no header\n\n");
-  printf("[A] Extract assets\n");
-  printf("[B] Exit\n");
-  PresentSetupConsole();
+  PresentSetupMessage("ROM SETUP", "ASSETS NOT FOUND",
+                      "A EXTRACT    B EXIT", "SFC OR SMC IN ZELDA 3DS");
   return (WaitForButtons(KEY_A | KEY_B) & KEY_A) != 0;
 }
 
@@ -1002,29 +1742,680 @@ static bool WriteAssetsFile(const uint8 *data, size_t size) {
   return true;
 }
 
-static bool ExtractAssetsFromRom(void) {
-  LogSetup("Extraction requested");
-  char rom_path[512];
-  if (!FindRom(rom_path, sizeof(rom_path))) {
-    LogSetup("ROM search failed");
-    ShowFatalSetupError(
-      "Error: no .sfc or .smc ROM was found\n"
-      "in the Zelda 3DS folder.");
+typedef struct OwnedBlock {
+  uint8 *data;
+  size_t size;
+} OwnedBlock;
+
+static uint16 ReadU16LE(const uint8 *data) {
+  return data[0] | (data[1] << 8);
+}
+
+static uint32 ReadU32LE(const uint8 *data) {
+  return data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+}
+
+static void WriteU16LE(uint8 *data, uint16 value) {
+  data[0] = value;
+  data[1] = value >> 8;
+}
+
+static void WriteU32LE(uint8 *data, uint32 value) {
+  data[0] = value;
+  data[1] = value >> 8;
+  data[2] = value >> 16;
+  data[3] = value >> 24;
+}
+
+static uint64 SetupBpsDecodeInt(const uint8 **src) {
+  uint64 data = 0, shift = 1;
+  for (;;) {
+    uint8 x = *(*src)++;
+    data += (x & 0x7f) * shift;
+    if (x & 0x80)
+      break;
+    shift <<= 7;
+    data += shift;
+  }
+  return data;
+}
+
+static uint8 *ApplyBpsCompatibleRom(const uint8 *src, size_t src_size_in,
+                                    const uint8 *bps, size_t bps_size,
+                                    size_t *length_out) {
+  if (bps_size < 16 || memcmp(bps, "BPS1", 4) != 0)
+    return NULL;
+  const uint8 *patch = bps + 4;
+  const uint8 *patch_end = bps + bps_size - 12;
+  uint32 src_size = (uint32)SetupBpsDecodeInt(&patch);
+  uint32 dst_size = (uint32)SetupBpsDecodeInt(&patch);
+  uint32 meta_size = (uint32)SetupBpsDecodeInt(&patch);
+  if (src_size > src_size_in || patch + meta_size > patch_end)
+    return NULL;
+  patch += meta_size;
+  uint8 *dst = malloc(dst_size);
+  if (!dst)
+    return NULL;
+  uint32 output_offset = 0;
+  uint32 source_relative_offset = 0;
+  uint32 target_relative_offset = 0;
+  while (patch < patch_end) {
+    uint32 command = (uint32)SetupBpsDecodeInt(&patch);
+    uint32 length = (command >> 2) + 1;
+    if (output_offset + length > dst_size)
+      goto fail;
+    switch (command & 3) {
+    case 0:
+      if (output_offset + length > src_size_in)
+        goto fail;
+      memcpy(dst + output_offset, src + output_offset, length);
+      output_offset += length;
+      break;
+    case 1:
+      if (patch + length > patch_end)
+        goto fail;
+      memcpy(dst + output_offset, patch, length);
+      patch += length;
+      output_offset += length;
+      break;
+    case 2:
+      command = (uint32)SetupBpsDecodeInt(&patch);
+      source_relative_offset += (command & 1 ? -1 : +1) * (command >> 1);
+      if (source_relative_offset + length > src_size_in)
+        goto fail;
+      memcpy(dst + output_offset, src + source_relative_offset, length);
+      output_offset += length;
+      source_relative_offset += length;
+      break;
+    default:
+      command = (uint32)SetupBpsDecodeInt(&patch);
+      target_relative_offset += (command & 1 ? -1 : +1) * (command >> 1);
+      if (target_relative_offset >= output_offset)
+        goto fail;
+      for (uint32 i = 0; i < length; i++)
+        dst[output_offset++] = dst[target_relative_offset++];
+      break;
+    }
+  }
+  if (output_offset != dst_size)
+    goto fail;
+  *length_out = dst_size;
+  return dst;
+
+fail:
+  free(dst);
+  return NULL;
+}
+
+static uint8 *NormalizeRomForExtraction(uint8 *rom, size_t *rom_size) {
+  if (!rom || !rom_size)
+    return rom;
+  if ((*rom_size % 0x8000) == 512) {
+    LogSetup("Detected 512-byte copier header; stripping for extraction");
+    memmove(rom, rom + 512, *rom_size - 512);
+    *rom_size -= 512;
+  }
+  return rom;
+}
+
+static void FreeBlocks(OwnedBlock *blocks, int count) {
+  for (int i = 0; i < count; i++)
+    free(blocks[i].data);
+}
+
+static bool CopyBlock(OwnedBlock *block, const uint8 *data, size_t size) {
+  block->data = NULL;
+  block->size = 0;
+  if (size == 0)
+    return true;
+  block->data = malloc(size);
+  if (!block->data)
+    return false;
+  memcpy(block->data, data, size);
+  block->size = size;
+  return true;
+}
+
+static bool PackBlocks(const OwnedBlock *blocks, int count, OwnedBlock *out) {
+  out->data = NULL;
+  out->size = 0;
+  if (count <= 0)
+    return false;
+  size_t data_size = 0;
+  for (int i = 0; i < count; i++)
+    data_size += blocks[i].size;
+  bool wide = data_size >= 65536 || count > 8192;
+  size_t width = wide ? 4 : 2;
+  size_t header = (count - 1) * width;
+  if (data_size + header + 2 > 0xffffffffu)
+    return false;
+  uint8 *data = calloc(1, header + data_size + 2);
+  if (!data)
+    return false;
+  size_t pos = header;
+  size_t cumulative = 0;
+  for (int i = 0; i < count; i++) {
+    if (i != 0) {
+      if (wide)
+        WriteU32LE(data + (i - 1) * 4, (uint32)cumulative);
+      else
+        WriteU16LE(data + (i - 1) * 2, (uint16)cumulative);
+    }
+    if (blocks[i].size)
+      memcpy(data + pos + cumulative, blocks[i].data, blocks[i].size);
+    cumulative += blocks[i].size;
+  }
+  WriteU16LE(data + header + data_size, (uint16)((count - 1) + (wide ? 8192 : 0)));
+  out->data = data;
+  out->size = header + data_size + 2;
+  return true;
+}
+
+static bool UnpackBlocks(const uint8 *data, size_t size,
+                         OwnedBlock **blocks_out, int *count_out) {
+  *blocks_out = NULL;
+  *count_out = 0;
+  if (size < 2)
+    return false;
+  size_t end = size - 2;
+  uint16 trailer = ReadU16LE(data + end);
+  int width = 2;
+  int count = trailer + 1;
+  if (trailer >= 8192) {
+    width = 4;
+    count = trailer - 8192 + 1;
+  }
+  size_t base = (size_t)(count - 1) * width;
+  if (count <= 0 || base > end)
+    return false;
+  OwnedBlock *blocks = calloc(count, sizeof(*blocks));
+  if (!blocks)
+    return false;
+  size_t previous = 0;
+  for (int i = 0; i < count; i++) {
+    size_t next = (i == count - 1) ? end - base :
+      (width == 2 ? ReadU16LE(data + i * 2) : ReadU32LE(data + i * 4));
+    if (next < previous || base + next > end) {
+      FreeBlocks(blocks, i);
+      free(blocks);
+      return false;
+    }
+    if (!CopyBlock(&blocks[i], data + base + previous, next - previous)) {
+      FreeBlocks(blocks, i);
+      free(blocks);
+      return false;
+    }
+    previous = next;
+  }
+  *blocks_out = blocks;
+  *count_out = count;
+  return true;
+}
+
+static bool ExtractTranslationLanguage(const uint8 *rom, size_t rom_size,
+                                       OwnedBlock *dialogue_block,
+                                       OwnedBlock *font_block) {
+  enum {
+    kRomSize = 1048576,
+    kTextBank1 = 0xe0000,
+    kTextBank2 = 0x75f40,
+    kDictPtrs = 0x74703,
+    kDictPtrBase = 0xc703,
+    kBank0E = 0x70000,
+    kFontGfx = 0x70000,
+    kFontGfxSize = 0x1000,
+    kFontWidths = 0x74adf,
+    kFontWidthsCount = 99,
+  };
+  static const uint8 kCommandArgBytes[] = {
+    0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1,
+    1, 1, 0, 0, 0, 0, 0,
+  };
+  static const uint8 kUsMessage4[] = {
+    0x7a, 0x00, 0x34, 0x40, 0x59, 0x6c, 0x00, 0x41, 0x59, 0x35,
+    0x40, 0x59, 0x6c, 0x01, 0x75, 0x36, 0x40, 0x59, 0x6c, 0x02,
+    0x41, 0x59, 0x37, 0x40, 0x59, 0x6c, 0x03,
+  };
+  dialogue_block->data = NULL;
+  dialogue_block->size = 0;
+  font_block->data = NULL;
+  font_block->size = 0;
+  if (rom_size != kRomSize)
+    return false;
+
+  OwnedBlock messages[420] = {0};
+  int message_count = 0;
+  ByteArray current = {0};
+  size_t p = kTextBank1;
+  int bank_switches = 0;
+  bool ok = true;
+  for (int guard = 0; ok; guard++) {
+    if (guard > 0x20000 || p >= rom_size || message_count >= countof(messages)) {
+      ok = false;
+      break;
+    }
+    uint8 c = rom[p];
+    if (c == 0xff)
+      break;
+    if (c == 0x80) {
+      if (++bank_switches > 1) {
+        ok = false;
+        break;
+      }
+      p = kTextBank2;
+      continue;
+    }
+    size_t length = (c >= 0x67 && c < 0x80) ?
+      1 + kCommandArgBytes[c - 0x67] : 1;
+    if (p + length > rom_size) {
+      ok = false;
+      break;
+    }
+    ByteArray_AppendData(&current, rom + p, length);
+    p += length;
+    if (c == 0x7f) {
+      if (current.size == 0) {
+        ok = false;
+        break;
+      }
+      current.size--;
+      ok = CopyBlock(&messages[message_count++], current.data, current.size);
+      current.size = 0;
+    }
+  }
+  ByteArray_Destroy(&current);
+  if (!ok || message_count < 300) {
+    FreeBlocks(messages, message_count);
     return false;
   }
-  LogSetup("ROM found: %s", rom_path);
+  if (message_count == 396 && message_count < countof(messages)) {
+    for (int i = message_count; i > 4; i--)
+      messages[i] = messages[i - 1];
+    messages[4].data = NULL;
+    messages[4].size = 0;
+    ok = CopyBlock(&messages[4], kUsMessage4, sizeof(kUsMessage4));
+    message_count++;
+  }
 
-  consoleClear();
-  printf("\x1b[2;2HZelda 3DS v%s\n\n", ZELDA3_3DS_VERSION);
-  printf("ROM found: %s\n\n", rom_path);
-  printf("Validating and extracting assets...\n");
-  printf("Do not power off the console.");
-  PresentSetupConsole();
+  uint16 first = ReadU16LE(rom + kDictPtrs);
+  int gap = (int)first - kDictPtrBase;
+  int dict_count = gap / 2 - 1;
+  OwnedBlock dictionary[220] = {0};
+  if (!ok || gap <= 0 || (gap & 1) != 0 || dict_count < 50 ||
+      dict_count > countof(dictionary)) {
+    FreeBlocks(messages, message_count);
+    return false;
+  }
+  for (int i = 0; i < dict_count; i++) {
+    uint16 start = ReadU16LE(rom + kDictPtrs + i * 2);
+    uint16 end = ReadU16LE(rom + kDictPtrs + i * 2 + 2);
+    size_t offset = kBank0E + start - 0x8000;
+    if (start < 0x8000 || end < start || end - start > 256 ||
+        offset + (end - start) > rom_size ||
+        !CopyBlock(&dictionary[i], rom + offset, end - start)) {
+      FreeBlocks(messages, message_count);
+      FreeBlocks(dictionary, i);
+      return false;
+    }
+  }
+
+  OwnedBlock packed_dictionary = {0};
+  OwnedBlock packed_messages = {0};
+  OwnedBlock dialogue_parts[2] = {0};
+  OwnedBlock font_parts[2] = {0};
+  ok = PackBlocks(dictionary, dict_count, &packed_dictionary) &&
+       PackBlocks(messages, message_count, &packed_messages);
+  FreeBlocks(dictionary, dict_count);
+  FreeBlocks(messages, message_count);
+  if (!ok) {
+    free(packed_dictionary.data);
+    free(packed_messages.data);
+    return false;
+  }
+  dialogue_parts[0] = packed_dictionary;
+  dialogue_parts[1] = packed_messages;
+  ok = PackBlocks(dialogue_parts, 2, dialogue_block);
+  FreeBlocks(dialogue_parts, 2);
+  if (!ok)
+    return false;
+
+  ok = CopyBlock(&font_parts[0], rom + kFontGfx, kFontGfxSize) &&
+       CopyBlock(&font_parts[1], rom + kFontWidths, kFontWidthsCount) &&
+       PackBlocks(font_parts, 2, font_block);
+  FreeBlocks(font_parts, 2);
+  if (!ok) {
+    free(dialogue_block->data);
+    dialogue_block->data = NULL;
+    dialogue_block->size = 0;
+    return false;
+  }
+  return true;
+}
+
+static const char *DetectTranslatedRomLanguage(const uint8 *rom,
+                                               size_t rom_size) {
+  static const char kPortugueseTitle[] = "A LENDA DE ZELDA (BR)";
+  if (rom_size >= 0x7fc0 + sizeof(kPortugueseTitle) - 1 &&
+      memcmp(rom + 0x7fc0, kPortugueseTitle,
+             sizeof(kPortugueseTitle) - 1) == 0)
+    return "pt";
+  return "es";
+}
+
+static bool RomLooksJapanese(const uint8 *rom, size_t rom_size) {
+  static const char kJapaneseTitle[] = "ZELDANODENSETSU";
+  return rom_size >= 0x7fc0 + sizeof(kJapaneseTitle) - 1 &&
+         memcmp(rom + 0x7fc0, kJapaneseTitle,
+                sizeof(kJapaneseTitle) - 1) == 0;
+}
+
+static bool AddTranslatedLanguageToAssets(const uint8 *assets_data,
+                                          size_t assets_size,
+                                          const uint8 *rom,
+                                          size_t rom_size,
+                                          const char *language_code,
+                                          uint8 **out_data,
+                                          size_t *out_size) {
+  *out_data = NULL;
+  *out_size = 0;
+  OwnedBlock language_dialogue = {0};
+  OwnedBlock language_font = {0};
+  if (!ExtractTranslationLanguage(rom, rom_size,
+                                  &language_dialogue, &language_font))
+    return false;
+  if (assets_size < 88) {
+    FreeBlocks(&language_dialogue, 1);
+    FreeBlocks(&language_font, 1);
+    return false;
+  }
+  static const uint8 signature[] = { kAssets_Sig };
+  uint32 asset_count = ReadU32LE(assets_data + 80);
+  uint32 names_size = ReadU32LE(assets_data + 84);
+  if (memcmp(assets_data, signature, sizeof(signature)) != 0 ||
+      asset_count != kNumberOfAssets ||
+      assets_size < 88 + asset_count * 4 + names_size) {
+    FreeBlocks(&language_dialogue, 1);
+    FreeBlocks(&language_font, 1);
+    return false;
+  }
+
+  OwnedBlock *assets = calloc(asset_count, sizeof(*assets));
+  if (!assets) {
+    FreeBlocks(&language_dialogue, 1);
+    FreeBlocks(&language_font, 1);
+    return false;
+  }
+  bool ok = true;
+  size_t offset = 88 + asset_count * 4 + names_size;
+  for (uint32 i = 0; ok && i < asset_count; i++) {
+    uint32 size = ReadU32LE(assets_data + 88 + i * 4);
+    offset = (offset + 3) & ~3;
+    if (offset + size > assets_size ||
+        !CopyBlock(&assets[i], assets_data + offset, size))
+      ok = false;
+    offset += size;
+  }
+  OwnedBlock *dialogues = NULL, *fonts = NULL, *map = NULL;
+  int dialogue_count = 0, font_count = 0, map_count = 0;
+  if (ok)
+    ok = UnpackBlocks(assets[94].data, assets[94].size,
+                      &dialogues, &dialogue_count) &&
+         UnpackBlocks(assets[95].data, assets[95].size,
+                      &fonts, &font_count) &&
+         UnpackBlocks(assets[96].data, assets[96].size,
+                      &map, &map_count);
+  if (ok && (dialogue_count != font_count || map_count <= 0))
+    ok = false;
+  if (ok) {
+    int index = dialogue_count;
+    OwnedBlock *new_dialogues = calloc(dialogue_count + 1, sizeof(*new_dialogues));
+    OwnedBlock *new_fonts = calloc(font_count + 1, sizeof(*new_fonts));
+    OwnedBlock *new_map = calloc(map_count + 1, sizeof(*new_map));
+    if (!new_dialogues || !new_fonts || !new_map) {
+      free(new_dialogues);
+      free(new_fonts);
+      free(new_map);
+      ok = false;
+    } else {
+      memcpy(new_dialogues, dialogues, dialogue_count * sizeof(*dialogues));
+      memcpy(new_fonts, fonts, font_count * sizeof(*fonts));
+      memcpy(new_map, map, map_count * sizeof(*map));
+      free(dialogues);
+      free(fonts);
+      free(map);
+      dialogues = new_dialogues;
+      fonts = new_fonts;
+      map = new_map;
+      dialogue_count++;
+      font_count++;
+      map_count++;
+      dialogues[index] = language_dialogue;
+      fonts[index] = language_font;
+      language_dialogue.data = NULL;
+      language_font.data = NULL;
+      OwnedBlock map_parts[2] = {0};
+      OwnedBlock packed_map_entry = {0};
+      uint8 name[8];
+      size_t name_size = strlen(language_code);
+      if (name_size == 0 || name_size > sizeof(name)) {
+        ok = false;
+      }
+      if (ok)
+        memcpy(name, language_code, name_size);
+      uint8 conf[] = { (uint8)index, (uint8)index, 2 };
+      ok = ok &&
+           CopyBlock(&map_parts[0], name, name_size) &&
+           CopyBlock(&map_parts[1], conf, sizeof(conf)) &&
+           PackBlocks(map_parts, 2, &packed_map_entry);
+      FreeBlocks(map_parts, 2);
+      if (ok) {
+        map[index] = packed_map_entry;
+        packed_map_entry.data = NULL;
+        packed_map_entry.size = 0;
+      }
+    }
+  }
+  OwnedBlock packed_dialogues = {0};
+  OwnedBlock packed_fonts = {0};
+  OwnedBlock packed_map = {0};
+  if (ok)
+    ok = PackBlocks(dialogues, dialogue_count, &packed_dialogues) &&
+         PackBlocks(fonts, font_count, &packed_fonts) &&
+         PackBlocks(map, map_count, &packed_map);
+  if (ok) {
+    free(assets[94].data);
+    free(assets[95].data);
+    free(assets[96].data);
+    assets[94] = packed_dialogues;
+    assets[95] = packed_fonts;
+    assets[96] = packed_map;
+    packed_dialogues.data = NULL;
+    packed_fonts.data = NULL;
+    packed_map.data = NULL;
+    size_t total = 88 + asset_count * 4 + names_size;
+    for (uint32 i = 0; i < asset_count; i++)
+      total = ((total + 3) & ~3) + assets[i].size;
+    uint8 *out = calloc(1, total);
+    if (!out) {
+      ok = false;
+    } else {
+      memcpy(out, assets_data, 88);
+      for (uint32 i = 0; i < asset_count; i++)
+        WriteU32LE(out + 88 + i * 4, (uint32)assets[i].size);
+      memcpy(out + 88 + asset_count * 4,
+             assets_data + 88 + asset_count * 4, names_size);
+      offset = 88 + asset_count * 4 + names_size;
+      for (uint32 i = 0; i < asset_count; i++) {
+        offset = (offset + 3) & ~3;
+        memcpy(out + offset, assets[i].data, assets[i].size);
+        offset += assets[i].size;
+      }
+      *out_data = out;
+      *out_size = total;
+    }
+  }
+
+  FreeBlocks(&language_dialogue, 1);
+  FreeBlocks(&language_font, 1);
+  FreeBlocks(dialogues, dialogue_count);
+  FreeBlocks(fonts, font_count);
+  FreeBlocks(map, map_count);
+  free(dialogues);
+  free(fonts);
+  free(map);
+  FreeBlocks(&packed_dialogues, 1);
+  FreeBlocks(&packed_fonts, 1);
+  FreeBlocks(&packed_map, 1);
+  FreeBlocks(assets, asset_count);
+  free(assets);
+  return ok;
+}
+
+static bool WriteTranslatedProfileIni(const char *language_code) {
+  FILE *file = fopen("zelda3.ini", "ab");
+  if (!file)
+    return false;
+  bool ok = fprintf(file, "\n[General]\nLanguage = %s\n",
+                    language_code) > 0;
+  if (fclose(file) != 0)
+    ok = false;
+  return ok;
+}
+
+static bool TryBuildTranslatedAssets(const uint8 *rom, size_t rom_size,
+                                     const uint8 *patch, size_t patch_size,
+                                     uint8 **assets_out,
+                                     size_t *assets_size_out) {
+  *assets_out = NULL;
+  *assets_size_out = 0;
+  OwnedBlock probe_dialogue = {0};
+  OwnedBlock probe_font = {0};
+  bool translatable = ExtractTranslationLanguage(rom, rom_size,
+                                                &probe_dialogue, &probe_font);
+  FreeBlocks(&probe_dialogue, 1);
+  FreeBlocks(&probe_font, 1);
+  if (!translatable)
+    return false;
+  const char *language_code = DetectTranslatedRomLanguage(rom, rom_size);
+
+  DIR *directory = opendir("../..");
+  if (!directory)
+    return false;
+  bool success = false;
+  struct dirent *entry;
+  while (!success && (entry = readdir(directory)) != NULL) {
+    if (RomFileShouldBeIgnored(entry->d_name) ||
+        !(HasExtension(entry->d_name, ".sfc") ||
+          HasExtension(entry->d_name, ".smc")))
+      continue;
+    char path[640];
+    snprintf(path, sizeof(path), "../../%s", entry->d_name);
+    if (!IsRegularFile(path))
+      continue;
+    size_t base_size = 0;
+    uint8 *base_rom = ReadWholeFile(path, &base_size);
+    if (!base_rom)
+      continue;
+    base_rom = NormalizeRomForExtraction(base_rom, &base_size);
+    size_t base_assets_size = 0;
+    uint8 *base_assets = ApplyBps(base_rom, base_size, patch, patch_size,
+                                  &base_assets_size);
+    if (!base_assets)
+      base_assets = ApplyBpsCompatibleRom(base_rom, base_size, patch,
+                                          patch_size, &base_assets_size);
+    free(base_rom);
+    if (base_assets && !AssetsBlobLooksValid(base_assets, base_assets_size)) {
+      LogSetup("Installed base ROM produced invalid compatible assets: %s",
+               entry->d_name);
+      free(base_assets);
+      base_assets = NULL;
+      base_assets_size = 0;
+    }
+    if (!base_assets)
+      continue;
+    uint8 *translated_assets = NULL;
+    size_t translated_assets_size = 0;
+    success = AddTranslatedLanguageToAssets(base_assets, base_assets_size,
+                                            rom, rom_size, language_code,
+                                            &translated_assets,
+                                            &translated_assets_size);
+    free(base_assets);
+    if (success) {
+      *assets_out = translated_assets;
+      *assets_size_out = translated_assets_size;
+      WriteTranslatedProfileIni(language_code);
+      LogSetup("Translated profile assets generated using base ROM: %s, language: %s",
+               entry->d_name, language_code);
+    } else {
+      free(translated_assets);
+    }
+  }
+  closedir(directory);
+  return success;
+}
+
+static bool TryBuildBaseAssetsFromInstalledUsRom(const uint8 *patch,
+                                                 size_t patch_size,
+                                                 uint8 **assets_out,
+                                                 size_t *assets_size_out) {
+  *assets_out = NULL;
+  *assets_size_out = 0;
+  DIR *directory = opendir("../..");
+  if (!directory)
+    return false;
+  bool success = false;
+  struct dirent *entry;
+  while (!success && (entry = readdir(directory)) != NULL) {
+    if (RomFileShouldBeIgnored(entry->d_name) ||
+        !(HasExtension(entry->d_name, ".sfc") ||
+          HasExtension(entry->d_name, ".smc")))
+      continue;
+    char path[640];
+    snprintf(path, sizeof(path), "../../%s", entry->d_name);
+    if (!IsRegularFile(path))
+      continue;
+    size_t base_size = 0;
+    uint8 *base_rom = ReadWholeFile(path, &base_size);
+    if (!base_rom)
+      continue;
+    base_rom = NormalizeRomForExtraction(base_rom, &base_size);
+    size_t base_assets_size = 0;
+    uint8 *base_assets = ApplyBps(base_rom, base_size, patch, patch_size,
+                                  &base_assets_size);
+    if (!base_assets)
+      base_assets = ApplyBpsCompatibleRom(base_rom, base_size, patch,
+                                          patch_size, &base_assets_size);
+    free(base_rom);
+    if (base_assets && !AssetsBlobLooksValid(base_assets, base_assets_size)) {
+      LogSetup("Installed fallback ROM produced invalid compatible assets: %s",
+               entry->d_name);
+      free(base_assets);
+      base_assets = NULL;
+      base_assets_size = 0;
+    }
+    if (base_assets && AssetsBlobLooksValid(base_assets, base_assets_size)) {
+      *assets_out = base_assets;
+      *assets_size_out = base_assets_size;
+      success = true;
+      LogSetup("Base assets generated using installed USA-compatible ROM: %s",
+               entry->d_name);
+    } else {
+      free(base_assets);
+    }
+  }
+  closedir(directory);
+  return success;
+}
+
+static bool ExtractAssetsFromRom(const char *rom_path) {
+  LogSetup("Extraction requested");
+  LogSetup("ROM found: %s", rom_path);
 
   size_t rom_size = 0;
   size_t patch_size = 0;
   size_t assets_size = 0;
   uint8 *rom = ReadWholeFile(rom_path, &rom_size);
+  rom = NormalizeRomForExtraction(rom, &rom_size);
   LogSetup("ROM read: %lu bytes", (unsigned long)rom_size);
   uint8 *patch = ReadWholeFile(kBundledPatch, &patch_size);
   LogSetup("Patch read: %lu bytes", (unsigned long)patch_size);
@@ -1046,15 +2437,41 @@ static bool ExtractAssetsFromRom(void) {
   uint8 *assets = ApplyBps(rom, rom_size, patch, patch_size, &assets_size);
   LogSetup("BPS result: %s, %lu bytes", assets ? "OK" : "FAIL",
            (unsigned long)assets_size);
+  if (!assets) {
+    LogSetup("Trying compatible BPS extraction");
+    assets = ApplyBpsCompatibleRom(rom, rom_size, patch, patch_size,
+                                   &assets_size);
+    LogSetup("Compatible BPS result: %s, %lu bytes",
+             assets ? "OK" : "FAIL", (unsigned long)assets_size);
+    if (assets && !AssetsBlobLooksValid(assets, assets_size)) {
+      LogSetup("Compatible BPS result failed assets validation");
+      free(assets);
+      assets = NULL;
+      assets_size = 0;
+    }
+  }
+  if (!assets) {
+    LogSetup("Trying compatible translation extraction");
+    assets = NULL;
+    assets_size = 0;
+    if (TryBuildTranslatedAssets(rom, rom_size, patch, patch_size,
+                                 &assets, &assets_size)) {
+      LogSetup("Translation assets result: OK, %lu bytes",
+               (unsigned long)assets_size);
+    }
+  }
+  if (!assets && RomLooksJapanese(rom, rom_size)) {
+    LogSetup("Trying Japanese ROM boot fallback with USA-compatible base assets");
+    if (TryBuildBaseAssetsFromInstalledUsRom(patch, patch_size,
+                                             &assets, &assets_size)) {
+      LogSetup("Japanese fallback assets result: OK, %lu bytes",
+               (unsigned long)assets_size);
+    }
+  }
   free(rom);
   free(patch);
   if (!assets) {
-    ShowFatalSetupError(
-      "Error: the ROM is not the correct version.\n"
-      "Required: Zelda 3 USA, no header.\n"
-      "Expected SHA-256:\n"
-      "66871d66be19ad2c34c927d6b14cd8eb\n"
-      "6fc3181965b6e517cb361f7316009cfb");
+    LogSetup("ROM not compatible with available extraction paths");
     return false;
   }
 
@@ -1068,14 +2485,410 @@ static bool ExtractAssetsFromRom(void) {
     return false;
   }
 
-  consoleClear();
-  printf("\x1b[2;2HZelda 3DS v%s\n\n", ZELDA3_3DS_VERSION);
-  printf("Assets extracted successfully.\n\n");
-  printf("Setup complete.");
-  PresentSetupConsole();
-  for (int i = 0; i < 60; i++)
-    gspWaitForVBlank();
+  LogSetup("Assets extracted and validated");
   return true;
+}
+
+static bool RomUsesBundledAssetsPatch(const RomEntry *rom) {
+  size_t rom_size = 0;
+  size_t patch_size = 0;
+  uint8 *rom_data = ReadWholeFile(rom->filename, &rom_size);
+  uint8 *patch = ReadWholeFile(kBundledPatch, &patch_size);
+  if (!rom_data || !patch) {
+    free(rom_data);
+    free(patch);
+    return false;
+  }
+  size_t assets_size = 0;
+  uint8 *assets = ApplyBps(rom_data, rom_size, patch, patch_size,
+                           &assets_size);
+  free(rom_data);
+  free(patch);
+  if (!assets)
+    return false;
+  bool valid = AssetsBlobLooksValid(assets, assets_size);
+  free(assets);
+  return valid;
+}
+
+static bool WriteSelectedRom(const RomEntry *rom) {
+  FILE *file = fopen(kSelectedRomFile, "wb");
+  if (!file)
+    return false;
+  fprintf(file, "[SelectedRom]\n");
+  fprintf(file, "RomFile = %s\n", rom->filename);
+  fprintf(file, "RomHash = %08lx\n", (unsigned long)rom->hash);
+  fprintf(file, "ActiveProfile = %s\n", rom->profile);
+  bool ok = fclose(file) == 0;
+  if (!ok)
+    remove(kSelectedRomFile);
+  return ok;
+}
+
+static const char *ProfileLeaf(const char *profile) {
+  const char *slash = strrchr(profile, '/');
+  return slash ? slash + 1 : profile;
+}
+
+static bool PrepareSaveDirectory(const RomEntry *rom, bool copy_legacy) {
+  if (!EnsureDirectory("saves"))
+    return false;
+  snprintf(g_active_save_directory, sizeof(g_active_save_directory),
+           "saves/%s", ProfileLeaf(rom->profile));
+  if (!EnsureDirectory(g_active_save_directory))
+    return false;
+
+  if (copy_legacy) {
+    static const char *const legacy_files[] = {
+      "sram.dat", "sram.bak",
+      "save0.sav", "save1.sav", "save2.sav", "save3.sav",
+      "save4.sav", "save5.sav", "save6.sav", "save7.sav",
+      "save8.sav", "save9.sav",
+    };
+    for (size_t i = 0; i < countof(legacy_files); i++) {
+      char source[256];
+      char destination[512];
+      snprintf(source, sizeof(source), "saves/%s", legacy_files[i]);
+      snprintf(destination, sizeof(destination), "%s/%s",
+               g_active_save_directory, legacy_files[i]);
+      if (IsRegularFile(source))
+        CopyFileIfMissing(source, destination);
+    }
+  }
+  return true;
+}
+
+static bool PrepareSaveDirectoryForProfile(const char *profile) {
+  if (!EnsureDirectory("saves"))
+    return false;
+  snprintf(g_active_save_directory, sizeof(g_active_save_directory),
+           "saves/%s", ProfileLeaf(profile));
+  return EnsureDirectory(g_active_save_directory);
+}
+
+void Platform3DS_FormatSavePath(const char *filename,
+                                char *out, size_t out_size) {
+  if (!filename || !out || out_size == 0)
+    return;
+  if (strncmp(filename, "saves/ref/", 10) == 0) {
+    snprintf(out, out_size, "%s", filename);
+    return;
+  }
+  const char *leaf = filename;
+  if (strncmp(filename, "saves/", 6) == 0)
+    leaf = filename + 6;
+  snprintf(out, out_size, "%s/%s", g_active_save_directory, leaf);
+}
+
+typedef struct SelectedRomInfo {
+  char filename[256];
+  char profile[320];
+  uint32_t hash;
+} SelectedRomInfo;
+
+static bool ReadSelectedRomInfo(SelectedRomInfo *selected) {
+  if (!selected)
+    return false;
+  memset(selected, 0, sizeof(*selected));
+  FILE *file = fopen(kSelectedRomFile, "rb");
+  if (!file)
+    return false;
+  char line[512];
+  while (fgets(line, sizeof(line), file)) {
+    char *text = Trim(line);
+    char *equals = strchr(text, '=');
+    if (!equals)
+      continue;
+    *equals = 0;
+    char *key = Trim(text);
+    char *value = Trim(equals + 1);
+    if (strcasecmp(key, "RomFile") == 0) {
+      snprintf(selected->filename, sizeof(selected->filename), "%s", value);
+    } else if (strcasecmp(key, "RomHash") == 0) {
+      selected->hash = (uint32_t)strtoul(value, NULL, 16);
+    } else if (strcasecmp(key, "ActiveProfile") == 0) {
+      snprintf(selected->profile, sizeof(selected->profile), "%s", value);
+    }
+  }
+  fclose(file);
+  return selected->filename[0] && selected->profile[0] &&
+         selected->hash != 0;
+}
+
+static bool FindSelectedRomEntry(const SelectedRomInfo *selected,
+                                 const RomEntry *roms, int rom_count,
+                                 RomEntry *rom_out) {
+  if (!selected)
+    return false;
+  for (int i = 0; i < rom_count; i++) {
+    if (strcmp(selected->filename, roms[i].filename) == 0 &&
+        strcmp(selected->profile, roms[i].profile) == 0 &&
+        selected->hash == roms[i].hash) {
+      if (rom_out)
+        *rom_out = roms[i];
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool ProfileAssetsValid(const char *profile) {
+  char path[512];
+  snprintf(path, sizeof(path), "%s/%s", profile, kAssetsFilename);
+  return AssetsFileLooksValid(path);
+}
+
+static bool MigrateLegacyStorage(const RomEntry *rom) {
+  bool legacy_assets = AssetsFileLooksValid(kAssetsFilename);
+  bool legacy_saves = IsRegularFile("saves/sram.dat");
+  if (!legacy_assets && !legacy_saves)
+    return true;
+  LogSetup("Legacy 2.4 storage detected");
+  if (!EnsureDirectory(kProfilesDirectory) || !EnsureDirectory(rom->profile))
+    return false;
+  char path[512];
+  if (legacy_assets) {
+    snprintf(path, sizeof(path), "%s/%s", rom->profile, kAssetsFilename);
+    CopyFileIfMissing(kAssetsFilename, path);
+  }
+  snprintf(path, sizeof(path), "%s/zelda3.ini", rom->profile);
+  CopyFileIfMissing("zelda3.ini", path);
+  if (!PrepareSaveDirectory(rom, true))
+    return false;
+  WriteSelectedRom(rom);
+  LogSetup("Legacy migration completed: %s", rom->profile);
+  return true;
+}
+
+static void DrawRomSelector(const RomEntry *roms, int rom_count, int selected,
+                            const char *status) {
+  const uint16_t white = SetupRgb565(232, 240, 248);
+  const uint16_t shadow = SetupRgb565(24, 24, 32);
+  const uint16_t pale = SetupRgb565(216, 216, 232);
+  const uint16_t red = SetupRgb565(240, 56, 56);
+  const uint16_t title_shadow = SetupRgb565(64, 64, 80);
+  SetupDrawRgb565Image(GFX_TOP, 0, 0,
+                       kSetupTopBgWidth, kSetupTopBgHeight,
+                       kSetupTopBgRgb565);
+  SetupDrawRgb565Image(GFX_BOTTOM, 0, 0,
+                       kSetupBottomBgWidth, kSetupBottomBgHeight,
+                       kSetupBottomBgRgb565);
+  const char *title = "ROM SELECT";
+  int title_w = SetupTextWidthRational(title, 3, 2);
+  int title_x = 102 + (134 - title_w) / 2;
+  int title_y = 21 + (18 - (7 * 3 / 2)) / 2;
+  SetupDrawTextRational(GFX_TOP, title, title_x + 1, title_y + 1,
+                        3, 2, title_shadow);
+  SetupDrawTextRational(GFX_TOP, title, title_x, title_y, 3, 2, white);
+
+  const int visible_slots = 5;
+  int first = selected - 2;
+  if (first < 0)
+    first = 0;
+  if (first + visible_slots > rom_count)
+    first = rom_count > visible_slots ? rom_count - visible_slots : 0;
+  const int list_left = 84;
+  const int list_width = 232;
+  const int fairy_x = 104;
+  const int list_y = 76;
+  const int row_h = 28;
+  for (int slot = 0; slot < visible_slots; slot++) {
+    int index = first + slot;
+    int y = list_y + slot * row_h;
+    if (index < rom_count) {
+      char name[22];
+      SetupCopyDisplayText(roms[index].filename, name, sizeof(name));
+      int text_width = SetupTextWidth(name, 2);
+      int text_x = list_left + (list_width - text_width) / 2;
+      if (text_x < list_left + 28)
+        text_x = list_left + 28;
+      if (index == selected) {
+        SetupDrawMaskedRgb565Image(GFX_TOP, fairy_x, y - 2,
+                                   kSetupFairyWidth, kSetupFairyHeight,
+                                   kSetupFairyRgb565, kSetupFairyMask);
+      }
+      SetupDrawText(GFX_TOP, name, text_x + 1, y + 1, 2, shadow, 180);
+      SetupDrawText(GFX_TOP, name, text_x, y, 2, white, 180);
+    }
+  }
+
+  SetupDrawCentered(GFX_BOTTOM, "PRESS A TO SELECT", 74, 2, white);
+  SetupDrawCentered(GFX_BOTTOM, "PRESS START TO QUIT", 108, 2, white);
+  if (status && status[0]) {
+    char status_text[28];
+    SetupCopyDisplayText(status, status_text, sizeof(status_text));
+    uint16_t status_color = pale;
+    if (strcasecmp(status, "Incompatible ROM") == 0)
+      status_color = ((osGetTime() / 300) & 1) ? red : white;
+    SetupDrawCentered(GFX_BOTTOM, status_text, 166, 1, status_color);
+  }
+}
+
+typedef struct RomSelectorContext {
+  const RomEntry *roms;
+  int rom_count;
+  int selected;
+  const char *status;
+} RomSelectorContext;
+
+static void DrawRomSelectorFrame(void *context) {
+  RomSelectorContext *selector = (RomSelectorContext *)context;
+  DrawRomSelector(selector->roms, selector->rom_count,
+                  selector->selected, selector->status);
+}
+
+static void PresentRomSelector(const RomEntry *roms, int rom_count,
+                               int selected, const char *status) {
+  RomSelectorContext context = { roms, rom_count, selected, status };
+  PresentSetupStable(DrawRomSelectorFrame, &context);
+}
+
+static int SelectRom(RomEntry *roms, int rom_count, const char *status) {
+  if (rom_count <= 0) {
+    ShowFatalSetupError(
+      "No .sfc or .smc ROMs found in\n"
+      "sdmc:/3ds/Zelda 3DS/");
+    return -1;
+  }
+  int selected = 0;
+  int last_presented = -1;
+  uint64_t last_blink_step = UINT64_MAX;
+  bool blink_status = status && strcasecmp(status, "Incompatible ROM") == 0;
+  memset(g_setup_top_pixels, 0, sizeof(g_setup_top_pixels));
+  memset(g_setup_bottom_pixels, 0, sizeof(g_setup_bottom_pixels));
+  PresentSetupConsole();
+  PresentSetupConsole();
+  for (int i = 0; i < 150 && aptMainLoop(); i++)
+    gspWaitForVBlank();
+  SetupAudioStart();
+  while (aptMainLoop()) {
+    uint64_t blink_step = blink_status ? osGetTime() / 300 : 0;
+    if (selected != last_presented ||
+        (blink_status && blink_step != last_blink_step)) {
+      PresentRomSelector(roms, rom_count, selected, status);
+      last_presented = selected;
+      last_blink_step = blink_step;
+    }
+    hidScanInput();
+    u32 held = hidKeysHeld();
+    u32 down = hidKeysDown();
+    static bool dump_combo_was_held;
+    bool dump_combo =
+      (held & (KEY_L | KEY_R | KEY_A)) == (KEY_L | KEY_R | KEY_A);
+    if (dump_combo && !dump_combo_was_held)
+      CreateSetupDump("rom-selector");
+    dump_combo_was_held = dump_combo;
+    if ((down & KEY_DUP) && selected > 0) {
+      selected--;
+      SetupAudioPlayMove();
+    }
+    if ((down & KEY_DDOWN) && selected + 1 < rom_count) {
+      selected++;
+      SetupAudioPlayMove();
+    }
+    if (down & KEY_A)
+      return selected;
+    if (down & (KEY_B | KEY_START))
+      return -1;
+    gspWaitForVBlank();
+  }
+  return -1;
+}
+
+static bool EnsureProfileReady(RomEntry *rom, bool force_extract) {
+  if (!EnsureDirectory(kProfilesDirectory) || !EnsureDirectory(rom->profile))
+    return false;
+  char cwd[512];
+  if (!getcwd(cwd, sizeof(cwd)))
+    return false;
+  if (chdir(rom->profile) != 0)
+    return false;
+  CopyFileIfMissing(kBundledConfig, "zelda3.ini");
+  bool ready = !force_extract && AssetsFileLooksValid(kAssetsFilename);
+  if (!ready) {
+    char rom_path[640];
+    snprintf(rom_path, sizeof(rom_path), "../../%s", rom->filename);
+    ready = ExtractAssetsFromRom(rom_path);
+  }
+  chdir(cwd);
+  if (ready) {
+    char profile_assets[512];
+    char profile_ini[512];
+    snprintf(profile_assets, sizeof(profile_assets), "%s/%s",
+             rom->profile, kAssetsFilename);
+    snprintf(profile_ini, sizeof(profile_ini), "%s/zelda3.ini", rom->profile);
+    ready = CopyFileReplacing(profile_assets, kAssetsFilename) &&
+            CopyFileReplacing(profile_ini, "zelda3.ini") &&
+            PrepareSaveDirectory(rom, false);
+    WriteSelectedRom(rom);
+  }
+  return ready;
+}
+
+static bool ResolveActiveProfile(char *profile, size_t profile_size) {
+  bool force_selector = IsRegularFile(kForceSelectorFile);
+  if (force_selector)
+    remove(kForceSelectorFile);
+
+  RomEntry *roms = g_rom_entries;
+  int rom_count = ScanRoms(roms, countof(g_rom_entries));
+  bool always_show_selector = force_selector || rom_count > 1;
+  bool selected_file_exists = IsRegularFile(kSelectedRomFile);
+  SelectedRomInfo selected_info;
+  RomEntry selected_rom;
+  if (!always_show_selector &&
+      ReadSelectedRomInfo(&selected_info) &&
+      FindSelectedRomEntry(&selected_info, roms, rom_count, &selected_rom) &&
+      ProfileAssetsValid(selected_rom.profile)) {
+    char profile_assets[512];
+    char profile_ini[512];
+    snprintf(profile_assets, sizeof(profile_assets), "%s/%s",
+             selected_rom.profile, kAssetsFilename);
+    snprintf(profile_ini, sizeof(profile_ini), "%s/zelda3.ini",
+             selected_rom.profile);
+    if (!CopyFileReplacing(profile_assets, kAssetsFilename) ||
+        !CopyFileReplacing(profile_ini, "zelda3.ini"))
+      return false;
+    snprintf(profile, profile_size, "%s", selected_rom.profile);
+    return PrepareSaveDirectory(&selected_rom, false);
+  }
+
+  int legacy_choice = -1;
+  if (!always_show_selector && !selected_file_exists &&
+      AssetsFileLooksValid(kAssetsFilename)) {
+    legacy_choice = rom_count == 1 ? 0 : SelectRom(roms, rom_count, NULL);
+    if (legacy_choice < 0)
+      return false;
+    if (RomUsesBundledAssetsPatch(&roms[legacy_choice])) {
+      if (!MigrateLegacyStorage(&roms[legacy_choice]))
+        return false;
+      snprintf(profile, profile_size, "%s", roms[legacy_choice].profile);
+      return ProfileAssetsValid(profile) &&
+             PrepareSaveDirectoryForProfile(profile);
+    }
+    if (EnsureProfileReady(&roms[legacy_choice], true)) {
+      snprintf(profile, profile_size, "%s", roms[legacy_choice].profile);
+      return true;
+    }
+    SelectRom(roms, rom_count, "Incompatible ROM");
+    return false;
+  }
+
+  const char *status = NULL;
+  while (aptMainLoop()) {
+    int choice = rom_count == 1 && !status ? 0 : SelectRom(roms, rom_count, status);
+    if (choice < 0)
+      return false;
+    PresentRomSelector(roms, rom_count, choice, "Preparing selected ROM...");
+    if (EnsureProfileReady(&roms[choice], false)) {
+      snprintf(profile, profile_size, "%s", roms[choice].profile);
+      return true;
+    }
+    status = "Incompatible ROM";
+    if (rom_count <= 1)
+      SelectRom(roms, rom_count, status);
+  }
+  return false;
 }
 
 bool Platform3DS_PrepareStorage(void) {
@@ -1086,24 +2899,24 @@ bool Platform3DS_PrepareStorage(void) {
     return false;
 
   remove("setup-progress.txt");
-  remove("runtime.log");
   LogSetup("Zelda 3DS v%s setup started", ZELDA3_3DS_VERSION);
+  char profile[512];
+  BeginSetupConsole();
+  bool profile_ready = ResolveActiveProfile(profile, sizeof(profile));
+  EndSetupConsole();
+  if (!profile_ready)
+    return false;
+  remove("runtime.log");
   Platform3DS_LogRuntime("Zelda 3DS v%s runtime started", ZELDA3_3DS_VERSION);
+  Platform3DS_LogRuntime("Active ROM profile: %s", profile);
+  Platform3DS_DetectModel();
   CopyFileIfMissing(kBundledConfig, "zelda3.ini");
   Platform3DS_LoadRuntimeSettings();
-  bool assets_ready = AssetsFileLooksValid(kAssetsFilename);
-  if (assets_ready) {
-    Platform3DS_LogRuntime("Assets file header validated");
-  } else {
-    BeginSetupConsole();
-    bool should_extract = ConfirmExtraction();
-    assets_ready = should_extract && ExtractAssetsFromRom();
-    EndSetupConsole();
-    Platform3DS_LogRuntime("First-run setup result: %s",
-                           assets_ready ? "OK" : "cancelled/error");
-    if (!assets_ready)
-      return false;
+  if (!AssetsFileLooksValid(kAssetsFilename)) {
+    Platform3DS_LogRuntime("ERROR active profile assets missing/invalid");
+    return false;
   }
+  Platform3DS_LogRuntime("Assets file header validated");
 
   if (!IsRegularFile("sdmc:/3ds/dspfirm.cdc")) {
     Platform3DS_LogRuntime("ERROR DSP firmware missing");
@@ -1122,7 +2935,6 @@ bool Platform3DS_PrepareStorage(void) {
 }
 
 void Platform3DS_ApplyConfig(struct Config *config) {
-  Platform3DS_DetectModel();
   config->window_width = 400;
   config->window_height = 240;
   config->window_scale = 1;
@@ -1134,26 +2946,24 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->enhanced_mode7 = false;
   config->new_renderer = true;
   config->no_sprite_limits = false;
-  config->extend_y = g_is_new_3ds;
+  config->extend_y = false;
   config->extended_aspect_ratio =
     g_display_mode == kPlatform3DSDisplayUltraWideMod ? 72 : 0;
   config->features0 &= ~(kFeatures0_ExtendScreen64 |
                          kFeatures0_WidescreenVisualFixes);
-  bool wide = g_display_mode == kPlatform3DSDisplayUltraWideMod;
-  if (wide)
-    config->features0 |= kFeatures0_WidescreenVisualFixes;
-  ZeldaSetWidescreenFixedMode(wide && g_wide_mode == kPlatform3DSWideFixed);
+  if (g_display_mode == kPlatform3DSDisplayUltraWideMod) {
+    config->features0 |= kFeatures0_ExtendScreen64 |
+                         kFeatures0_WidescreenVisualFixes;
+  }
   config->audio_freq = 32000;
   config->audio_channels = 2;
-  config->audio_samples = g_is_new_3ds ? 1024 : 2048;
+  config->audio_samples = 1024;
   config->enable_msu = 0;
   config->disable_frame_delay = true;
-  Platform3DS_LogRuntime("Runtime settings: model=%s, display=%d, wide=%d, turbo=%d, audio_samples=%d",
-                         g_is_new_3ds ? "New 3DS" : "Old 3DS",
+  Platform3DS_LogRuntime("Runtime settings: display=%d, wide_edge=%d, turbo=%d",
                          (int)g_display_mode,
-                         (int)g_wide_mode,
-                         g_turbo_multiplier,
-                         config->audio_samples);
+                         (int)g_wide_edge_mode,
+                         g_turbo_multiplier);
 }
 
 static bool WriteBlob(const char *path, const void *data, size_t size) {
@@ -1290,13 +3100,11 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",
             g_is_new_3ds ? "yes" : "no");
-    if (g_core1_time_enabled) {
+    if (Platform3DS_CanUseCore1PpuWorker())
       fprintf(info, "Core 1 PPU budget: %d%%\n",
               g_core1_time_limit_percent);
-    } else {
-      fprintf(info, "Core 1 PPU budget: unavailable/%d%% requested\n",
-              g_core1_time_limit_percent);
-    }
+    else
+      fprintf(info, "Core 1 PPU budget: unavailable\n");
     int ppu_split_line = 0;
     uint32 ppu_main_time_us = 0;
     uint32 ppu_worker_time_us = 0;

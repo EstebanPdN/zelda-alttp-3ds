@@ -487,9 +487,10 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
     } else if (StringEqualsNoCase(key, "DisplayMode") ||
                StringEqualsNoCase(key, "WideMode") ||
                StringEqualsNoCase(key, "WideEdgeMode") ||
+               StringEqualsNoCase(key, "WideZoom") ||
                StringEqualsNoCase(key, "CStickMode") ||
                StringEqualsNoCase(key, "CStickTurboMultiplier")) {
-      return true;  // 3DS runtime settings are parsed by platform_3ds.c
+      return true;  // parsed by platform_3ds.c
     }
   } else if (section == 4) {
     if (StringEqualsNoCase(key, "ItemSwitchLR")) {

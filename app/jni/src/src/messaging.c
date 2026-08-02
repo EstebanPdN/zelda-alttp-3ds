@@ -259,6 +259,8 @@ const uint8 *GetLightOverworldTilemap() {
 }
 
 void SaveGameFile() {  // 80894a
+  if (srm_var1 < 2 || srm_var1 > 6 || (srm_var1 & 1))
+    return;
   int offs = ((srm_var1 >> 1) - 1) * 0x500;
   memcpy(g_zenv.sram + offs, save_dung_info, 0x500);
   memcpy(g_zenv.sram + offs + 0xf00, save_dung_info, 0x500);
@@ -831,8 +833,7 @@ void Death_Func15(bool count_as_death) {  // 89f50f
       CopySaveToWRAM();
     }
   } else {
-    if (sram_progress_indicator)
-      SaveGameFile();
+    SaveGameFile();
     TM_copy = 16;
     player_is_indoors = 0;
     Death_Func31();
