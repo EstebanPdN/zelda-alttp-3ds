@@ -834,6 +834,7 @@ void Death_Func15(bool count_as_death) {  // 89f50f
     }
   } else {
     SaveGameFile();
+    ZeldaClearAutosave();
     TM_copy = 16;
     player_is_indoors = 0;
     Death_Func31();

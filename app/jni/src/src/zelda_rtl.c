@@ -1485,6 +1485,16 @@ void SaveLoadSlot(int cmd, int which) {
   }
 }
 
+void ZeldaClearAutosave() {
+  char path[256];
+#ifdef __3DS__
+  Platform3DS_FormatSavePath("saves/save0.sav", path, sizeof(path));
+#else
+  snprintf(path, sizeof(path), "%s", "saves/save0.sav");
+#endif
+  remove(path);
+}
+
 typedef struct StateRecoderMultiPatch {
   uint32 count;
   uint32 addr;

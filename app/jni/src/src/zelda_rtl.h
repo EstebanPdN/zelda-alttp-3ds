@@ -76,6 +76,7 @@ enum {
 
 SDL_RWops* SDL_RWFromFileInExternal(const char *filename, const char *mode);
 void SaveLoadSlot(int cmd, int which);
+void ZeldaClearAutosave();
 void ZeldaWriteSram();
 void ZeldaReadSram();
 
