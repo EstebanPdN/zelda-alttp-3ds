@@ -1337,6 +1337,9 @@ static Thread ss_worker_thread;
 static LightEvent ss_worker_start;
 static LightEvent ss_worker_done;
 static int ss_worker_logic_frames;
+static s32 ss_worker_idle_priority;
+static s32 ss_worker_interactive_priority;
+static bool ss_worker_interactive;
 static uint64_t ss_full_redraw_count;
 static uint64_t ss_full_redraw_total_ticks;
 static uint64_t ss_full_redraw_max_ticks;
@@ -1374,6 +1377,12 @@ enum {
 
 static void request_bottom_redraw(uint32_t request) {
   __atomic_fetch_or(&ss_redraw_requests, request, __ATOMIC_RELEASE);
+}
+
+static void prioritize_bottom_touch(void) {
+  if (!ss_is_new_3ds && ss_worker_thread)
+    svcSetThreadPriority(threadGetHandle(ss_worker_thread),
+                         ss_worker_interactive_priority);
 }
 #endif
 
@@ -1679,6 +1688,8 @@ static void handle_tap(float x, float y) {
   if (!ss_is_new_3ds) {
     ss_touch_request_ticks = svcGetSystemTick();
     ss_touch_redraw_pending = true;
+    ss_worker_interactive = true;
+    prioritize_bottom_touch();
   }
   request_bottom_redraw(kBottomRedrawFull);
 #endif
@@ -2012,6 +2023,11 @@ static void second_screen_worker_main(void *unused) {
     LightEvent_Wait(&ss_worker_start);
     if (!ss_worker_running)
       break;
+    if (!ss_is_new_3ds) {
+      s32 priority = ss_worker_interactive ? ss_worker_interactive_priority :
+                                             ss_worker_idle_priority;
+      svcSetThreadPriority(CUR_THREAD_HANDLE, priority);
+    }
     uint64_t start = !ss_is_new_3ds ? svcGetSystemTick() : 0;
     if (ss_worker_sidebar_patch)
       draw_bottom_sidebar_patch();
@@ -2039,6 +2055,7 @@ static void second_screen_worker_main(void *unused) {
           ss_touch_redraw_max_ticks = touch_elapsed;
         ss_worker_touch_request_ticks = 0;
       }
+      svcSetThreadPriority(CUR_THREAD_HANDLE, ss_worker_idle_priority);
     }
     LightEvent_Signal(&ss_worker_done);
   }
@@ -2049,13 +2066,16 @@ static bool ensure_second_screen_worker(void) {
     return true;
   LightEvent_Init(&ss_worker_start, RESET_ONESHOT);
   LightEvent_Init(&ss_worker_done, RESET_ONESHOT);
-  s32 priority = 0x30;
-  svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
-  if (priority < 0x3f)
-    priority++;
+  s32 main_priority = 0x30;
+  svcGetThreadPriority(&main_priority, CUR_THREAD_HANDLE);
+  ss_worker_idle_priority = main_priority < 0x3f ? main_priority + 1 :
+                                                   main_priority;
+  ss_worker_interactive_priority = main_priority > 0 ? main_priority - 1 :
+                                                       main_priority;
   ss_worker_running = true;
   ss_worker_thread = threadCreate(
-    second_screen_worker_main, NULL, 48 * 1024, priority, 0, false);
+    second_screen_worker_main, NULL, 48 * 1024, ss_worker_idle_priority, 0,
+    false);
   if (!ss_worker_thread) {
     ss_worker_running = false;
     Platform3DS_LogRuntime(
@@ -2063,7 +2083,7 @@ static bool ensure_second_screen_worker(void) {
     return false;
   }
   Platform3DS_LogRuntime(
-    "Bottom worker: asynchronous low-priority Core 0 renderer enabled");
+    "Bottom worker: Old 3DS touch-priority Core 0 renderer enabled");
   return true;
 }
 
@@ -2093,14 +2113,14 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
     ss_frame_ready = true;
   }
 
-  int divisor = ss_is_new_3ds ? (logic_frames <= 1 ? 2 : 6) : 6;
+  int divisor = ss_is_new_3ds ? (logic_frames <= 1 ? 2 : 6) : 180;
   if (developer_overlay_mode)
     request_bottom_redraw(kBottomRedrawFull);
 
   uint32_t requests =
     __atomic_load_n(&ss_redraw_requests, __ATOMIC_ACQUIRE);
-  bool periodic_redraw = bottom_needs_periodic_redraw() &&
-                         frame_no % divisor == 0;
+  bool periodic_redraw = ss_front_buffer < 0 ||
+    (bottom_needs_periodic_redraw() && frame_no % divisor == 0);
   bool can_start_worker = ss_is_new_3ds || !ss_frame_ready;
   if (!ss_worker_busy && can_start_worker &&
       (requests != 0 || periodic_redraw)) {
@@ -2113,10 +2133,13 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
     ss_worker_buffer = ss_worker_sidebar_patch ? ss_front_buffer :
       (ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer);
     ss_worker_touch_request_ticks = 0;
+    ss_worker_interactive = false;
     if (!ss_worker_sidebar_patch && !ss_is_new_3ds &&
         ss_touch_redraw_pending) {
       ss_worker_touch_request_ticks = ss_touch_request_ticks;
       ss_touch_redraw_pending = false;
+      ss_worker_interactive = true;
+      prioritize_bottom_touch();
     }
     ss_worker_logic_frames = logic_frames;
     ss_worker_busy = true;
