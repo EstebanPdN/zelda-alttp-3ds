@@ -9,27 +9,11 @@
 			"name":"Scene",
 			"nodes":[
 				0,
-				1,
-				2
+				1
 			]
 		}
 	],
 	"nodes":[
-		{
-			"camera":0,
-			"name":"Banner Camera",
-			"rotation":[
-				-0.7071068286895752,
-				0,
-				0,
-				0.7071068286895752
-			],
-			"translation":[
-				0,
-				44.7859992980957,
-				-1
-			]
-		},
 		{
 			"mesh":0,
 			"name":"model_0",
@@ -40,9 +24,9 @@
 				0.7071068286895752
 			],
 			"scale":[
-				0.1599999964237213,
-				0.1599999964237213,
-				0.1599999964237213
+				0.1899999976158142,
+				0.1899999976158142,
+				0.1899999976158142
 			]
 		},
 		{
@@ -55,22 +39,10 @@
 				0.7071068286895752
 			],
 			"scale":[
-				0.1599999964237213,
-				0.1599999964237213,
-				0.1599999964237213
+				0.1899999976158142,
+				0.1899999976158142,
+				0.1899999976158142
 			]
-		}
-	],
-	"cameras":[
-		{
-			"name":"Banner Camera",
-			"perspective":{
-				"aspectRatio":1.7777777777777777,
-				"yfov":0.39959648408210363,
-				"zfar":1000,
-				"znear":0.10000000149011612
-			},
-			"type":"perspective"
 		}
 	],
 	"materials":[
@@ -84,8 +56,8 @@
 				"baseColorTexture":{
 					"index":1
 				},
-				"metallicFactor":0,
-				"roughnessFactor":0.6499999761581421
+				"metallicFactor":0.15,
+				"roughnessFactor":0.8399999737739563
 			}
 		},
 		{
@@ -99,7 +71,7 @@
 					1
 				],
 				"metallicFactor":0,
-				"roughnessFactor":0.6499999761581421
+				"roughnessFactor":0.8399999737739563
 			}
 		}
 	],
@@ -145,13 +117,13 @@
 	"images":[
 		{
 			"mimeType":"image/png",
-			"name":"logo_normal_128",
-			"uri":"logo_normal_128.png"
+			"name":"logo_normal_64",
+			"uri":"logo_normal_64.png"
 		},
 		{
 			"mimeType":"image/png",
-			"name":"logo_base_256",
-			"uri":"logo_base_256.png"
+			"name":"logo_base_saturated_128",
+			"uri":"logo_base_saturated_128.png"
 		}
 	],
 	"accessors":[
