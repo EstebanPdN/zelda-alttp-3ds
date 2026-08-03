@@ -1498,27 +1498,6 @@ static void present_second_screen(void) {
 #endif
 }
 
-static void force_bottom_redraw_now(int logic_frames) {
-#ifdef __3DS__
-  if (!ss_enabled || !ss_win)
-    return;
-  if (ss_worker_busy) {
-    LightEvent_Wait(&ss_worker_done);
-    ss_worker_busy = false;
-  }
-  ss_worker_buffer = ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer;
-  draw_second_screen(logic_frames);
-  ss_front_buffer = ss_worker_buffer;
-  ss_frame_ready = false;
-  ss_redraw_requested = false;
-  Platform3DS_PresentBottomFrame(
-    ss_present_pixels[ss_front_buffer],
-    k3DSBottomTextureWidth * 4, W, H);
-#else
-  (void)logic_frames;
-#endif
-}
-
 #ifdef __3DS__
 typedef struct BottomCriticalState {
   int module;
@@ -1535,7 +1514,7 @@ typedef struct BottomCriticalState {
   uint16_t rupees;
 } BottomCriticalState;
 
-static bool bottom_critical_state_changed(void) {
+static void request_bottom_redraw_on_state_change(void) {
   static bool initialized;
   static BottomCriticalState previous;
   BottomCriticalState current;
@@ -1561,7 +1540,8 @@ static bool bottom_critical_state_changed(void) {
     memcmp(&current, &previous, sizeof(current)) != 0;
   previous = current;
   initialized = true;
-  return changed;
+  if (changed)
+    ss_redraw_requested = true;
 }
 #endif
 
@@ -1782,7 +1762,6 @@ void SecondScreenSDL_Handle3DSTouch(void) {
     float x = (float)pos.px - draw_x;
     float y = (float)pos.py - draw_y;
     handle_tap(x, y);
-    force_bottom_redraw_now(1);
   }
   was_touching = touching;
 #endif
@@ -1940,10 +1919,7 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
       return;
   }
 
-  if (bottom_critical_state_changed()) {
-    force_bottom_redraw_now(logic_frames);
-    return;
-  }
+  request_bottom_redraw_on_state_change();
 
   if (!ensure_second_screen_worker()) {
     ss_worker_buffer = ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer;

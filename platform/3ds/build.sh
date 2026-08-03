@@ -42,30 +42,23 @@ if [[ ! -x "${MAKEROM}" || ! -x "${BANNERTOOL}" ]]; then
 fi
 
 "${BANNERTOOL}" makesmdh \
-  -s "The Legend of Zelda" \
-  -l "A Link to the Past 3DS port" \
+  -s "Zelda 3DS EXP" \
+  -l "A Link to the Past 3DS experimental" \
   -p "EstebanPdN" \
   -i "${ROOT}/platform/3ds/assets/icon.png" \
   -f visible,nosavebackups \
   -o "${GAME_BUILD}/zelda3-3ds.icn"
 
-if [[ -f "${ROOT}/platform/3ds/assets/banner.cgfx" ]]; then
-  "${BANNERTOOL}" makebanner \
-    -ci "${ROOT}/platform/3ds/assets/banner.cgfx" \
-    -a "${ROOT}/platform/3ds/assets/banner.wav" \
-    -o "${GAME_BUILD}/zelda3-3ds.bnr"
-else
-  "${BANNERTOOL}" makebanner \
-    -i "${ROOT}/platform/3ds/assets/banner.png" \
-    -a "${ROOT}/platform/3ds/assets/banner.wav" \
-    -o "${GAME_BUILD}/zelda3-3ds.bnr"
-fi
+"${BANNERTOOL}" makebanner \
+  -i "${ROOT}/platform/3ds/assets/banner.png" \
+  -a "${ROOT}/platform/3ds/assets/banner.wav" \
+  -o "${GAME_BUILD}/zelda3-3ds.bnr"
 
 (
   cd "${ROOT}"
   "${MAKEROM}" \
     -f cia \
-    -o "${GAME_BUILD}/zelda3-3ds-v2.8.cia" \
+    -o "${GAME_BUILD}/zelda3-3ds-v2.8.2-experimental.cia" \
     -DAPP_ROMFS=build-3ds/game/romfs \
     -rsf platform/3ds/cia/zelda3.rsf \
     -target t \
@@ -76,5 +69,5 @@ fi
 )
 
 printf 'Listos:\n'
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.8.3dsx"
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.8.cia"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.8.2-experimental.3dsx"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.8.2-experimental.cia"

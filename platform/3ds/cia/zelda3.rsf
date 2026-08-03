@@ -1,6 +1,6 @@
 BasicInfo:
-  Title: "Zelda ALttP 3DS"
-  ProductCode: "CTR-P-Z3DS"
+  Title: "Zelda 3DS EXP"
+  ProductCode: "CTR-P-Z3DE"
   Logo: Homebrew
 
 RomFs:
@@ -8,7 +8,7 @@ RomFs:
 
 TitleInfo:
   Category: Application
-  UniqueId: 0x5A13D
+  UniqueId: 0x5A13E
 
 Option:
   UseOnSD: true

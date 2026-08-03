@@ -164,29 +164,29 @@ static void ConfigurePpuSideSpace(int visual_x, bool fixed_camera,
       (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
        mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
     mod = player_is_indoors ? 7 : 9;
+  bool menu_map_active =
+    main_module_index == 14 && submodule_index == 7 && overworld_map_state >= 4;
   if (mod == 9) {
-    if (main_module_index == 14 && submodule_index == 7 && overworld_map_state >= 4) {
-      // World map
-      extra_left = kPpuExtraLeftRight, extra_right = kPpuExtraLeftRight;
-      extra_bottom = 16;
+    // Outdoors
+    if (horizontal_transition) {
+      extra_left = extra_right = kPpuExtraLeftRight;
+    } else if (fixed_camera) {
+      int left = WideCamera_Unwrap16(ow_scroll_vars0.xstart, visual_x);
+      int right = WideCamera_Unwrap16(ow_scroll_vars0.xend, visual_x);
+      extra_left = IntMax(visual_x - left, 0);
+      extra_right = IntMax(right - visual_x, 0);
     } else {
-      // outdoors
-      if (horizontal_transition) {
-        extra_left = extra_right = kPpuExtraLeftRight;
-      } else if (fixed_camera) {
-        int left = WideCamera_Unwrap16(ow_scroll_vars0.xstart, visual_x);
-        int right = WideCamera_Unwrap16(ow_scroll_vars0.xend, visual_x);
-        extra_left = IntMax(visual_x - left, 0);
-        extra_right = IntMax(right - visual_x, 0);
-      } else {
-        extra_left = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
-        extra_right = ow_scroll_vars0.xend - BG2HOFS_copy2;
-      }
-      extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
+      extra_left = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
+      extra_right = ow_scroll_vars0.xend - BG2HOFS_copy2;
     }
+    extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
   } else if (mod == 7) {
     // indoors, except when the light cone is in use
-    if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
+    if (menu_map_active && g_widescreen_edge_mode == 1) {
+      extra_left = 0;
+      extra_right = 0;
+      extra_bottom = 0;
+    } else if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
       int qm = quadrant_fullsize_x >> 1;
       if (horizontal_transition) {
         extra_left = extra_right = kPpuExtraLeftRight;
@@ -260,7 +260,8 @@ int ZeldaGetWidescreenFixedCameraMargin(void) {
       !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
       context == 0)
     return 0;
-  if (main_module_index == 14 && submodule_index == 7 &&
+  if (context == 7 &&
+      main_module_index == 14 && submodule_index == 7 &&
       overworld_map_state >= 4)
     return 0;
   if (context == 7) {
