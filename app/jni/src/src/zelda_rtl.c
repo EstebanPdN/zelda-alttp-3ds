@@ -166,9 +166,18 @@ static void ConfigurePpuSideSpace(int visual_x, bool fixed_camera,
     mod = player_is_indoors ? 7 : 9;
   if (mod == 9) {
     if (main_module_index == 14 && submodule_index == 7 && overworld_map_state >= 4) {
-      // World map
-      extra_left = kPpuExtraLeftRight, extra_right = kPpuExtraLeftRight;
-      extra_bottom = 16;
+      // The map is a Mode 7 screen, not an overworld camera view. Fixed Camera
+      // therefore falls back to its native 256-pixel canvas here; extending it
+      // distorts the map even though the camera transform itself is disabled.
+      if (g_widescreen_edge_mode == 1) {
+        extra_left = 0;
+        extra_right = 0;
+        extra_bottom = 0;
+      } else {
+        extra_left = kPpuExtraLeftRight;
+        extra_right = kPpuExtraLeftRight;
+        extra_bottom = 16;
+      }
     } else {
       // outdoors
       if (horizontal_transition) {
