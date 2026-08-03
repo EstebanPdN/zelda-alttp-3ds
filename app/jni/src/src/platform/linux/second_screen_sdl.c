@@ -1325,21 +1325,56 @@ static SDL_Window *main_win;
 static bool ss_enabled;
 #ifdef __3DS__
 static uint8_t *ss_present_pixels[2];
+static bool ss_is_new_3ds;
 static int ss_front_buffer = -1;
 static int ss_worker_buffer;
 static bool ss_worker_busy;
 static bool ss_frame_ready;
-static bool ss_redraw_requested;
+static uint32_t ss_redraw_requests;
+static bool ss_worker_sidebar_patch;
 static bool ss_worker_running;
 static Thread ss_worker_thread;
 static LightEvent ss_worker_start;
 static LightEvent ss_worker_done;
 static int ss_worker_logic_frames;
+static uint64_t ss_full_redraw_count;
+static uint64_t ss_full_redraw_total_ticks;
+static uint64_t ss_full_redraw_max_ticks;
+static uint64_t ss_patch_redraw_count;
+static uint64_t ss_patch_redraw_total_ticks;
+static uint64_t ss_patch_redraw_max_ticks;
+static bool ss_touch_redraw_pending;
+static uint64_t ss_touch_request_ticks;
+static uint64_t ss_worker_touch_request_ticks;
+static uint64_t ss_touch_redraw_count;
+static uint64_t ss_touch_redraw_total_ticks;
+static uint64_t ss_touch_redraw_max_ticks;
 enum {
   k3DSBottomTextureWidth = 512,
   k3DSBottomTextureHeight = 256,
 };
 static void draw_second_screen(int logic_frames);
+
+static int bottom_bytes_per_pixel(void) {
+  return ss_is_new_3ds ? 4 : 2;
+}
+
+static int bottom_buffer_pitch(void) {
+  return k3DSBottomTextureWidth * bottom_bytes_per_pixel();
+}
+
+static uint32_t bottom_sdl_pixel_format(void) {
+  return ss_is_new_3ds ? SDL_PIXELFORMAT_ARGB8888 : SDL_PIXELFORMAT_RGB565;
+}
+
+enum {
+  kBottomRedrawHud = 1 << 0,
+  kBottomRedrawFull = 1 << 1,
+};
+
+static void request_bottom_redraw(uint32_t request) {
+  __atomic_fetch_or(&ss_redraw_requests, request, __ATOMIC_RELEASE);
+}
 #endif
 
 static void request_dump_now(void) {
@@ -1349,9 +1384,13 @@ static void request_dump_now(void) {
       ss_front_buffer >= 0 && ss_present_pixels[ss_front_buffer]) {
     char path[192];
     snprintf(path, sizeof(path), "%s/bottom-screen.bmp", dump_dir);
-    Platform3DS_SaveARGB8888Bmp(
-      path, ss_present_pixels[ss_front_buffer],
-      k3DSBottomTextureWidth * 4, W, H);
+    if (ss_is_new_3ds) {
+      Platform3DS_SaveARGB8888Bmp(
+        path, ss_present_pixels[ss_front_buffer], bottom_buffer_pitch(), W, H);
+    } else {
+      Platform3DS_SaveRGB565Bmp(
+        path, ss_present_pixels[ss_front_buffer], bottom_buffer_pitch(), W, H);
+    }
   }
 #endif
   SS_RequestMemoryDump(dump_dir);
@@ -1361,6 +1400,7 @@ static void request_dump_now(void) {
 bool SecondScreenSDL_Init(SDL_Window *main_window) {
 #ifdef __3DS__
   main_win = main_window;
+  ss_is_new_3ds = Platform3DS_IsNew3DS();
   ss_enabled = true;
   return true;
 #else
@@ -1390,7 +1430,7 @@ void SecondScreenSDL_OpenDeveloperOverlay(void) {
   developer_mode = true;
   developer_overlay_mode = true;
 #ifdef __3DS__
-  ss_redraw_requested = true;
+  request_bottom_redraw(kBottomRedrawFull);
 #endif
 }
 
@@ -1459,10 +1499,12 @@ static bool ensure_window(void) {
 #ifdef __3DS__
   for (int i = 0; i < 2; i++) {
     ss_present_pixels[i] = linearMemAlign(
-      k3DSBottomTextureWidth * k3DSBottomTextureHeight * 4, 64);
+      k3DSBottomTextureWidth * k3DSBottomTextureHeight *
+        bottom_bytes_per_pixel(), 64);
     if (ss_present_pixels[i]) {
       memset(ss_present_pixels[i], 0,
-             k3DSBottomTextureWidth * k3DSBottomTextureHeight * 4);
+             k3DSBottomTextureWidth * k3DSBottomTextureHeight *
+               bottom_bytes_per_pixel());
     }
   }
   if (!ss_present_pixels[0] || !ss_present_pixels[1]) {
@@ -1491,8 +1533,8 @@ static void present_second_screen(void) {
   if (!ss_present_pixels[ss_worker_buffer])
     return;
   SDL_RenderReadPixels(
-    ss_r, NULL, SDL_PIXELFORMAT_ARGB8888,
-    ss_present_pixels[ss_worker_buffer], k3DSBottomTextureWidth * 4);
+    ss_r, NULL, bottom_sdl_pixel_format(),
+    ss_present_pixels[ss_worker_buffer], bottom_buffer_pitch());
 #else
   SDL_RenderPresent(ss_r);
 #endif
@@ -1512,6 +1554,7 @@ typedef struct BottomCriticalState {
   uint8_t bombs;
   uint8_t arrows;
   uint16_t rupees;
+  uint32_t inventory_hash;
 } BottomCriticalState;
 
 static void request_bottom_redraw_on_state_change(void) {
@@ -1535,13 +1578,97 @@ static void request_bottom_redraw_on_state_change(void) {
   current.arrows = local_sram[0x77];
   current.rupees = (uint16_t)local_sram[0x62] |
                    ((uint16_t)local_sram[0x63] << 8);
+  current.inventory_hash = 2166136261u;
+  if (!ss_is_new_3ds) {
+    for (int i = 0x40; i < 0x80; i++) {
+      if (i == 0x43 || i == 0x62 || i == 0x63 ||
+          (i >= 0x6c && i <= 0x6f) || i == 0x77)
+        continue;
+      current.inventory_hash =
+        (current.inventory_hash ^ local_sram[i]) * 16777619u;
+    }
+  }
 
-  bool changed = initialized &&
-    memcmp(&current, &previous, sizeof(current)) != 0;
+  bool full_changed = initialized &&
+    (current.module != previous.module ||
+     current.area != previous.area ||
+     current.dungeon != previous.dungeon ||
+     current.indoors != previous.indoors ||
+     current.equipped != previous.equipped ||
+     (!ss_is_new_3ds &&
+      current.inventory_hash != previous.inventory_hash));
+  bool hud_changed = initialized &&
+    (current.health_cap != previous.health_cap ||
+     current.health_cur != previous.health_cur ||
+     current.magic != previous.magic ||
+     current.keys != previous.keys ||
+     current.bombs != previous.bombs ||
+     current.arrows != previous.arrows ||
+     current.rupees != previous.rupees);
   previous = current;
   initialized = true;
-  if (changed)
-    ss_redraw_requested = true;
+  if (full_changed || (ss_is_new_3ds && hud_changed))
+    request_bottom_redraw(kBottomRedrawFull);
+  else if (hud_changed)
+    request_bottom_redraw(kBottomRedrawHud);
+}
+
+static bool can_patch_bottom_sidebar(void) {
+  int module = SS_GetModule() & 0xff;
+  return !ss_is_new_3ds && art_ready && ss_front_buffer >= 0 &&
+         (tab == TAB_MAP || tab == TAB_ITEMS) &&
+         mode_for_module(module) == MODE_GAME;
+}
+
+static bool bottom_needs_periodic_redraw(void) {
+  if (ss_is_new_3ds || developer_overlay_mode)
+    return true;
+  if (mode_for_module(SS_GetModule() & 0xff) != MODE_GAME)
+    return true;
+  return tab == TAB_MAP || tab == TAB_ITEMS;
+}
+
+static void draw_bottom_sidebar_patch(void) {
+  SS_ReadSram(sram, sizeof(sram));
+  bool indoors = SS_IsIndoors();
+  int dungeon_info = SS_GetDungeon();
+  bool dungeon_mode = indoors && (dungeon_info & 0xff) != 0xff;
+  float tab_h = 84 * u;
+  float side_w = 200 * u;
+  RectFS side = {
+    W - side_w + 4 * u,
+    10 * u,
+    side_w - 14 * u,
+    H - tab_h - 14 * u,
+  };
+  SDL_Rect clip = {
+    (int)side.x, (int)side.y, (int)side.w, (int)side.h,
+  };
+
+  SDL_RenderSetClipRect(ss_r, &clip);
+  SDL_Texture *background = dungeon_mode ? tex_bg_stone : tex_bg_menu;
+  int texture_width = dungeon_mode ? kSSTexStone_W : kSSTexMenu_W;
+  int texture_height = dungeon_mode ? kSSTexStone_H : kSSTexMenu_H;
+  if (background) {
+    float tile_width = texture_width * 2.0f;
+    float tile_height = texture_height * 2.0f;
+    for (float y = 0; y < H; y += tile_height) {
+      for (float x = 0; x < W; x += tile_width) {
+        SDL_FRect destination = {x, y, tile_width, tile_height};
+        SDL_RenderCopyF(ss_r, background, NULL, &destination);
+      }
+    }
+  } else {
+    fill_rect(side.x, side.y, side.w, side.h,
+              dungeon_mode ? COL_BG_STONE : COL_BG_MENU);
+  }
+  draw_sidebar(side.x, side.y, side.w, side.h, dungeon_mode);
+  SDL_RenderSetClipRect(ss_r, NULL);
+
+  uint8_t *destination = ss_present_pixels[ss_worker_buffer] +
+    clip.y * bottom_buffer_pitch() + clip.x * bottom_bytes_per_pixel();
+  SDL_RenderReadPixels(ss_r, &clip, bottom_sdl_pixel_format(),
+                       destination, bottom_buffer_pitch());
 }
 #endif
 
@@ -1549,7 +1676,11 @@ static void handle_tap(float x, float y) {
   int module = SS_GetModule() & 0xFF;
   if (mode_for_module(module) != MODE_GAME || !art_ready) return;
 #ifdef __3DS__
-  ss_redraw_requested = true;
+  if (!ss_is_new_3ds) {
+    ss_touch_request_ticks = svcGetSystemTick();
+    ss_touch_redraw_pending = true;
+  }
+  request_bottom_redraw(kBottomRedrawFull);
 #endif
 
   if (in_rect(&tab_items_r, x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leave_settings_submenu(); return; }
@@ -1647,7 +1778,7 @@ static void handle_tap(float x, float y) {
       } else if (in_rect(&developer_row_r[1], x, y)) {
         developer_overlay_mode = true;
 #ifdef __3DS__
-        ss_redraw_requested = true;
+        request_bottom_redraw(kBottomRedrawFull);
 #endif
       }
     } else {
@@ -1881,7 +2012,34 @@ static void second_screen_worker_main(void *unused) {
     LightEvent_Wait(&ss_worker_start);
     if (!ss_worker_running)
       break;
-    draw_second_screen(ss_worker_logic_frames);
+    uint64_t start = !ss_is_new_3ds ? svcGetSystemTick() : 0;
+    if (ss_worker_sidebar_patch)
+      draw_bottom_sidebar_patch();
+    else
+      draw_second_screen(ss_worker_logic_frames);
+    if (!ss_is_new_3ds) {
+      uint64_t elapsed = svcGetSystemTick() - start;
+      if (ss_worker_sidebar_patch) {
+        ss_patch_redraw_count++;
+        ss_patch_redraw_total_ticks += elapsed;
+        if (elapsed > ss_patch_redraw_max_ticks)
+          ss_patch_redraw_max_ticks = elapsed;
+      } else {
+        ss_full_redraw_count++;
+        ss_full_redraw_total_ticks += elapsed;
+        if (elapsed > ss_full_redraw_max_ticks)
+          ss_full_redraw_max_ticks = elapsed;
+      }
+      if (ss_worker_touch_request_ticks != 0) {
+        uint64_t touch_elapsed =
+          svcGetSystemTick() - ss_worker_touch_request_ticks;
+        ss_touch_redraw_count++;
+        ss_touch_redraw_total_ticks += touch_elapsed;
+        if (touch_elapsed > ss_touch_redraw_max_ticks)
+          ss_touch_redraw_max_ticks = touch_elapsed;
+        ss_worker_touch_request_ticks = 0;
+      }
+    }
     LightEvent_Signal(&ss_worker_done);
   }
 }
@@ -1935,15 +2093,32 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
     ss_frame_ready = true;
   }
 
-  int divisor = logic_frames <= 1 ? 2 : 6;
+  int divisor = ss_is_new_3ds ? (logic_frames <= 1 ? 2 : 6) : 6;
   if (developer_overlay_mode)
-    ss_redraw_requested = true;
+    request_bottom_redraw(kBottomRedrawFull);
 
-  if (!ss_worker_busy &&
-      (ss_redraw_requested || frame_no % divisor == 0)) {
-    ss_worker_buffer = ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer;
+  uint32_t requests =
+    __atomic_load_n(&ss_redraw_requests, __ATOMIC_ACQUIRE);
+  bool periodic_redraw = bottom_needs_periodic_redraw() &&
+                         frame_no % divisor == 0;
+  bool can_start_worker = ss_is_new_3ds || !ss_frame_ready;
+  if (!ss_worker_busy && can_start_worker &&
+      (requests != 0 || periodic_redraw)) {
+    requests = __atomic_exchange_n(&ss_redraw_requests, 0,
+                                   __ATOMIC_ACQ_REL);
+    ss_worker_sidebar_patch = !periodic_redraw &&
+      (requests & kBottomRedrawFull) == 0 &&
+      (requests & kBottomRedrawHud) != 0 &&
+      can_patch_bottom_sidebar();
+    ss_worker_buffer = ss_worker_sidebar_patch ? ss_front_buffer :
+      (ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer);
+    ss_worker_touch_request_ticks = 0;
+    if (!ss_worker_sidebar_patch && !ss_is_new_3ds &&
+        ss_touch_redraw_pending) {
+      ss_worker_touch_request_ticks = ss_touch_request_ticks;
+      ss_touch_redraw_pending = false;
+    }
     ss_worker_logic_frames = logic_frames;
-    ss_redraw_requested = false;
     ss_worker_busy = true;
     LightEvent_Signal(&ss_worker_start);
   }
@@ -1955,8 +2130,41 @@ void SecondScreenSDL_Update(int logic_frames) {
     return;
   Platform3DS_PresentBottomFrame(
     ss_present_pixels[ss_front_buffer],
-    k3DSBottomTextureWidth * 4, W, H);
+    bottom_buffer_pitch(), W, H);
   ss_frame_ready = false;
+}
+
+void SecondScreenSDL_GetOld3DSWorkerStats(
+    uint64_t *full_count, uint32_t *full_average_us, uint32_t *full_max_us,
+    uint64_t *patch_count, uint32_t *patch_average_us, uint32_t *patch_max_us,
+    uint64_t *touch_count, uint32_t *touch_average_us, uint32_t *touch_max_us) {
+  if (full_count)
+    *full_count = ss_full_redraw_count;
+  if (full_average_us)
+    *full_average_us = ss_full_redraw_count ? (uint32_t)(
+      ss_full_redraw_total_ticks * 1000000ull /
+      (SYSCLOCK_ARM11 * ss_full_redraw_count)) : 0;
+  if (full_max_us)
+    *full_max_us = (uint32_t)(
+      ss_full_redraw_max_ticks * 1000000ull / SYSCLOCK_ARM11);
+  if (patch_count)
+    *patch_count = ss_patch_redraw_count;
+  if (patch_average_us)
+    *patch_average_us = ss_patch_redraw_count ? (uint32_t)(
+      ss_patch_redraw_total_ticks * 1000000ull /
+      (SYSCLOCK_ARM11 * ss_patch_redraw_count)) : 0;
+  if (patch_max_us)
+    *patch_max_us = (uint32_t)(
+      ss_patch_redraw_max_ticks * 1000000ull / SYSCLOCK_ARM11);
+  if (touch_count)
+    *touch_count = ss_touch_redraw_count;
+  if (touch_average_us)
+    *touch_average_us = ss_touch_redraw_count ? (uint32_t)(
+      ss_touch_redraw_total_ticks * 1000000ull /
+      (SYSCLOCK_ARM11 * ss_touch_redraw_count)) : 0;
+  if (touch_max_us)
+    *touch_max_us = (uint32_t)(
+      ss_touch_redraw_max_ticks * 1000000ull / SYSCLOCK_ARM11);
 }
 #else
 void SecondScreenSDL_Update(int logic_frames) {

@@ -582,8 +582,10 @@ bool Platform3DS_InitTopPresenter(void) {
   }
   C3D_TexSetFilter(&g_top_texture, GPU_NEAREST, GPU_NEAREST);
   C3D_TexSetWrap(&g_top_texture, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
+  GPU_TEXCOLOR bottom_texture_format =
+    g_is_new_3ds ? GPU_RGBA8 : GPU_RGB565;
   if (!C3D_TexInitVRAM(&g_bottom_texture, kTopTextureWidth,
-                       kTopTextureHeight, GPU_RGBA8)) {
+                       kTopTextureHeight, bottom_texture_format)) {
     C3D_TexDelete(&g_top_texture);
     C2D_Fini();
     C3D_Fini();
@@ -726,6 +728,15 @@ static void ConfigureArgbTextureEnv(void) {
   C3D_TexEnvColor(env, C2D_Color32(0, 0, 255, 255));
 }
 
+static void ConfigureRgb565TextureEnv(void) {
+  C3D_TexEnv *env = C3D_GetTexEnv(0);
+  C3D_TexEnvInit(env);
+  C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, 0, 0);
+  C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+  for (int i = 1; i < 3; i++)
+    C3D_TexEnvInit(C3D_GetTexEnv(i));
+}
+
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
                                  int width, int height,
                                  int focus_x, int focus_y) {
@@ -813,14 +824,17 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
 
 void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
                                     int width, int height) {
+  int bytes_per_pixel = g_is_new_3ds ? 4 : 2;
   if (!g_gpu_frame_active || !pixels ||
-      pitch != kTopTextureWidth * 4 ||
+      pitch != kTopTextureWidth * bytes_per_pixel ||
       width <= 0 || width > kTopTextureWidth ||
       height <= 0 || height > kTopTextureHeight)
     return;
 
   GSPGPU_FlushDataCache(pixels,
-                        kTopTextureWidth * kTopTextureHeight * 4);
+                        kTopTextureWidth * kTopTextureHeight * bytes_per_pixel);
+  GX_TRANSFER_FORMAT bottom_transfer_format =
+    g_is_new_3ds ? GX_TRANSFER_FMT_RGBA8 : GX_TRANSFER_FMT_RGB565;
   C3D_SyncDisplayTransfer(
     (u32 *)pixels, GX_BUFFER_DIM(kTopTextureWidth, kTopTextureHeight),
     (u32 *)g_bottom_texture.data,
@@ -828,8 +842,8 @@ void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
     GX_TRANSFER_FLIP_VERT(0) |
       GX_TRANSFER_OUT_TILED(1) |
       GX_TRANSFER_RAW_COPY(0) |
-      GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-      GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+      GX_TRANSFER_IN_FORMAT(bottom_transfer_format) |
+      GX_TRANSFER_OUT_FORMAT(bottom_transfer_format) |
       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
 
   g_bottom_subtexture = (Tex3DS_SubTexture){
@@ -858,7 +872,10 @@ void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
   C2D_TargetClear(g_bottom_target, C2D_Color32(0, 0, 0, 255));
   C2D_SceneBegin(g_bottom_target);
   C2D_DrawImage(image, &params, NULL);
-  ConfigureArgbTextureEnv();
+  if (g_is_new_3ds)
+    ConfigureArgbTextureEnv();
+  else
+    ConfigureRgb565TextureEnv();
 }
 
 void Platform3DS_EndFrame(void) {
@@ -3069,6 +3086,53 @@ bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8_t *pixels,
   return ok;
 }
 
+bool Platform3DS_SaveRGB565Bmp(const char *path, const uint8_t *pixels,
+                               int pitch, int width, int height) {
+  if (!path || !pixels || pitch <= 0 || width <= 0 || height <= 0)
+    return false;
+  FILE *file = fopen(path, "wb");
+  if (!file)
+    return false;
+
+  int row_size = (width * 3 + 3) & ~3;
+  uint32_t file_size = 54u + (uint32_t)row_size * (uint32_t)height;
+  uint8_t header[54] = {
+    'B', 'M',
+    (uint8_t)file_size, (uint8_t)(file_size >> 8),
+    (uint8_t)(file_size >> 16), (uint8_t)(file_size >> 24),
+    0, 0, 0, 0, 54, 0, 0, 0,
+    40, 0, 0, 0,
+    (uint8_t)width, (uint8_t)(width >> 8),
+    (uint8_t)(width >> 16), (uint8_t)(width >> 24),
+    (uint8_t)height, (uint8_t)(height >> 8),
+    (uint8_t)(height >> 16), (uint8_t)(height >> 24),
+    1, 0, 24, 0,
+  };
+  bool ok = fwrite(header, 1, sizeof(header), file) == sizeof(header);
+  uint8_t *row = malloc((size_t)row_size);
+  if (!row)
+    ok = false;
+  for (int y = height - 1; ok && y >= 0; y--) {
+    memset(row, 0, (size_t)row_size);
+    const uint16_t *source =
+      (const uint16_t *)(pixels + (size_t)y * pitch);
+    for (int x = 0; x < width; x++) {
+      uint16_t color = source[x];
+      row[x * 3 + 0] = (uint8_t)((color & 31) * 255 / 31);
+      row[x * 3 + 1] = (uint8_t)(((color >> 5) & 63) * 255 / 63);
+      row[x * 3 + 2] = (uint8_t)(((color >> 11) & 31) * 255 / 31);
+    }
+    ok = fwrite(row, 1, (size_t)row_size, file) == (size_t)row_size;
+  }
+  free(row);
+  if (fclose(file) != 0)
+    ok = false;
+  if (!ok)
+    remove(path);
+  Platform3DS_LogRuntime("Screenshot %s: %s", path, ok ? "OK" : "FAILED");
+  return ok;
+}
+
 bool Platform3DS_DumpMemory(const char *directory,
                             const uint8_t *ram, size_t ram_size,
                             const uint8_t *sram, size_t sram_size,
@@ -3100,6 +3164,10 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",
             g_is_new_3ds ? "yes" : "no");
+    fprintf(info, "Bottom pixel path: %s\n",
+            g_is_new_3ds ? "ARGB8888" : "RGB565");
+    fprintf(info, "Bottom periodic cadence: %d FPS\n",
+            g_is_new_3ds ? 30 : 10);
     if (Platform3DS_CanUseCore1PpuWorker())
       fprintf(info, "Core 1 PPU budget: %d%%\n",
               g_core1_time_limit_percent);
@@ -3120,6 +3188,38 @@ bool Platform3DS_DumpMemory(const char *directory,
               (unsigned long)ppu_main_time_us);
       fprintf(info, "Last slowest PPU worker: %lu us\n",
               (unsigned long)ppu_worker_time_us);
+    }
+    if (!g_is_new_3ds) {
+      extern void SecondScreenSDL_GetOld3DSWorkerStats(
+        uint64_t *, uint32_t *, uint32_t *,
+        uint64_t *, uint32_t *, uint32_t *,
+        uint64_t *, uint32_t *, uint32_t *);
+      uint64_t full_count = 0, patch_count = 0, touch_count = 0;
+      uint32_t full_average_us = 0, full_max_us = 0;
+      uint32_t patch_average_us = 0, patch_max_us = 0;
+      uint32_t touch_average_us = 0, touch_max_us = 0;
+      SecondScreenSDL_GetOld3DSWorkerStats(
+        &full_count, &full_average_us, &full_max_us,
+        &patch_count, &patch_average_us, &patch_max_us,
+        &touch_count, &touch_average_us, &touch_max_us);
+      fprintf(info, "Bottom full redraws: %llu\n",
+              (unsigned long long)full_count);
+      fprintf(info, "Average bottom full redraw: %lu us\n",
+              (unsigned long)full_average_us);
+      fprintf(info, "Maximum bottom full redraw: %lu us\n",
+              (unsigned long)full_max_us);
+      fprintf(info, "Bottom HUD patch redraws: %llu\n",
+              (unsigned long long)patch_count);
+      fprintf(info, "Average bottom HUD patch: %lu us\n",
+              (unsigned long)patch_average_us);
+      fprintf(info, "Maximum bottom HUD patch: %lu us\n",
+              (unsigned long)patch_max_us);
+      fprintf(info, "Measured touch redraws: %llu\n",
+              (unsigned long long)touch_count);
+      fprintf(info, "Average touch-to-render: %lu us\n",
+              (unsigned long)touch_average_us);
+      fprintf(info, "Maximum touch-to-render: %lu us\n",
+              (unsigned long)touch_max_us);
     }
     fprintf(info, "Frame timing samples: %llu\n",
             (unsigned long long)g_frame_timing_samples);
