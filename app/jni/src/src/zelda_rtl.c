@@ -31,6 +31,13 @@ static int g_widescreen_edge_mode;
 
 static void Startup_InitializeMemory();
 
+static bool IsDungeonMapMenuActive(void) {
+  // The supplied dump is module 14 / submodule 3 while preserving module 7.
+  // That stays true during every map initialization state.
+  return main_module_index == 14 && submodule_index == 3 &&
+         saved_module_for_menu == 7;
+}
+
 typedef struct SimpleHdma {
   const uint8 *table;
   const uint8 *indir_ptr;
@@ -156,6 +163,12 @@ static void ConfigurePpuSideSpace(int visual_x, bool fixed_camera,
                                   bool horizontal_transition) {
   // Let PPU impl know about the maximum allowed extra space on the sides and bottom
   int extra_right = 0, extra_left = 0, extra_bottom = 0;
+  if (IsDungeonMapMenuActive()) {
+    // Keep map background tiles and the sprite overlay in the same native
+    // 256-pixel coordinate space while the dungeon map is open.
+    PpuSetExtraSideSpace(g_zenv.ppu, 0, 0, 0);
+    return;
+  }
 //  printf("main %d, sub %d  (%d, %d, %d)\n", main_module_index, submodule_index, BG2HOFS_copy2, room_bounds_x.v[2 | (quadrant_fullsize_x >> 1)], quadrant_fullsize_x >> 1);
   int mod = main_module_index;
   if (mod == 14)
@@ -164,8 +177,6 @@ static void ConfigurePpuSideSpace(int visual_x, bool fixed_camera,
       (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
        mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
     mod = player_is_indoors ? 7 : 9;
-  bool menu_map_active =
-    main_module_index == 14 && submodule_index == 7 && overworld_map_state >= 4;
   if (mod == 9) {
     // Outdoors
     if (horizontal_transition) {
@@ -182,11 +193,7 @@ static void ConfigurePpuSideSpace(int visual_x, bool fixed_camera,
     extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
   } else if (mod == 7) {
     // indoors, except when the light cone is in use
-    if (menu_map_active && g_widescreen_edge_mode == 1) {
-      extra_left = 0;
-      extra_right = 0;
-      extra_bottom = 0;
-    } else if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
+    if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
       int qm = quadrant_fullsize_x >> 1;
       if (horizontal_transition) {
         extra_left = extra_right = kPpuExtraLeftRight;
@@ -259,6 +266,8 @@ int ZeldaGetWidescreenFixedCameraMargin(void) {
       !visual_fixes_enabled ||
       !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
       context == 0)
+    return 0;
+  if (IsDungeonMapMenuActive())
     return 0;
   if (context == 7 &&
       main_module_index == 14 && submodule_index == 7 &&

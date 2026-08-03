@@ -50,7 +50,7 @@ fi
   -o "${GAME_BUILD}/zelda3-3ds.icn"
 
 "${BANNERTOOL}" makebanner \
-  -i "${ROOT}/platform/3ds/assets/banner.png" \
+  -ci "${ROOT}/platform/3ds/assets/banner.cgfx" \
   -a "${ROOT}/platform/3ds/assets/banner.wav" \
   -o "${GAME_BUILD}/zelda3-3ds.bnr"
 
@@ -58,7 +58,7 @@ fi
   cd "${ROOT}"
   "${MAKEROM}" \
     -f cia \
-    -o "${GAME_BUILD}/zelda3-3ds-v2.8.2-experimental.cia" \
+    -o "${GAME_BUILD}/zelda3-3ds-v2.8.3.cia" \
     -DAPP_ROMFS=build-3ds/game/romfs \
     -rsf platform/3ds/cia/zelda3.rsf \
     -target t \
@@ -69,5 +69,5 @@ fi
 )
 
 printf 'Listos:\n'
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.8.2-experimental.3dsx"
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.8.2-experimental.cia"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.8.3.3dsx"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v2.8.3.cia"
