@@ -32,10 +32,8 @@ user must provide their own legally obtained USA, unheadered ROM on their own
   game speed depend on when a VBlank wait returns.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
   with persistent tile-row caches and frame-time diagnostics in quick dumps.
-- HOME Menu metadata is versioned for each build. v2.4 appears as
-  `Zelda ALttP 3DS` / `Zelda A Link to the Past 3DS v2.4`.
-- HOME Menu banner uses a lightweight CGFX 3D box model with the supplied
-  hover sound converted to a short PCM WAV.
+- HOME Menu banner uses a lightweight custom CGFX 3D logo model with the
+  supplied hover sound converted to a short PCM WAV.
 
 ## Installation
 
