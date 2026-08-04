@@ -16,7 +16,7 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 3DS SD card.
 
 ## Support me
-buymeacoffee.com/estebanpdn
+https://buymeacoffee.com/estebanpdn
 
 ## Nintendo 3DS Features
 
