@@ -85,7 +85,7 @@ Requirements:
 - `makerom` and `bannertool` for CIA packaging
 - the vendored SDL2 source in `app/jni/SDL2`
 - `banner.cgfx` is prebuilt in `platform/3ds/assets`; it was generated from
-  the supplied box glTF with only the base diffuse texture.
+  the supplied 2.0 Blender logo model.
 
 Build:
 
