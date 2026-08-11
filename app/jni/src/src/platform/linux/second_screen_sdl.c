@@ -191,6 +191,7 @@ static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_
 static RectFS settings_row_r[6], remap_row_r[6], remap_back_r;
 static RectFS remap_page_r;
 static RectFS screen_row_r[4], screen_back_r;
+static RectFS cinema_back_r;
 static RectFS developer_row_r[2], developer_back_r;
 
 // settings / remap state
@@ -859,17 +860,24 @@ static void draw_sidebar(float x, float y, float w, float h, bool dungeon_mode) 
   float my = floorf(y + h - bar_h - 5.0f + 0.5f);
   int cap = sram8(0x6C) >> 3; if (cap > 20) cap = 20;
   int cur = sram8(0x6D);
-  int heart_cols = cap <= 5 ? cap : 5;
-  if (heart_cols <= 0) heart_cols = 1;
-  int heart_rows = (cap + heart_cols - 1) / heart_cols;
-  float heart_s = 2.0f;
+  float heart_s = cap > 10 ? 1.25f : cap > 5 ? 1.5f : 2.0f;
   float heart_px = 8.0f * heart_s;
-  float hs = 18.0f;
-  float hy = floorf(my - heart_rows * hs - 9.0f - (half_magic ? 14.0f : 0.0f) + 0.5f);
+  float hs = heart_px + (cap > 10 ? 2.0f : 3.0f);
+  int desired_cols = cap <= 5 ? cap : cap <= 10 ? 5 : 10;
+  int max_cols = (int)((w + 2.0f) / hs);
+  int heart_cols = desired_cols;
+  if (heart_cols <= 0) heart_cols = 1;
+  if (max_cols > 0 && heart_cols > max_cols) heart_cols = max_cols;
+  int heart_rows = (cap + heart_cols - 1) / heart_cols;
+  float half_gap = half_magic ? 8.0f : 0.0f;
+  float hy = floorf(my - heart_rows * hs - 6.0f - half_gap + 0.5f);
 
   // equipped item ring: tap cycles to the next owned item
-  float ring_r = 32.0f;
-  float rcx = x + w / 2, rcy = ((y + chip_h) + hy) / 2;
+  float ring_top = y + chip_h + 4.0f;
+  float ring_r = clampf((hy - ring_top) / 2.0f - 2.0f, 18.0f, 32.0f);
+  float rcx = x + w / 2, rcy = ring_top + ring_r;
+  if (rcy + ring_r > hy - 2.0f)
+    rcy = hy - ring_r - 2.0f;
   y_ring_r = (RectFS){rcx - ring_r, rcy - ring_r, ring_r * 2, ring_r * 2};
   fill_circle(rcx, rcy, ring_r, COL(12, 12, 12));
   stroke_circle(rcx, rcy, ring_r, 6 * u, COL_GOLD_DARK);
@@ -881,7 +889,7 @@ static void draw_sidebar(float x, float y, float w, float h, bool dungeon_mode) 
     if (lv < 0) lv = 0;
     if (lv > kSS_ItemMaxLevel[i]) lv = kSS_ItemMaxLevel[i];
     if (lv > 0) {
-      float item_size = 38.0f;
+      float item_size = clampf(ring_r * 1.15f, 26.0f, 38.0f);
       draw_icon_inner(kSS_ItemCell[i][lv], rcx - item_size / 2,
                       rcy - item_size / 2, item_size);
     }
@@ -899,9 +907,9 @@ static void draw_sidebar(float x, float y, float w, float h, bool dungeon_mode) 
   // magic bar (with the HUD's 1/2 marker when the upgrade is owned)
   if (half_magic) {
     float gx = floorf(x + (w - 24.0f) / 2 + 0.5f);
-    draw_glyph(SS_GLYPH_HALF0, gx, my - 13.0f, 1.0f);
-    draw_glyph(SS_GLYPH_HALF1, gx + 8.0f, my - 13.0f, 1.0f);
-    draw_glyph(SS_GLYPH_HALF2, gx + 16.0f, my - 13.0f, 1.0f);
+    draw_glyph(SS_GLYPH_HALF0, gx, my - 8.0f, 1.0f);
+    draw_glyph(SS_GLYPH_HALF1, gx + 8.0f, my - 8.0f, 1.0f);
+    draw_glyph(SS_GLYPH_HALF2, gx + 16.0f, my - 8.0f, 1.0f);
   }
   int magic = sram8(0x6E); if (magic > 128) magic = 128;
   float bar_x = floorf(x + 8.0f + 0.5f);
@@ -1286,6 +1294,21 @@ static void draw_settings(RectFS r) {
     } else {
       draw_text(values[i], row->x + row->w - 16 * u - text_width(values[i], 2 * u), ty, 2 * u);
     }
+  }
+}
+
+static void draw_cinema_settings_overlay(void) {
+  RectFS r = {10 * u, 10 * u, W - 20 * u, H - 20 * u};
+  draw_settings(r);
+  if (!screen_mode && !remap_mode && !developer_mode) {
+    cinema_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
+    draw_settings_row(&cinema_back_r, false);
+    draw_text("BACK",
+              cinema_back_r.x + cinema_back_r.w / 2 -
+                text_width("BACK", 2.2f * u) / 2,
+              cinema_back_r.y + cinema_back_r.h / 2 - 9 * u, 2.2f * u);
+  } else {
+    cinema_back_r = (RectFS){0, 0, 0, 0};
   }
 }
 
@@ -1683,7 +1706,7 @@ static void draw_bottom_sidebar_patch(void) {
 
 static void handle_tap(float x, float y) {
   int module = SS_GetModule() & 0xFF;
-  if (mode_for_module(module) != MODE_GAME || !art_ready) return;
+  int ui_mode = mode_for_module(module);
 #ifdef __3DS__
   if (!ss_is_new_3ds) {
     ss_touch_request_ticks = svcGetSystemTick();
@@ -1693,12 +1716,28 @@ static void handle_tap(float x, float y) {
   }
   request_bottom_redraw(kBottomRedrawFull);
 #endif
+  if (ui_mode != MODE_GAME) {
+    if (tab != TAB_SETTINGS) {
+      tab = TAB_SETTINGS;
+      leave_settings_submenu();
+      return;
+    }
+    if (!screen_mode && !remap_mode && !developer_mode &&
+        in_rect(&cinema_back_r, x, y)) {
+      tab = TAB_MAP;
+      leave_settings_submenu();
+      return;
+    }
+    goto settings_tap;
+  }
+  if (!art_ready) return;
 
   if (in_rect(&tab_items_r, x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leave_settings_submenu(); return; }
   if (in_rect(&tab_map_r, x, y))   { tab = TAB_MAP; leave_settings_submenu(); return; }
   if (in_rect(&tab_gear_r, x, y))  { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leave_settings_submenu(); return; }
   if (in_rect(&tab_settings_r, x, y)) { tab = (tab == TAB_SETTINGS) ? TAB_MAP : TAB_SETTINGS; leave_settings_submenu(); return; }
 
+settings_tap:
   if (tab == TAB_SETTINGS) {
     if (remap_mode) {
       if (in_rect(&remap_back_r, x, y)) { leave_remap(); return; }
@@ -1976,6 +2015,8 @@ static void draw_second_screen(int logic_frames) {
   if ((in_house || special) && !has_last_outdoor && !have_exit) ui_mode = MODE_CINEMA;
   if (ui_mode != MODE_GAME) {
     draw_cinema();
+    if (tab == TAB_SETTINGS)
+      draw_cinema_settings_overlay();
     present_second_screen();
     return;
   }
