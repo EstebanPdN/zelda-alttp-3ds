@@ -18,9 +18,6 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 ## Discord
 https://discord.gg/SMW49UMkw
 
-## Support me
-https://buymeacoffee.com/estebanpdn
-
 ## Nintendo 3DS Features
 
 - Top screen: 400x240 gameplay.
