@@ -15,6 +15,9 @@ No ROM or extracted game asset package is distributed in this repository. Each
 user must provide their own legally obtained USA, unheadered ROM on their own
 3DS SD card.
 
+## Discord
+https://discord.gg/SMW49UMkw
+
 ## Support me
 https://buymeacoffee.com/estebanpdn
 
