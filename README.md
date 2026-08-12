@@ -1,6 +1,6 @@
 # Zelda A Link to the Past 3DS
 
-![Zelda A Link to the Past 3DS](Git3DS.png)
+<img width="1672" height="941" alt="alttp" src="https://github.com/user-attachments/assets/6fc340f1-7d18-4e75-9a1a-bf8986d490dc" />
 
 Nintendo 3DS dual-screen port of Zelda3, built with help from Codex.
 
