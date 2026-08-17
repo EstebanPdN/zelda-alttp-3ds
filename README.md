@@ -18,7 +18,7 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 ## Discord
 https://discord.gg/SMW49UMkw
 
-## Nintendo 3DS Features
+## Features
 
 - Top screen: 400x240 gameplay.
 - Bottom screen: 320x240 live map, dungeon map, gear view, item selection and
@@ -51,6 +51,10 @@ Place a legally obtained USA, unheadered ROM there. The preferred filename is
 
 On first launch, press A to validate the ROM and extract the assets. The ROM is
 read locally and is never copied into the CIA.
+
+If you’re using a translated/patched ROM, put both the clean USA ROM and the patched ROM in `sdmc:/3ds/Zelda 3DS/`.
+
+The port should use the clean ROM for the original assets and the patched ROM for the translated text. Translation patches may work this way, but gameplay hacks are not guaranteed to be compatible.
 
 Audio requires:
 
