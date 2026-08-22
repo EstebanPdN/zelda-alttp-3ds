@@ -790,7 +790,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   }
   const float draw_width = stretch ? (float)GSP_SCREEN_HEIGHT_TOP :
                                      (float)width;
-  const float draw_height = (stretch || wide) ? (float)GSP_SCREEN_WIDTH :
+  const float draw_height = (stretch) ? (float)GSP_SCREEN_WIDTH :
     (height < GSP_SCREEN_WIDTH ? (float)height : (float)GSP_SCREEN_WIDTH);
   g_top_subtexture = (Tex3DS_SubTexture){
     .width = (u16)source_width,
