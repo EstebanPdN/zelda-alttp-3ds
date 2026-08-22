@@ -2963,7 +2963,11 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->enhanced_mode7 = false;
   config->new_renderer = true;
   config->no_sprite_limits = false;
-  config->extend_y = false;
+// Wide mode draws to the full 240px screen height (see
+// Platform3DS_PresentTopFrame), so the source frame must be 240 lines or
+// that draw stretches a 224-line frame by a fractional nearest-neighbor
+// scale. Tie extend_y to wide mode so the two stay in sync at boot too.
+  config->extend_y = g_display_mode == kPlatform3DSDisplayUltraWideMod;
   config->extended_aspect_ratio =
     g_display_mode == kPlatform3DSDisplayUltraWideMod ? 72 : 0;
   config->features0 &= ~(kFeatures0_ExtendScreen64 |
