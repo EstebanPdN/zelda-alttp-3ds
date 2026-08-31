@@ -34,18 +34,24 @@ once per VBlank, while the bottom UI redraws at 30 FPS. Quick-dump `info.txt`
 files include average/max frame work time and the number of frames that exceed
 the 16.67 ms budget.
 
-The HOME Menu metadata is versioned for every release. v2.4 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E4 uses:
 
 ```text
-Short name: Zelda ALttP 3DS
-Long name:  Zelda A Link to the Past 3DS v2.4
+Short name:  Zelda 3DS EXP 4
+Long name:   A Link to the Past 3DS experimental 4
+ProductCode: CTR-P-Z3DE
+UniqueId:    0x5A13E
 ```
 
-The CIA banner prefers `assets/banner.cgfx` when present. v1.6 uses a real
-HOME Menu CGFX model generated from the supplied SNES box glTF with only the
-base diffuse texture; normal and metallic maps are intentionally omitted to keep
-the banner small and reliable on 3DS hardware. `assets/banner.png` remains as a
-flat fallback for builds where the CGFX asset is removed.
+The CIA banner uses `assets/banner.cgfx`, generated from the supplied 2.0
+Blender logo model and kept below the HOME Menu CGFX size limit.
+
+v3.0-E4 keeps the game renderer and 60 Hz pacing from E3. Its presenter cleans
+only the GPU-visible ranges that changed, avoids Citro3D's default full linear
+heap flush, uses RGB565 color-only render targets and performs PCM cache cleans
+without synchronous DSP service IPC when the launch environment permits it.
+Compatibility fallbacks remain available for launch environments that reject
+the direct cache-clean SVC.
 
 ## Requirements
 
@@ -63,8 +69,4 @@ platform/3ds/build.sh
 The script first builds the vendored SDL port, then creates the 3DSX and CIA.
 No ROM or extracted asset file is included in either package.
 
-The expected SHA-256 is:
-
-```text
-66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb
-```
+Release checksums are published in `SHA256SUMS.txt` beside each CIA and 3DSX.

@@ -1,5 +1,5 @@
 BasicInfo:
-  Title: "Zelda 3DS EXP 3"
+  Title: "Zelda 3DS EXP 4"
   ProductCode: "CTR-P-Z3DE"
   Logo: Homebrew
 
@@ -57,6 +57,9 @@ AccessControlInfo:
     - 1f000000-1f5fffff:r
 
   SystemCallAccess:
+    InvalidateProcessDataCache: 82
+    StoreProcessDataCache: 83
+    FlushProcessDataCache: 84
     ControlMemory: 1
     QueryMemory: 2
     ExitProcess: 3

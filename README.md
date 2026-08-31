@@ -77,9 +77,11 @@ GitHub supplies automatic source-code archives for each tag.
 The release page itself shows the QR code, legal notice and a short changelog.
 Detailed development notes are preserved inside the source snapshot.
 
-Latest release:
+Latest stable release: [v2.9](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v2.9)
 
-https://github.com/EstebanPdN/zelda-alttp-3ds/releases/latest
+Latest experimental release: [v3.0-E4](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E4)
+
+See [CHANGELOG.md](CHANGELOG.md) for the concise history from v2.9 onward.
 
 ## Building
 

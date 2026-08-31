@@ -60,6 +60,8 @@ target_compile_options(zelda3-3ds PRIVATE
   -O3
   -flto
   -ffast-math
+  -ffunction-sections
+  -fdata-sections
   -fno-strict-aliasing
   -fomit-frame-pointer
   -Wall
@@ -67,7 +69,7 @@ target_compile_options(zelda3-3ds PRIVATE
   -Wno-unused-parameter
   -Wno-missing-field-initializers
 )
-target_link_options(zelda3-3ds PRIVATE -O3 -flto)
+target_link_options(zelda3-3ds PRIVATE -O3 -flto -Wl,--gc-sections)
 
 target_link_libraries(zelda3-3ds PRIVATE
   SDL2::SDL2main
@@ -94,8 +96,8 @@ configure_file(
 set(ZELDA3_SMDH "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds.smdh")
 ctr_generate_smdh(
   OUTPUT "${ZELDA3_SMDH}"
-  NAME "Zelda 3DS EXP 3"
-  DESCRIPTION "A Link to the Past 3DS experimental 3"
+  NAME "Zelda 3DS EXP 4"
+  DESCRIPTION "A Link to the Past 3DS experimental 4"
   AUTHOR "EstebanPdN"
   ICON "${CMAKE_CURRENT_LIST_DIR}/assets/icon.png"
 )
