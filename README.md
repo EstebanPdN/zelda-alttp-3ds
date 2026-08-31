@@ -1,6 +1,6 @@
 # Zelda A Link to the Past 3DS
 
-![Zelda A Link to the Past 3DS](Git3DS.png)
+<img width="1672" height="941" alt="alttp" src="https://github.com/user-attachments/assets/6fc340f1-7d18-4e75-9a1a-bf8986d490dc" />
 
 Nintendo 3DS dual-screen port of Zelda3, built with help from Codex.
 
@@ -15,7 +15,10 @@ No ROM or extracted game asset package is distributed in this repository. Each
 user must provide their own legally obtained USA, unheadered ROM on their own
 3DS SD card.
 
-## Nintendo 3DS Features
+## Discord
+https://discord.gg/SMW49UMkw
+
+## Features
 
 - Top screen: 400x240 gameplay.
 - Bottom screen: 320x240 live map, dungeon map, gear view, item selection and
@@ -48,6 +51,10 @@ Place a legally obtained USA, unheadered ROM there. The preferred filename is
 
 On first launch, press A to validate the ROM and extract the assets. The ROM is
 read locally and is never copied into the CIA.
+
+If you’re using a translated/patched ROM, put both the clean USA ROM and the patched ROM in `sdmc:/3ds/Zelda 3DS/`.
+
+The port should use the clean ROM for the original assets and the patched ROM for the translated text. Translation patches may work this way, but gameplay hacks are not guaranteed to be compatible.
 
 Audio requires:
 
@@ -82,7 +89,7 @@ Requirements:
 - `makerom` and `bannertool` for CIA packaging
 - the vendored SDL2 source in `app/jni/SDL2`
 - `banner.cgfx` is prebuilt in `platform/3ds/assets`; it was generated from
-  the supplied box glTF with only the base diffuse texture.
+  the supplied 2.0 Blender logo model.
 
 Build:
 
