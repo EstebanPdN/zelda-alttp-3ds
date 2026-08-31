@@ -42,8 +42,8 @@ if [[ ! -x "${MAKEROM}" || ! -x "${BANNERTOOL}" ]]; then
 fi
 
 "${BANNERTOOL}" makesmdh \
-  -s "Zelda 3DS EXP 3" \
-  -l "A Link to the Past 3DS experimental 3" \
+  -s "Zelda 3DS EXP 4" \
+  -l "A Link to the Past 3DS experimental 4" \
   -p "EstebanPdN" \
   -i "${ROOT}/platform/3ds/assets/icon.png" \
   -f visible,nosavebackups \

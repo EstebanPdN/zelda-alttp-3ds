@@ -34,9 +34,36 @@
 
 static dspHookCookie dsp_hook;
 static SDL_AudioDevice *audio_device;
+static int cache_clean_mode; /* 0 unprobed, 1 direct SVC, 2 DSP fallback */
 
 static void FreePrivateData(_THIS);
 static int FindAudioFormat(_THIS);
+
+/* DSP_FlushDataCache is synchronous service IPC. On Old 3DS that round trip
+ * competes with audio, GSP and the application workers on core 1. Clean the
+ * CPU-written PCM lines locally when the launch environment permits it, while
+ * retaining the original DSP service call as a compatibility fallback. */
+static Result N3DSAUDIO_CleanDataCache(const void *address, size_t size)
+{
+    Result result;
+
+    if (address == NULL || size == 0) {
+        return 0;
+    }
+
+    if (cache_clean_mode != 2) {
+        result = svcStoreProcessDataCache(CUR_PROCESS_HANDLE,
+                                          (u32)(uintptr_t)address,
+                                          (u32)size);
+        if (R_SUCCEEDED(result)) {
+            cache_clean_mode = 1;
+            return result;
+        }
+        cache_clean_mode = 2;
+    }
+
+    return DSP_FlushDataCache(address, (u32)size);
+}
 
 static SDL_INLINE void contextLock(_THIS)
 {
@@ -148,7 +175,7 @@ static int N3DSAUDIO_OpenDevice(_THIS, const char *devname)
     }
 
     SDL_memset(data_vaddr, 0, this->hidden->mixlen * NUM_BUFFERS);
-    DSP_FlushDataCache(data_vaddr, this->hidden->mixlen * NUM_BUFFERS);
+    N3DSAUDIO_CleanDataCache(data_vaddr, this->hidden->mixlen * NUM_BUFFERS);
 
     this->hidden->nextbuf = 0;
     this->hidden->channels = this->spec.channels;
@@ -212,7 +239,7 @@ static void N3DSAUDIO_PlayDevice(_THIS)
 
     memcpy((void *)this->hidden->waveBuf[nextbuf].data_vaddr,
            this->hidden->mixbuf, sampleLen);
-    DSP_FlushDataCache(this->hidden->waveBuf[nextbuf].data_vaddr, sampleLen);
+    N3DSAUDIO_CleanDataCache(this->hidden->waveBuf[nextbuf].data_vaddr, sampleLen);
 
     ndspChnWaveBufAdd(0, &this->hidden->waveBuf[nextbuf]);
 }
