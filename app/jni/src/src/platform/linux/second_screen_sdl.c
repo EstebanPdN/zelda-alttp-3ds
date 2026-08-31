@@ -44,6 +44,7 @@ enum Platform3DSCStickMode {
 #include "../../second_screen_tables.h"  // kIconCount/kIconCols/kGlyphCount/kGlyphCols
 #include "ss_sheets.h"             // generated cell indices for icons/glyphs/letters
 #include "ss_textures.h"           // baked theme background tiles (menu/parchment/stone)
+#include "ss_tex_triforce.h"       // baked AA triangle mask for the cinema-screen triforce
 
 #ifndef ZELDA3_3DS_VERSION
 #define ZELDA3_3DS_VERSION "dev"
@@ -163,6 +164,9 @@ static float         u = 1.0f;
 static SDL_Texture *tex_map[2], *tex_icons, *tex_glyphs, *tex_letters, *tex_face;
 static SDL_Texture *tex_floor, *tex_mapicons;
 static SDL_Texture *tex_bg_menu, *tex_bg_parch, *tex_bg_stone;
+static SDL_Texture *tex_triforce;
+static bool ss_is_new_3ds;  // forward decl: draw_cinema() (below) needs this
+                             // before its real definition later in the file
 static bool art_ready;
 
 typedef struct {
@@ -321,15 +325,6 @@ static void draw_x_mark(float cx, float cy, float r, float t, uint32_t c) {
     SDL_RenderFillRectF(ss_r, &b);
   }
 }
-static void tri_up(float cx, float top, float size, uint32_t c) {
-  set_color(c);
-  for (int i = 0; i <= (int)size; i++) {
-    float half = size * (i / size) * 0.5773f * 2.0f;  // ~equilateral
-    SDL_FRect seg = {cx - half / 2, top + i, half, 1};
-    SDL_RenderFillRectF(ss_r, &seg);
-  }
-}
-
 // blit one cell from a sheet texture
 static void draw_cell(SDL_Texture *tex, int cell, int cellpx, int cols, float x, float y, float s) {
   if (cell < 0 || !tex) return;
@@ -498,6 +493,11 @@ static bool try_load_art(void) {
   if (!tex_bg_menu)  tex_bg_menu  = make_tex(kSSTexMenu_W, kSSTexMenu_H, kSSTexMenu, false);
   if (!tex_bg_parch) tex_bg_parch = make_tex(kSSTexParch_W, kSSTexParch_H, kSSTexParch, false);
   if (!tex_bg_stone) tex_bg_stone = make_tex(kSSTexStone_W, kSSTexStone_H, kSSTexStone, false);
+  if (!tex_triforce) {
+    tex_triforce = make_tex(kSSTexTriforce_W, kSSTexTriforce_H, kSSTexTriforce, true);
+    // baked as a smooth AA silhouette, not pixel art -- scale it smoothly.
+    if (tex_triforce) SDL_SetTextureScaleMode(tex_triforce, SDL_ScaleModeLinear);
+  }
 
   // cheap probe: the engine hasn't parsed zelda3_assets.dat yet
   if (SS_GetDungeonLayout(0, lay, sizeof(lay)) < 0) return false;
@@ -540,15 +540,39 @@ static bool try_load_art(void) {
 static void draw_cinema(void) {
   fill_rect(0, 0, W, H, COL_BOX & 0xff000000u);  // black
   draw_frame(12 * u, 12 * u, W - 24 * u, H - 24 * u, 2 * u, COL_GOLD_DARK);
-  float t = SDL_GetTicks() / 1000.0f;
-  float pulse = sinf(t * 1.5f) * 0.5f + 0.5f;
-  uint8_t g = (uint8_t)(150 + 100 * pulse);
-  uint32_t c = COL(g, (uint8_t)(g * 0.83f), (uint8_t)(g * 0.41f));
+  if (!tex_triforce) return;
+
+  uint8_t r, g, b;
+  if (ss_is_new_3ds) {
+    float t = SDL_GetTicks() / 1000.0f;
+    float pulse = sinf(t * 1.5f) * 0.5f + 0.5f;
+    uint8_t v = (uint8_t)(150 + 100 * pulse);
+    r = v; g = (uint8_t)(v * 0.83f); b = (uint8_t)(v * 0.41f);
+  } else {
+    // Old 3DS only redraws this screen every ~180 frames (see
+    // bottom_needs_periodic_redraw's divisor), so a moving pulse just reads
+    // as an occasional jump rather than real animation. Use one fixed,
+    // pleasant gold tone instead of computing it every redraw.
+    r = 214; g = 178; b = 88;
+  }
+  SDL_SetTextureColorMod(tex_triforce, r, g, b);
+
+  // kSSTexTriforce is ~tight to the triangle's bounding box, so a dest rect
+  // of {s, s} reproduces the same triangle "row height" the old per-scanline
+  // tri_up(cx, top, size, ...) used, keeping the overall triforce the same
+  // size and layout as before.
   float s = (W < H ? W : H) * 0.06f;
   float cx = W / 2.0f, cy = H / 2.0f;
-  tri_up(cx, cy - s, s, c);            // top
-  tri_up(cx - s * 0.58f, cy, s, c);    // bottom-left
-  tri_up(cx + s * 0.58f, cy, s, c);    // bottom-right
+  SDL_FRect top_r = {cx - s / 2, cy - s + 1, s, s};
+  SDL_FRect bl_r  = {cx - s * 0.58f - s / 2, cy, s, s};
+  // Baked-texture rounding leaves the bottom-right triangle ~1px further
+  // from center than bottom-left (measured on real output: bottom-left sits
+  // 32px from the top triangle's center, bottom-right sits 36px) -- nudge
+  // it in by 1px so the center notch is symmetric instead of lopsided.
+  SDL_FRect br_r  = {cx + s * 0.58f - s / 2 - 1, cy, s, s};
+  SDL_RenderCopyF(ss_r, tex_triforce, NULL, &top_r);
+  SDL_RenderCopyF(ss_r, tex_triforce, NULL, &bl_r);
+  SDL_RenderCopyF(ss_r, tex_triforce, NULL, &br_r);
 }
 
 static void draw_overworld(RectFS r, int link_x, int link_y, int area) {
@@ -2340,7 +2364,8 @@ void SecondScreenSDL_Update(int logic_frames) {
 static void destroy_textures(void) {
   SDL_Texture **texes[] = {&tex_map[0], &tex_map[1], &tex_icons, &tex_glyphs,
                            &tex_letters, &tex_face, &tex_floor, &tex_mapicons,
-                           &tex_bg_menu, &tex_bg_parch, &tex_bg_stone};
+                           &tex_bg_menu, &tex_bg_parch, &tex_bg_stone,
+                           &tex_triforce};
   for (size_t i = 0; i < sizeof(texes) / sizeof(texes[0]); i++) {
     if (*texes[i]) SDL_DestroyTexture(*texes[i]);
     *texes[i] = NULL;
