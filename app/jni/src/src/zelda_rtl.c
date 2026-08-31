@@ -10,6 +10,7 @@
 #include "snes/dma.h"
 #include "spc_player.h"
 #include "util.h"
+#include "dump_state.h"
 #include <SDL.h>
 #include "audio.h"
 #include "assets.h"
@@ -1194,6 +1195,112 @@ void StateRecorder_Save(StateRecorder* sr, SDL_RWops* rwops) {
   SDL_RWwrite(rwops, arr.data, arr.size, 1);
 
   ByteArray_Destroy(&arr);
+}
+
+typedef struct ZeldaDumpPayloadHeader {
+  uint32 version;
+  uint32 total_frames;
+  uint32 last_inputs;
+  uint32 frames_since_last;
+  uint32 snapshot_size;
+} ZeldaDumpPayloadHeader;
+
+enum { kZeldaDumpPayloadVersion = 1 };
+
+bool ZeldaWriteDumpState(const char *dump_directory) {
+#ifdef __3DS__
+  if (!dump_directory || !dump_directory[0])
+    return false;
+
+  ByteArray snapshot = {0};
+  SaveSnesState(&saveFunc, &snapshot);
+  if (snapshot.size == 0 || snapshot.size > UINT32_MAX) {
+    ByteArray_Destroy(&snapshot);
+    return false;
+  }
+
+  ZeldaDumpPayloadHeader header = {
+    .version = kZeldaDumpPayloadVersion,
+    .total_frames = state_recorder.total_frames,
+    .last_inputs = state_recorder.last_inputs,
+    .frames_since_last = state_recorder.frames_since_last,
+    .snapshot_size = (uint32)snapshot.size,
+  };
+  ByteArray payload = {0};
+  ByteArray_AppendData(&payload, (const uint8 *)&header, sizeof(header));
+  ByteArray_AppendData(&payload, snapshot.data, snapshot.size);
+
+  char path[512];
+  int length = snprintf(path, sizeof(path), "%s/%s", dump_directory,
+                        ZELDA_DUMP_LOAD_STATE_FILENAME);
+  bool ok = length >= 0 && length < (int)sizeof(path) &&
+            DumpState_WriteFile(path, Platform3DS_GetActiveProfileId(),
+                                payload.data, payload.size);
+  ByteArray_Destroy(&payload);
+  ByteArray_Destroy(&snapshot);
+  return ok;
+#else
+  (void)dump_directory;
+  return false;
+#endif
+}
+
+ZeldaDumpStateResult ZeldaLoadLatestDumpState(void) {
+#ifdef __3DS__
+  uint8 *payload = NULL;
+  size_t payload_size = 0;
+  ZeldaDumpStateResult result =
+    DumpState_ReadLatest("dumps", Platform3DS_GetActiveProfileId(),
+                         &payload, &payload_size);
+  if (result != kZeldaDumpStateLoaded)
+    return result;
+
+  if (payload_size < sizeof(ZeldaDumpPayloadHeader)) {
+    free(payload);
+    return kZeldaDumpStateInvalid;
+  }
+  ZeldaDumpPayloadHeader header;
+  memcpy(&header, payload, sizeof(header));
+  size_t snapshot_size = payload_size - sizeof(header);
+  if (header.version != kZeldaDumpPayloadVersion ||
+      header.snapshot_size != snapshot_size ||
+      header.last_inputs > 0x0fff) {
+    free(payload);
+    return kZeldaDumpStateInvalid;
+  }
+
+  /* InternalSaveLoad has a fixed serialized size. Compare the checkpoint with
+   * a capture from this exact engine build before giving the data to its
+   * assert-oriented loader, so truncated or foreign states cannot overrun it. */
+  ByteArray current = {0};
+  SaveSnesState(&saveFunc, &current);
+  bool compatible = current.size == snapshot_size;
+  ByteArray_Destroy(&current);
+  if (!compatible) {
+    free(payload);
+    return kZeldaDumpStateInvalid;
+  }
+
+  LoadFuncState load = {
+    payload + sizeof(header),
+    payload + payload_size,
+  };
+  LoadSnesState(&loadFunc, &load);
+  bool fully_consumed = load.p == load.pend;
+  free(payload);
+  if (!fully_consumed)
+    return kZeldaDumpStateInvalid;
+
+  ByteArray_Destroy(&state_recorder.log);
+  ByteArray_Destroy(&state_recorder.base_snapshot);
+  memset(&state_recorder, 0, sizeof(state_recorder));
+  state_recorder.total_frames = header.total_frames;
+  state_recorder.last_inputs = (uint16)header.last_inputs;
+  state_recorder.frames_since_last = header.frames_since_last;
+  return kZeldaDumpStateLoaded;
+#else
+  return kZeldaDumpStateIoError;
+#endif
 }
 
 void StateRecorder_ClearKeyLog(StateRecorder *sr) {

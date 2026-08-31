@@ -43,6 +43,10 @@ static bool g_display_mode_legacy_stretch;
 static bool g_runtime_wide_edge_seen;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
+static bool g_show_fps;
+static unsigned g_current_fps;
+static bool g_dump_saved_overlay_requested;
+static bool g_dump_saved_overlay_presented;
 static bool g_quick_dump_requested;
 static bool g_rom_selection_requested;
 static aptHookCookie g_apt_hook_cookie;
@@ -50,6 +54,7 @@ static bool g_apt_hook_registered;
 static volatile bool g_system_exit_requested;
 static volatile bool g_system_suspended;
 static char g_active_save_directory[512] = "saves";
+static uint32_t g_active_profile_id;
 static bool g_is_new_3ds;
 static bool g_model_detected;
 static bool g_irrst_initialized;
@@ -112,6 +117,7 @@ extern u32 __ctru_linear_heap_size;
 
 static bool WriteBlob(const char *path, const void *data, size_t size);
 static bool EnsureDirectory(const char *path);
+static bool CopyFileReplacing(const char *source, const char *destination);
 static void MakeTimestamp(char *stamp, size_t stamp_size);
 static bool RomFileShouldBeIgnored(const char *name);
 static uint32 ReadU32LE(const uint8 *data);
@@ -380,6 +386,10 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
     if (multiplier > 5)
       multiplier = 5;
     g_turbo_multiplier = multiplier;
+  } else if (strcasecmp(key, "ShowFps") == 0) {
+    bool show = false;
+    if (ParseBool(value, &show))
+      g_show_fps = show;
   }
 }
 
@@ -388,6 +398,7 @@ void Platform3DS_LoadRuntimeSettings(void) {
   g_wide_edge_mode_auto = true;
   g_display_mode_legacy_stretch = false;
   g_runtime_wide_edge_seen = false;
+  g_show_fps = false;
   FILE *file = fopen("zelda3.ini", "rb");
   if (!file) {
     Platform3DS_ApplyAutoDisplayDefaults();
@@ -562,6 +573,41 @@ void Platform3DS_SetTurboMultiplier(int multiplier) {
     multiplier = 5;
   g_turbo_multiplier = multiplier;
   Platform3DS_LogRuntime("Turbo multiplier set: %d", g_turbo_multiplier);
+}
+
+bool Platform3DS_GetShowFps(void) {
+  return g_show_fps;
+}
+
+void Platform3DS_SetShowFps(bool show) {
+  g_show_fps = show;
+}
+
+void Platform3DS_SetCurrentFps(int fps) {
+  if (fps < 0)
+    fps = 0;
+  if (fps > 999)
+    fps = 999;
+  g_current_fps = (unsigned)fps;
+}
+
+void Platform3DS_PersistRuntimeSettings(void) {
+  const char *leaf = strrchr(g_active_save_directory, '/');
+  leaf = leaf ? leaf + 1 : g_active_save_directory;
+  char path[512];
+  int length = snprintf(path, sizeof(path), "%s/%s/zelda3.ini",
+                        kProfilesDirectory, leaf);
+  bool ok = length >= 0 && length < (int)sizeof(path) &&
+            CopyFileReplacing("zelda3.ini", path);
+  Platform3DS_LogRuntime("Runtime settings persist: %s", ok ? "OK" : "FAILED");
+}
+
+void Platform3DS_ShowDumpSavedOverlay(void) {
+  g_dump_saved_overlay_requested = true;
+}
+
+uint32_t Platform3DS_GetActiveProfileId(void) {
+  return g_active_profile_id;
 }
 
 bool Platform3DS_InitTopPresenter(void) {
@@ -817,6 +863,65 @@ static void ConfigureRgb565TextureEnv(void) {
     C3D_TexEnvInit(C3D_GetTexEnv(i));
 }
 
+static const uint8_t *StatusGlyph(char c) {
+  static const uint8_t digits[10][7] = {
+    {14, 17, 19, 21, 25, 17, 14}, {4, 12, 4, 4, 4, 4, 14},
+    {14, 17, 1, 2, 4, 8, 31},     {30, 1, 1, 14, 1, 1, 30},
+    {2, 6, 10, 18, 31, 2, 2},     {31, 16, 16, 30, 1, 1, 30},
+    {14, 16, 16, 30, 17, 17, 14}, {31, 1, 2, 4, 8, 8, 8},
+    {14, 17, 17, 14, 17, 17, 14}, {14, 17, 17, 15, 1, 1, 14},
+  };
+  static const uint8_t letters[11][7] = {
+    {14, 17, 17, 31, 17, 17, 17}, /* A */
+    {30, 17, 17, 17, 17, 17, 30}, /* D */
+    {31, 16, 16, 30, 16, 16, 31}, /* E */
+    {31, 16, 16, 30, 16, 16, 16}, /* F */
+    {17, 27, 21, 21, 17, 17, 17}, /* M */
+    {30, 17, 17, 30, 16, 16, 16}, /* P */
+    {15, 16, 16, 14, 1, 1, 30},   /* S */
+    {17, 17, 17, 17, 17, 17, 14}, /* U */
+    {17, 17, 17, 17, 17, 10, 4},  /* V */
+    {14, 17, 16, 16, 16, 17, 14}, /* C */
+    {14, 17, 16, 23, 17, 17, 15}, /* G */
+  };
+  static const uint8_t letter_ids[26] = {
+    0, 255, 9, 1, 2, 3, 10, 255, 255, 255, 255, 255, 4,
+    255, 255, 5, 255, 255, 6, 255, 7, 8, 255, 255, 255, 255,
+  };
+  if (c >= '0' && c <= '9')
+    return digits[c - '0'];
+  if (c >= 'A' && c <= 'Z') {
+    uint8_t id = letter_ids[c - 'A'];
+    if (id != 255)
+      return letters[id];
+  }
+  return NULL;
+}
+
+static void DrawStatusText(float x, float y, float scale,
+                           const char *text) {
+  const uint32_t color = C2D_Color32(255, 255, 255, 255);
+  for (; *text; text++, x += 6.0f * scale) {
+    const uint8_t *glyph = StatusGlyph(*text);
+    if (!glyph)
+      continue;
+    for (int row = 0; row < 7; row++) {
+      for (int col = 0; col < 5;) {
+        if ((glyph[row] & (1u << (4 - col))) == 0) {
+          col++;
+          continue;
+        }
+        int end = col + 1;
+        while (end < 5 && (glyph[row] & (1u << (4 - end))) != 0)
+          end++;
+        C2D_DrawRectSolid(x + col * scale, y + row * scale, 0.8f,
+                          (end - col) * scale, scale, color);
+        col = end;
+      }
+    }
+  }
+}
+
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
                                  int width, int height,
                                  int focus_x, int focus_y) {
@@ -900,6 +1005,20 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   C2D_SceneBegin(g_top_target);
   C2D_DrawImage(image, &params, NULL);
   ConfigureArgbTextureEnv();
+  if (g_show_fps) {
+    char label[28];
+    snprintf(label, sizeof(label), "FPS %u CPU", g_current_fps);
+    C2D_DrawRectSolid(5.0f, 216.0f, 0.7f, 122.0f, 20.0f,
+                      C2D_Color32(0, 0, 0, 210));
+    DrawStatusText(10.0f, 219.0f, 2.0f, label);
+  }
+  if (g_dump_saved_overlay_requested) {
+    C2D_DrawRectSolid(132.0f, 12.0f, 0.7f, 136.0f, 24.0f,
+                      C2D_Color32(0, 0, 0, 220));
+    DrawStatusText(141.0f, 17.0f, 2.0f, "DUMP SAVED");
+    g_dump_saved_overlay_requested = false;
+    g_dump_saved_overlay_presented = true;
+  }
 }
 
 void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
@@ -963,6 +1082,11 @@ void Platform3DS_EndFrame(void) {
     return;
   Platform3DS_EndGpuFrame();
   g_gpu_frame_active = false;
+  if (g_dump_saved_overlay_presented) {
+    g_dump_saved_overlay_presented = false;
+    gspWaitForEvent(GSPGPU_EVENT_VBlank0, false);
+    svcSleepThread(600000000LL);
+  }
 }
 
 uint32_t Platform3DS_WaitForVBlank(void) {
@@ -2627,11 +2751,22 @@ static const char *ProfileLeaf(const char *profile) {
   return slash ? slash + 1 : profile;
 }
 
+static uint32_t ProfileId(const char *profile) {
+  const uint8_t *text = (const uint8_t *)ProfileLeaf(profile);
+  uint32_t hash = 2166136261u;
+  while (*text) {
+    hash ^= *text++;
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
 static bool PrepareSaveDirectory(const RomEntry *rom, bool copy_legacy) {
   if (!EnsureDirectory("saves"))
     return false;
   snprintf(g_active_save_directory, sizeof(g_active_save_directory),
            "saves/%s", ProfileLeaf(rom->profile));
+  g_active_profile_id = ProfileId(rom->profile);
   if (!EnsureDirectory(g_active_save_directory))
     return false;
 
@@ -2660,6 +2795,7 @@ static bool PrepareSaveDirectoryForProfile(const char *profile) {
     return false;
   snprintf(g_active_save_directory, sizeof(g_active_save_directory),
            "saves/%s", ProfileLeaf(profile));
+  g_active_profile_id = ProfileId(profile);
   return EnsureDirectory(g_active_save_directory);
 }
 
@@ -3232,6 +3368,11 @@ bool Platform3DS_DumpMemory(const char *directory,
   snprintf(path, sizeof(path), "%s/vram.bin", directory);
   ok = WriteBlob(path, vram, vram_words * sizeof(*vram)) && ok;
 
+  char load_state_path[192];
+  snprintf(load_state_path, sizeof(load_state_path), "%s/%s", directory,
+           ZELDA_DUMP_LOAD_STATE_FILENAME);
+  bool load_state_ok = IsRegularFile(load_state_path);
+
   snprintf(path, sizeof(path), "%s/info.txt", directory);
   FILE *info = fopen(path, "wb");
   if (info) {
@@ -3239,6 +3380,8 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "RAM bytes: %lu\n", (unsigned long)ram_size);
     fprintf(info, "SRAM bytes: %lu\n", (unsigned long)sram_size);
     fprintf(info, "VRAM words: %lu\n", (unsigned long)vram_words);
+    fprintf(info, "Load State checkpoint: %s\n",
+            load_state_ok ? "load-state.bin (validated)" : "unavailable");
     fprintf(info, "Display mode: %d\n", (int)g_display_mode);
     fprintf(info, "Top presenter: PICA200 RGB565\n");
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");

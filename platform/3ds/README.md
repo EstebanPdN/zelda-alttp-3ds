@@ -26,13 +26,18 @@ console's own firmware through Rosalina's `Dump DSP firmware` command.
 - A/B/X/Y, L/R, Start and Select: corresponding game buttons.
 - ZL or C-stick on New 3DS: hold for turbo when `TURBO SPEED` is not `OFF`.
 - L + R + A: create a quick dump under `sdmc:/3ds/Zelda 3DS/dumps/`.
+- Settings > Developer > Load State: load the validated checkpoint from the
+  newest dump after confirmation. Checkpoints from another ROM profile are
+  rejected.
+- Settings > Developer > Show FPS: toggle the top-screen FPS counter.
 
 The CIA metadata uses the Legacy memory mode for Old 3DS compatibility and
 requests the New 3DS 804 MHz/L2 configuration when that hardware is available.
 The 3DSX also requests New 3DS speedup at runtime. Normal gameplay advances
 once per VBlank, while the bottom UI redraws at 30 FPS. Quick-dump `info.txt`
 files include average/max frame work time and the number of frames that exceed
-the 16.67 ms budget.
+the 16.67 ms budget. Each completed dump also includes `load-state.bin` and
+shows a short `DUMP SAVED` notice.
 
 The HOME Menu metadata is versioned for every release. v3.0-E4 uses:
 
