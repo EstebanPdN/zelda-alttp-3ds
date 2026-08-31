@@ -1,6 +1,6 @@
 # Changelog
 
-Concise cumulative history from v2.9 through v3.0-E5.
+Concise cumulative history from v2.9 through v3.0-E6.
 
 ## v2.9
 
@@ -51,3 +51,23 @@ The E4 cache strategy was adapted to this engine after studying
   state before image submission.
 - Changed the top counter to `FPS <value>` with no CPU/GPU suffix.
 - Fixed `DUMP SAVED` truncation and removed its deliberate post-dump pause.
+
+## v3.0-E6
+
+- Reverted E5's direct RGB565 top-screen experiment to E4's verified BGRX
+  software buffer and RGBA8 texture-upload path.
+- Fixed E5's PPU destination-origin regression, which wrote the visible image
+  at the internal 96-pixel priority-buffer origin instead of the configured
+  output origin and caused displaced, stale or corrupted top-screen pixels.
+- Restored the full address-indexed tile-row caches; reconstructed dump
+  benchmarks showed E5's compact collision cache was slower despite its
+  smaller footprint.
+- Restored conservative full-resolution PPU optimizations: palette rebuilds
+  only when CGRAM/brightness changes, hidden-OBJ scan elimination, disabled
+  subscreen work elimination, color-window fast paths and unrolled final
+  palette mapping.
+- Replaced software-canvas dump screenshots with physical GSP display
+  captures: 400x240 top, 320x240 bottom, plus both raw framebuffers.
+- Paused the active NDSP channel for the entire synchronous dump transaction,
+  so already-queued music stops and resumes at the same playback position.
+- Excluded the deliberate dump I/O frame from subsequent performance metrics.

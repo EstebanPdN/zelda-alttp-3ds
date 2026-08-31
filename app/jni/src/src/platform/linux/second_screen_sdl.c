@@ -1472,23 +1472,14 @@ static void prioritize_bottom_touch(void) {
 #endif
 
 static void request_dump_now(void) {
-  char dump_dir[160] = {0};
 #ifdef __3DS__
-  if (!Platform3DS_CreateDumpDirectory(dump_dir, sizeof(dump_dir)))
-    return;
-  if (ss_front_buffer >= 0 && ss_present_pixels[ss_front_buffer]) {
-    char path[192];
-    snprintf(path, sizeof(path), "%s/bottom-screen.bmp", dump_dir);
-    if (ss_is_new_3ds) {
-      Platform3DS_SaveARGB8888Bmp(
-        path, ss_present_pixels[ss_front_buffer], bottom_buffer_pitch(), W, H);
-    } else {
-      Platform3DS_SaveRGB565Bmp(
-        path, ss_present_pixels[ss_front_buffer], bottom_buffer_pitch(), W, H);
-    }
-  }
+  // Directory creation and all capture I/O happen together on the game
+  // thread while NDSP is paused. An empty path asks that handler to create a
+  // unique session directory.
+  SS_RequestMemoryDump(NULL);
+#else
+  SS_RequestMemoryDump("");
 #endif
-  SS_RequestMemoryDump(dump_dir);
   dump_flash_until = SDL_GetTicks() + 1200;
 }
 

@@ -34,16 +34,19 @@ console's own firmware through Rosalina's `Dump DSP firmware` command.
 The CIA metadata uses the Legacy memory mode for Old 3DS compatibility and
 requests the New 3DS 804 MHz/L2 configuration when that hardware is available.
 The 3DSX also requests New 3DS speedup at runtime. Normal gameplay advances
-once per VBlank, while the bottom UI redraws at 30 FPS. Quick-dump `info.txt`
-files include average/max frame work time and the number of frames that exceed
-the 16.67 ms budget. Each completed dump also includes `load-state.bin` and
-shows a short `DUMP SAVED` notice.
+once per VBlank. The New 3DS bottom UI redraws at 30 FPS; the Old 3DS profile
+redraws it when its visible state changes, with a low-frequency safety refresh.
+Quick-dump `info.txt` files include average/max frame work time and the number
+of frames that exceed the 16.67 ms budget. Each completed dump also includes
+physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
+`load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
+complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E5 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E6 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 5
-Long name:   A Link to the Past 3DS experimental 5
+Short name:  Zelda 3DS EXP 6
+Long name:   A Link to the Past 3DS experimental 6
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
 ```
@@ -51,13 +54,12 @@ UniqueId:    0x5A13E
 The CIA banner uses `assets/banner.cgfx`, generated from the supplied 2.0
 Blender logo model and kept below the HOME Menu CGFX size limit.
 
-v3.0-E5 keeps the game renderer and 60 Hz pacing from E4. On Old 3DS it writes
-the PPU directly to RGB565, uses a compact tile cache for the parallel PPU
-renderers, sleeps the Core 1 worker between jobs and refreshes the Developer
-overlay only when its diagnostics change. The top and bottom Citro2D texture
-environments are selected before image submission, preventing the mixed-format
-bottom-screen corruption exposed by the FPS/Developer overlays. New 3DS keeps
-the existing 32-bit PPU path and 4x Mode 7 eligibility.
+v3.0-E6 restores E4's verified BGRX top software buffer and RGBA8 texture
+upload on both models. It fixes the E5 output-origin error, restores the full
+address-indexed PPU tile caches and adds conservative full-resolution PPU fast
+paths without reducing lines, pixels or color accuracy. The event-driven Old
+3DS Developer overlay and the corrected Citro2D texture-state ordering remain.
+New 3DS keeps its existing 4x Mode 7 eligibility.
 
 ## Requirements
 
