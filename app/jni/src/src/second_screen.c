@@ -558,10 +558,22 @@ void SS_RequestLoadState(int slot) {
 static volatile int g_ss_thumb_state;
 static uint32 g_ss_thumb[kSsThumbW * kSsThumbH];
 
-// Called from the renderer with the frame just drawn (ARGB8888, game thread).
+static uint32 ExpandRgb565(uint16 pixel) {
+  uint32 r = (pixel >> 11) & 0x1f;
+  uint32 g = (pixel >> 5) & 0x3f;
+  uint32 b = pixel & 0x1f;
+  r = (r << 3) | (r >> 2);
+  g = (g << 2) | (g >> 4);
+  b = (b << 3) | (b >> 2);
+  return 0xff000000u | r << 16 | g << 8 | b;
+}
+
+// Called from the renderer with the frame just drawn (game thread). Old 3DS
+// supplies RGB565; other targets keep the original 32-bit BGRX buffer.
 // Only copies when a save asked for a thumbnail, so the read-back off the
 // renderer's buffer costs nothing on a normal frame.
-void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch, int width, int height) {
+void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch,
+                                   int width, int height, bool rgb565) {
   if (g_ss_thumb_state != 1 || !px || width <= 0 || height <= 0) return;
   // Widescreen frames carry extra side space; take the centered 8:7 window so
   // the thumbnail always has the shape of the normal 256x224 picture.
@@ -569,15 +581,20 @@ void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch, int width, int he
   if (cw > width) cw = width;
   int x0 = (width - cw) / 2;
   for (int y = 0; y < kSsThumbH; y++) {
-    const uint32 *row = (const uint32 *)(px + (size_t)(y * height / kSsThumbH) * pitch);
+    const uint8 *row =
+      px + (size_t)(y * height / kSsThumbH) * pitch;
     uint32 *out = g_ss_thumb + y * kSsThumbW;
-    for (int x = 0; x < kSsThumbW; x++)
-      out[x] = row[x0 + x * cw / kSsThumbW] | 0xff000000u;
+    for (int x = 0; x < kSsThumbW; x++) {
+      int source_x = x0 + x * cw / kSsThumbW;
+      out[x] = rgb565 ? ExpandRgb565(((const uint16 *)row)[source_x]) :
+                        ((const uint32 *)row)[source_x] | 0xff000000u;
+    }
   }
   g_ss_thumb_state = 2;
 }
 
-void SecondScreen_CaptureDumpTopHook(const uint8 *px, int pitch, int width, int height) {
+void SecondScreen_CaptureDumpTopHook(const uint8 *px, int pitch,
+                                     int width, int height, bool rgb565) {
   if (g_pending_top_screenshot != 1 || !px || width <= 0 || height <= 0)
     return;
   g_pending_top_screenshot = 0;
@@ -586,8 +603,11 @@ void SecondScreen_CaptureDumpTopHook(const uint8 *px, int pitch, int width, int 
   snprintf(path, sizeof(path), "%s/top-screen.bmp", g_top_screenshot_dir);
   extern bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8 *pixels,
                                           int pitch, int width, int height);
+  extern bool Platform3DS_SaveRGB565Bmp(const char *path, const uint8 *pixels,
+                                        int pitch, int width, int height);
   extern void Platform3DS_ShowDumpSavedOverlay(void);
-  bool screenshot_ok =
+  bool screenshot_ok = rgb565 ?
+    Platform3DS_SaveRGB565Bmp(path, px, pitch, width, height) :
     Platform3DS_SaveARGB8888Bmp(path, px, pitch, width, height);
   if (screenshot_ok && g_pending_dump_success)
     Platform3DS_ShowDumpSavedOverlay();

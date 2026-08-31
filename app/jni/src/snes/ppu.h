@@ -35,8 +35,18 @@ typedef struct PpuPixelPrioBufs {
 } PpuPixelPrioBufs;
 
 typedef struct PpuTileCache {
+#ifdef __3DS__
+  // A full address-indexed cache occupies 256 KiB. The Old 3DS parallel
+  // renderer owns two of them, which evicts the PPU state and hot tile rows
+  // from the 512 KiB shared L2. A 2K direct-mapped cache retains correctness:
+  // the decoded row is a pure function of `keys[index]`, so an address
+  // collision with identical source bits is also a valid hit.
+  uint32_t keys[0x800];
+  uint32_t pixels[0x800];
+#else
   uint32_t keys[0x8000];
   uint32_t pixels[0x8000];
+#endif
 } PpuTileCache;
 
 enum {
@@ -47,6 +57,9 @@ enum {
   kPpuRenderFlags_Height240 = 4,
   // Disable sprite render limits
   kPpuRenderFlags_NoSpriteLimits = 8,
+  // Write native RGB565 pixels instead of 32-bit BGRX. Used by the Old 3DS
+  // profile to halve the software framebuffer and GPU-upload bandwidth.
+  kPpuRenderFlags_OutputRgb565 = 16,
 };
 
 
@@ -131,6 +144,7 @@ struct Ppu {
   uint16_t cgram[0x100];
   uint8_t mosaicModulo[kPpuXPixels];
   uint32_t colorMapRgb[256];
+  uint16_t colorMapRgb565[256];
   PpuPixelPrioBufs bgBuffers[2];
   PpuPixelPrioBufs objBuffer;
   uint16_t vram[0x8000];
