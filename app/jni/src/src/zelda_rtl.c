@@ -557,10 +557,10 @@ typedef struct PpuWorkerState {
   int last_line;
   uint8 irq_state;
   uint64 duration_ticks;
+  LightEvent start;
   LightEvent done;
   Thread thread;
   bool running;
-  uint32 job_id;
 } PpuWorkerState;
 
 static PpuWorkerState g_ppu_system_worker;
@@ -574,25 +574,26 @@ static uint64 g_ppu_main_duration_ticks;
 
 static void ZeldaPpuWorkerMain(void *argument) {
   PpuWorkerState *state = (PpuWorkerState *)argument;
-  uint32 completed_job = 0;
-  while (__atomic_load_n(&state->running, __ATOMIC_ACQUIRE)) {
-    uint32 job = __atomic_load_n(&state->job_id, __ATOMIC_ACQUIRE);
-    if (job == completed_job) {
-      __asm__ volatile("yield");
-      continue;
-    }
+  for (;;) {
+    LightEvent_Wait(&state->start);
+    // Pair the job publication fence with an acquire before reading the PPU
+    // pointer and line range. LightEvent provides the wakeup; these fences
+    // make the data handoff explicit to both the compiler and the ARM CPU.
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    if (!__atomic_load_n(&state->running, __ATOMIC_ACQUIRE))
+      break;
     uint64 start = svcGetSystemTick();
     ZeldaDrawPpuLines(&state->ppu, state->height,
                       state->first_line, state->last_line,
                       state->irq_state);
     state->duration_ticks = svcGetSystemTick() - start;
-    completed_job = job;
     LightEvent_Signal(&state->done);
   }
 }
 
 static bool ZeldaCreatePpuWorker(PpuWorkerState *state,
                                  int core, s32 priority) {
+  LightEvent_Init(&state->start, RESET_ONESHOT);
   LightEvent_Init(&state->done, RESET_ONESHOT);
   state->running = true;
   state->thread = threadCreate(
@@ -643,6 +644,7 @@ void ZeldaShutdownPpuWorker(void) {
     if (!state->thread)
       continue;
     __atomic_store_n(&state->running, false, __ATOMIC_RELEASE);
+    LightEvent_Signal(&state->start);
     Result join_result = threadJoin(state->thread, 2000000000ull);
     if (R_FAILED(join_result))
       Platform3DS_LogRuntime("WARNING: PPU worker join timeout: 0x%08lx",
@@ -794,8 +796,8 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       state->ppu.tileCache = &state->tile_cache;
       state->height = height;
       state->irq_state = irq_state;
-      uint32 job = state->job_id + 1;
-      __atomic_store_n(&state->job_id, job, __ATOMIC_RELEASE);
+      __atomic_thread_fence(__ATOMIC_RELEASE);
+      LightEvent_Signal(&state->start);
     }
 
     uint64 main_start = svcGetSystemTick();

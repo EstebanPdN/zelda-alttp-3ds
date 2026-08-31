@@ -220,6 +220,9 @@ static int    plaque_floor[16], plaque_count;
 static float  grid_x, grid_y, grid_cell;
 static int    ss_diag_current_fps;
 static int    ss_diag_average_fps;
+#ifdef __3DS__
+static uint32_t ss_diag_last_redraw_ms;
+#endif
 
 // live values snapshot for the current frame
 static int cur_room, cur_floor_now, cur_palace;
@@ -1511,10 +1514,22 @@ void SecondScreenSDL_RequestDump(void) {
 }
 
 void SecondScreenSDL_SetDiagnostics(int current_fps, int average_fps) {
+#ifdef __3DS__
+  bool changed = current_fps != ss_diag_current_fps ||
+                 average_fps != ss_diag_average_fps;
+#endif
   ss_diag_current_fps = current_fps;
   ss_diag_average_fps = average_fps;
 #ifdef __3DS__
   Platform3DS_SetCurrentFps(current_fps);
+  if (!ss_is_new_3ds && developer_overlay_mode && changed) {
+    uint32_t now_ms = SDL_GetTicks();
+    if (ss_diag_last_redraw_ms == 0 ||
+        now_ms - ss_diag_last_redraw_ms >= 400) {
+      ss_diag_last_redraw_ms = now_ms;
+      request_bottom_redraw(kBottomRedrawFull);
+    }
+  }
 #endif
 }
 
@@ -1716,8 +1731,13 @@ static bool can_patch_bottom_sidebar(void) {
 }
 
 static bool bottom_needs_periodic_redraw(void) {
-  if (ss_is_new_3ds || developer_overlay_mode)
+  if (ss_is_new_3ds)
     return true;
+  // Diagnostic values explicitly invalidate the overlay when their 500 ms
+  // sample changes. Redrawing this software-rendered panel continuously made
+  // the Old 3DS bottom worker consume Core 0 for seconds at a time.
+  if (developer_overlay_mode)
+    return false;
   if (mode_for_module(SS_GetModule() & 0xff) != MODE_GAME)
     return true;
   return tab == TAB_MAP || tab == TAB_ITEMS;
@@ -2247,8 +2267,6 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
   }
 
   int divisor = ss_is_new_3ds ? (logic_frames <= 1 ? 2 : 6) : 180;
-  if (developer_overlay_mode)
-    request_bottom_redraw(kBottomRedrawFull);
 
   uint32_t requests =
     __atomic_load_n(&ss_redraw_requests, __ATOMIC_ACQUIRE);

@@ -45,8 +45,7 @@ static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_show_fps;
 static unsigned g_current_fps;
-static bool g_dump_saved_overlay_requested;
-static bool g_dump_saved_overlay_presented;
+static uint64_t g_dump_saved_overlay_until_ms;
 static bool g_quick_dump_requested;
 static bool g_rom_selection_requested;
 static aptHookCookie g_apt_hook_cookie;
@@ -109,6 +108,7 @@ static ndspWaveBuf g_setup_move_wavebuf;
 enum {
   kTopTextureWidth = 512,
   kTopTextureHeight = 256,
+  kC2DMaxObjects = 256,
   kC2DFlushWindowSize = 64 * 1024,
 };
 
@@ -603,7 +603,11 @@ void Platform3DS_PersistRuntimeSettings(void) {
 }
 
 void Platform3DS_ShowDumpSavedOverlay(void) {
-  g_dump_saved_overlay_requested = true;
+  // Keep this non-blocking. E4 drew a single frame and then slept the game
+  // thread for 600 ms, which both inflated dump timing outliers and made the
+  // notice depend on one successful Citro2D batch. A deadline lets normal
+  // frames keep flowing while the confirmation remains visible.
+  g_dump_saved_overlay_until_ms = osGetTime() + 1200;
 }
 
 uint32_t Platform3DS_GetActiveProfileId(void) {
@@ -666,7 +670,10 @@ bool Platform3DS_InitTopPresenter(void) {
     Platform3DS_LogRuntime("ERROR: unable to initialize Citro2D presenter");
     return false;
   }
-  if (!C2D_Init(64)) {
+  // The 5x7 status font emits one solid rectangle per horizontal glyph run.
+  // FPS plus "DUMP SAVED" can exceed E4's 64-object batch and silently drop
+  // the tail of the message, so reserve enough objects for both overlays.
+  if (!C2D_Init(kC2DMaxObjects)) {
     C3D_Fini();
     Platform3DS_LogRuntime("ERROR: unable to initialize Citro2D presenter");
     return false;
@@ -696,8 +703,10 @@ bool Platform3DS_InitTopPresenter(void) {
       g_c2d_flush_size = flush_end - flush_start;
     }
   }
+  GPU_TEXCOLOR top_texture_format =
+    g_is_new_3ds ? GPU_RGBA8 : GPU_RGB565;
   if (!C3D_TexInitVRAM(&g_top_texture, kTopTextureWidth,
-                       kTopTextureHeight, GPU_RGBA8)) {
+                       kTopTextureHeight, top_texture_format)) {
     C2D_Fini();
     C3D_Fini();
     Platform3DS_LogRuntime("ERROR: unable to allocate top GPU texture");
@@ -922,11 +931,17 @@ static void DrawStatusText(float x, float y, float scale,
   }
 }
 
+static float StatusTextWidth(const char *text, float scale) {
+  size_t length = strlen(text);
+  return length ? ((float)length * 6.0f - 1.0f) * scale : 0.0f;
+}
+
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
                                  int width, int height,
                                  int focus_x, int focus_y) {
+  int bytes_per_pixel = g_is_new_3ds ? 4 : 2;
   if (!g_gpu_presenter_initialized || !pixels ||
-      pitch != kTopTextureWidth * 4 ||
+      pitch != kTopTextureWidth * bytes_per_pixel ||
       width <= 0 || width > kTopTextureWidth ||
       height <= 0 || height > kTopTextureHeight)
     return;
@@ -935,7 +950,9 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     return;
   g_gpu_frame_active = true;
   Platform3DS_CleanDataCache(
-    pixels, kTopTextureWidth * kTopTextureHeight * 4);
+    pixels, kTopTextureWidth * kTopTextureHeight * bytes_per_pixel);
+  GX_TRANSFER_FORMAT top_transfer_format =
+    g_is_new_3ds ? GX_TRANSFER_FMT_RGBA8 : GX_TRANSFER_FMT_RGB565;
   C3D_SyncDisplayTransfer(
     (u32 *)pixels, GX_BUFFER_DIM(kTopTextureWidth, kTopTextureHeight),
     (u32 *)g_top_texture.data,
@@ -943,8 +960,8 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     GX_TRANSFER_FLIP_VERT(0) |
       GX_TRANSFER_OUT_TILED(1) |
       GX_TRANSFER_RAW_COPY(0) |
-      GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
-      GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+      GX_TRANSFER_IN_FORMAT(top_transfer_format) |
+      GX_TRANSFER_OUT_FORMAT(top_transfer_format) |
       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
 
   const bool stretch = g_display_mode == kPlatform3DSDisplayStretch;
@@ -1003,21 +1020,32 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
 
   Platform3DS_ClearTarget(g_top_target, C2D_Color32(0, 0, 0, 255));
   C2D_SceneBegin(g_top_target);
+  // Select the texture environment before queuing geometry. This makes the
+  // batch self-consistent even if Citro2D has to flush at its object limit.
+  if (g_is_new_3ds)
+    ConfigureArgbTextureEnv();
+  else
+    ConfigureRgb565TextureEnv();
   C2D_DrawImage(image, &params, NULL);
-  ConfigureArgbTextureEnv();
   if (g_show_fps) {
     char label[28];
-    snprintf(label, sizeof(label), "FPS %u CPU", g_current_fps);
-    C2D_DrawRectSolid(5.0f, 216.0f, 0.7f, 122.0f, 20.0f,
+    snprintf(label, sizeof(label), "FPS %u", g_current_fps);
+    float box_width = StatusTextWidth(label, 2.0f) + 10.0f;
+    C2D_DrawRectSolid(5.0f, 216.0f, 0.7f, box_width, 20.0f,
                       C2D_Color32(0, 0, 0, 210));
     DrawStatusText(10.0f, 219.0f, 2.0f, label);
   }
-  if (g_dump_saved_overlay_requested) {
-    C2D_DrawRectSolid(132.0f, 12.0f, 0.7f, 136.0f, 24.0f,
+  uint64_t now_ms = osGetTime();
+  if (now_ms < g_dump_saved_overlay_until_ms) {
+    static const char kDumpSavedText[] = "DUMP SAVED";
+    float text_width = StatusTextWidth(kDumpSavedText, 2.0f);
+    float box_width = text_width + 18.0f;
+    float box_x = (400.0f - box_width) * 0.5f;
+    C2D_DrawRectSolid(box_x, 12.0f, 0.7f, box_width, 24.0f,
                       C2D_Color32(0, 0, 0, 220));
-    DrawStatusText(141.0f, 17.0f, 2.0f, "DUMP SAVED");
-    g_dump_saved_overlay_requested = false;
-    g_dump_saved_overlay_presented = true;
+    DrawStatusText(box_x + 9.0f, 17.0f, 2.0f, kDumpSavedText);
+  } else {
+    g_dump_saved_overlay_until_ms = 0;
   }
 }
 
@@ -1070,11 +1098,11 @@ void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
   };
   Platform3DS_ClearTarget(g_bottom_target, C2D_Color32(0, 0, 0, 255));
   C2D_SceneBegin(g_bottom_target);
-  C2D_DrawImage(image, &params, NULL);
   if (g_is_new_3ds)
     ConfigureArgbTextureEnv();
   else
     ConfigureRgb565TextureEnv();
+  C2D_DrawImage(image, &params, NULL);
 }
 
 void Platform3DS_EndFrame(void) {
@@ -1082,11 +1110,6 @@ void Platform3DS_EndFrame(void) {
     return;
   Platform3DS_EndGpuFrame();
   g_gpu_frame_active = false;
-  if (g_dump_saved_overlay_presented) {
-    g_dump_saved_overlay_presented = false;
-    gspWaitForEvent(GSPGPU_EVENT_VBlank0, false);
-    svcSleepThread(600000000LL);
-  }
 }
 
 uint32_t Platform3DS_WaitForVBlank(void) {
@@ -3384,13 +3407,19 @@ bool Platform3DS_DumpMemory(const char *directory,
             load_state_ok ? "load-state.bin (validated)" : "unavailable");
     fprintf(info, "Display mode: %d\n", (int)g_display_mode);
     fprintf(info, "Top presenter: PICA200 RGB565\n");
+    fprintf(info, "Top software pixel path: %s\n",
+            g_is_new_3ds ? "BGRX8888" : "RGB565 direct");
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",
             g_is_new_3ds ? "yes" : "no");
     fprintf(info, "Bottom pixel path: %s\n",
             g_is_new_3ds ? "ARGB8888" : "RGB565");
-    fprintf(info, "Bottom periodic cadence: %d FPS\n",
-            g_is_new_3ds ? 30 : 10);
+    fprintf(info, "Bottom periodic cadence: %s\n",
+            g_is_new_3ds ? "30 FPS" :
+            "event/state driven; 0.33 FPS idle fallback");
+    fprintf(info, "Bottom developer overlay refresh: %s\n",
+            g_is_new_3ds ? "30 FPS" :
+            "on diagnostic change; at most 2.5 FPS");
     if (Platform3DS_CanUseCore1PpuWorker())
       fprintf(info, "Core 1 PPU budget: %d%%\n",
               g_core1_time_limit_percent);
