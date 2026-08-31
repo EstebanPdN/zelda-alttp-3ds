@@ -1,6 +1,6 @@
 # Changelog
 
-Concise cumulative history from v2.9 through v3.0-E4.
+Concise cumulative history from v2.9 through v3.0-E5.
 
 ## v2.9
 
@@ -38,3 +38,16 @@ Concise cumulative history from v2.9 through v3.0-E4.
 
 The E4 cache strategy was adapted to this engine after studying
 [@999sian's Old 3DS performance work in PR #26](https://github.com/EstebanPdN/zelda-tmc-3ds/pull/26).
+
+## v3.0-E5
+
+- Added direct Old 3DS RGB565 PPU output to reduce wide-mode framebuffer,
+  cache-clean and texture-upload traffic.
+- Reduced the parallel Old 3DS PPU tile-cache working set and replaced the
+  idle Core 1 polling loop with event-based wakeups.
+- Made the Old 3DS Developer overlay event-driven instead of redrawing the
+  full bottom screen every frame.
+- Fixed the blue/glitched Old 3DS bottom screen by configuring Citro2D texture
+  state before image submission.
+- Changed the top counter to `FPS <value>` with no CPU/GPU suffix.
+- Fixed `DUMP SAVED` truncation and removed its deliberate post-dump pause.

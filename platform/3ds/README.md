@@ -39,11 +39,11 @@ files include average/max frame work time and the number of frames that exceed
 the 16.67 ms budget. Each completed dump also includes `load-state.bin` and
 shows a short `DUMP SAVED` notice.
 
-The HOME Menu metadata is versioned for every release. v3.0-E4 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E5 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 4
-Long name:   A Link to the Past 3DS experimental 4
+Short name:  Zelda 3DS EXP 5
+Long name:   A Link to the Past 3DS experimental 5
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
 ```
@@ -51,12 +51,13 @@ UniqueId:    0x5A13E
 The CIA banner uses `assets/banner.cgfx`, generated from the supplied 2.0
 Blender logo model and kept below the HOME Menu CGFX size limit.
 
-v3.0-E4 keeps the game renderer and 60 Hz pacing from E3. Its presenter cleans
-only the GPU-visible ranges that changed, avoids Citro3D's default full linear
-heap flush, uses RGB565 color-only render targets and performs PCM cache cleans
-without synchronous DSP service IPC when the launch environment permits it.
-Compatibility fallbacks remain available for launch environments that reject
-the direct cache-clean SVC.
+v3.0-E5 keeps the game renderer and 60 Hz pacing from E4. On Old 3DS it writes
+the PPU directly to RGB565, uses a compact tile cache for the parallel PPU
+renderers, sleeps the Core 1 worker between jobs and refreshes the Developer
+overlay only when its diagnostics change. The top and bottom Citro2D texture
+environments are selected before image submission, preventing the mixed-format
+bottom-screen corruption exposed by the FPS/Developer overlays. New 3DS keeps
+the existing 32-bit PPU path and 4x Mode 7 eligibility.
 
 ## Requirements
 
