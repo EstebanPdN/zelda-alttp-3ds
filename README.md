@@ -34,6 +34,8 @@ https://discord.gg/SMW49UMkw
   profile and optionally show the current FPS on the top screen.
 - PICA200/Citro2D presentation for both screens with nearest-neighbor sampling
   and RGB565 display output.
+- Old 3DS uses a direct RGB565 PPU path and event-driven Developer overlay
+  refreshes to reduce wide-mode memory traffic and bottom-screen contention.
 - Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making
   game speed depend on when a VBlank wait returns.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
@@ -82,7 +84,7 @@ Detailed development notes are preserved inside the source snapshot.
 
 Latest stable release: [v2.9](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v2.9)
 
-Latest experimental release: [v3.0-E4](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E4)
+Latest experimental release: [v3.0-E5](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E5)
 
 See [CHANGELOG.md](CHANGELOG.md) for the concise history from v2.9 onward.
 
