@@ -11,6 +11,7 @@
 #include "types.h"
 #include "features.h"
 #include "util.h"
+#include "dump_state.h"
 #include <SDL.h>
 
 struct Snes;
@@ -76,6 +77,8 @@ enum {
 
 SDL_RWops* SDL_RWFromFileInExternal(const char *filename, const char *mode);
 void SaveLoadSlot(int cmd, int which);
+bool ZeldaWriteDumpState(const char *dump_directory);
+ZeldaDumpStateResult ZeldaLoadLatestDumpState(void);
 void ZeldaClearAutosave();
 void ZeldaWriteSram();
 void ZeldaReadSram();

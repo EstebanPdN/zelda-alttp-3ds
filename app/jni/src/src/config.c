@@ -489,7 +489,8 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
                StringEqualsNoCase(key, "WideEdgeMode") ||
                StringEqualsNoCase(key, "WideZoom") ||
                StringEqualsNoCase(key, "CStickMode") ||
-               StringEqualsNoCase(key, "CStickTurboMultiplier")) {
+               StringEqualsNoCase(key, "CStickTurboMultiplier") ||
+               StringEqualsNoCase(key, "ShowFps")) {
       return true;  // parsed by platform_3ds.c
     }
   } else if (section == 4) {

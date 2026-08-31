@@ -27,8 +27,11 @@ https://discord.gg/SMW49UMkw
 - Display modes: wide mod, stretched original and original aspect.
 - Turbo speed: off, x2, x3, x4 or x5.
 - New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
-- Quick diagnostics: press `L + R + A` to create a dump with memory files plus
-  top and bottom screenshots.
+- Quick diagnostics: press `L + R + A` to create a dump with memory files,
+  top and bottom screenshots and a validated `load-state.bin` checkpoint. A
+  `DUMP SAVED` notice confirms completion on the top screen.
+- Developer settings can load the newest dump checkpoint for the active ROM
+  profile and optionally show the current FPS on the top screen.
 - PICA200/Citro2D presentation for both screens with nearest-neighbor sampling
   and RGB565 display output.
 - Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making

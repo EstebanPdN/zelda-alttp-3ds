@@ -30,6 +30,11 @@ Concise cumulative history from v2.9 through v3.0-E4.
 - Switched both presentation targets to color-only RGB565, reducing render
   bandwidth and VRAM use without changing the source image or display modes.
 - Enabled function/data section garbage collection for smaller release builds.
+- Added Minish Cap-style `DUMP SAVED` confirmation and an optional top-screen
+  FPS counter.
+- Added Developer > Load State with an in-menu confirmation, newest-dump
+  selection, checksum validation and active-ROM profile protection.
+- Added a validated `load-state.bin` checkpoint to every completed quick dump.
 
 The E4 cache strategy was adapted to this engine after studying
 [@999sian's Old 3DS performance work in PR #26](https://github.com/EstebanPdN/zelda-tmc-3ds/pull/26).

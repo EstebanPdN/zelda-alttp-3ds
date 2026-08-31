@@ -50,6 +50,12 @@ void Platform3DS_FormatSavePath(const char *filename,
                                 char *out, size_t out_size);
 int Platform3DS_GetTurboMultiplier(void);
 void Platform3DS_SetTurboMultiplier(int multiplier);
+bool Platform3DS_GetShowFps(void);
+void Platform3DS_SetShowFps(bool show);
+void Platform3DS_SetCurrentFps(int fps);
+void Platform3DS_PersistRuntimeSettings(void);
+void Platform3DS_ShowDumpSavedOverlay(void);
+uint32_t Platform3DS_GetActiveProfileId(void);
 bool Platform3DS_InitTopPresenter(void);
 void Platform3DS_ShutdownTopPresenter(void);
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,

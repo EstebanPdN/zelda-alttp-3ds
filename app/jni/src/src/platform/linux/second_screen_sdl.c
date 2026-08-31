@@ -40,6 +40,7 @@ enum Platform3DSCStickMode {
 #endif
 
 #include "../../types.h"                 // uint8/uint16 for the tables header
+#include "../../dump_state.h"
 #include "../../second_screen_tables.h"  // kIconCount/kIconCols/kGlyphCount/kGlyphCols
 #include "ss_sheets.h"             // generated cell indices for icons/glyphs/letters
 #include "ss_textures.h"           // baked theme background tiles (menu/parchment/stone)
@@ -75,6 +76,8 @@ void SS_Set3DSWideEdgeMode(int mode);
 void SS_SetHudHidden(bool hide);
 bool SS_IsHudHidden(void);
 void SS_RequestMemoryDump(const char *dump_dir);
+void SS_RequestLoadLatestDumpState(void);
+int  SS_TakeLoadDumpStateResult(void);
 void SS_RequestRestart(void);
 void SS_ArmButtonCapture(bool arm);
 int  SS_GetCapturedButton(void);
@@ -192,19 +195,26 @@ static RectFS settings_row_r[6], remap_row_r[6], remap_back_r;
 static RectFS remap_page_r;
 static RectFS screen_row_r[4], screen_back_r;
 static RectFS cinema_back_r;
-static RectFS developer_row_r[2], developer_back_r;
+static RectFS developer_row_r[4], developer_back_r;
+static RectFS load_cancel_r, load_confirm_r;
 
 // settings / remap state
 static bool remap_mode;
 static bool screen_mode;
 static bool developer_mode;
 static bool developer_overlay_mode;
+static bool load_confirm_mode;
+#ifndef __3DS__
+static bool developer_show_fps;
+#endif
 static int  remap_first_row;
 static int  remap_arm = -1;         // row currently waiting for a button press
 static uint32_t remap_arm_at;
 static int  pad_controls[12];
 static bool hud_pref_applied;
 static uint32_t dump_flash_until;
+static uint32_t load_flash_until;
+static int load_result = -1;
 static RectFS plaque_r[16];
 static int    plaque_floor[16], plaque_count;
 static float  grid_x, grid_y, grid_cell;
@@ -996,6 +1006,7 @@ static void leave_settings_submenu(void) {
   screen_mode = false;
   developer_mode = false;
   developer_overlay_mode = false;
+  load_confirm_mode = false;
 }
 
 static void draw_cog(float cx, float cy, float r) {
@@ -1154,14 +1165,27 @@ static void draw_developer_panel(RectFS r) {
   draw_text("BACK", developer_back_r.x + developer_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
             developer_back_r.y + developer_back_r.h / 2 - 9 * u, 2.2f * u);
 
-  const char *labels[2] = {"MEM DUMP", "OVERLAY"};
-  const char *values[2] = {
+  bool show_fps = false;
+#ifdef __3DS__
+  show_fps = Platform3DS_GetShowFps();
+#else
+  show_fps = developer_show_fps;
+#endif
+  const char *load_value = load_result == -2 ? "WAIT" :
+    (load_result >= 0 && SDL_GetTicks() < load_flash_until ?
+      DumpState_ResultLabel((ZeldaDumpStateResult)load_result) : "LOAD");
+  const char *labels[4] = {
+    "MEM DUMP", "LOAD STATE", "SHOW FPS", "OVERLAY",
+  };
+  const char *values[4] = {
     SDL_GetTicks() < dump_flash_until ? "DONE" : "WRITE",
+    load_value,
+    show_fps ? "ON" : "OFF",
     "OPEN",
   };
   float row_h = 58 * u, gap = 14 * u;
   float y0 = r.y + 82 * u;
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < 4; i++) {
     RectFS *row = &developer_row_r[i];
     *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
     draw_settings_row(row, false);
@@ -1170,6 +1194,37 @@ static void draw_developer_panel(RectFS r) {
     draw_text(values[i], row->x + row->w - 16 * u - text_width(values[i], 2 * u),
               ty, 2 * u);
   }
+}
+
+static void draw_load_confirmation(RectFS r) {
+  draw_text("LOAD STATE",
+            r.x + r.w / 2 - text_width("LOAD STATE", 3 * u) / 2,
+            r.y + 24 * u, 3 * u);
+  const char *lines[] = {
+    "LOAD THE LATEST DUMP",
+    "FOR THIS ROM PROFILE",
+    "UNSAVED PROGRESS IS LOST",
+  };
+  for (int i = 0; i < 3; i++)
+    draw_text(lines[i],
+              r.x + r.w / 2 - text_width(lines[i], 2 * u) / 2,
+              r.y + (82 + i * 34) * u, 2 * u);
+
+  float button_w = 220 * u;
+  float button_y = r.y + r.h - 62 * u;
+  load_cancel_r = (RectFS){r.x + 28 * u, button_y, button_w, 46 * u};
+  load_confirm_r = (RectFS){r.x + r.w - 28 * u - button_w,
+                            button_y, button_w, 46 * u};
+  draw_settings_row(&load_cancel_r, false);
+  draw_settings_row(&load_confirm_r, false);
+  draw_text("CANCEL",
+            load_cancel_r.x + load_cancel_r.w / 2 -
+              text_width("CANCEL", 2 * u) / 2,
+            load_cancel_r.y + 14 * u, 2 * u);
+  draw_text("LOAD",
+            load_confirm_r.x + load_confirm_r.w / 2 -
+              text_width("LOAD", 2 * u) / 2,
+            load_confirm_r.y + 14 * u, 2 * u);
 }
 
 static void draw_developer_overlay_panel(RectFS r) {
@@ -1239,6 +1294,10 @@ static void draw_developer_overlay_panel(RectFS r) {
 
 static void draw_settings(RectFS r) {
   menu_box(r, COL_BOX_BORDER);
+  if (load_confirm_mode) {
+    draw_load_confirmation(r);
+    return;
+  }
   if (remap_mode) {
     draw_remap_panel(r);
     return;
@@ -1412,8 +1471,9 @@ static void prioritize_bottom_touch(void) {
 static void request_dump_now(void) {
   char dump_dir[160] = {0};
 #ifdef __3DS__
-  if (Platform3DS_CreateDumpDirectory(dump_dir, sizeof(dump_dir)) &&
-      ss_front_buffer >= 0 && ss_present_pixels[ss_front_buffer]) {
+  if (!Platform3DS_CreateDumpDirectory(dump_dir, sizeof(dump_dir)))
+    return;
+  if (ss_front_buffer >= 0 && ss_present_pixels[ss_front_buffer]) {
     char path[192];
     snprintf(path, sizeof(path), "%s/bottom-screen.bmp", dump_dir);
     if (ss_is_new_3ds) {
@@ -1453,6 +1513,9 @@ void SecondScreenSDL_RequestDump(void) {
 void SecondScreenSDL_SetDiagnostics(int current_fps, int average_fps) {
   ss_diag_current_fps = current_fps;
   ss_diag_average_fps = average_fps;
+#ifdef __3DS__
+  Platform3DS_SetCurrentFps(current_fps);
+#endif
 }
 
 void SecondScreenSDL_OpenDeveloperOverlay(void) {
@@ -1739,7 +1802,16 @@ static void handle_tap(float x, float y) {
 
 settings_tap:
   if (tab == TAB_SETTINGS) {
-    if (remap_mode) {
+    if (load_confirm_mode) {
+      if (in_rect(&load_cancel_r, x, y)) {
+        load_confirm_mode = false;
+      } else if (in_rect(&load_confirm_r, x, y)) {
+        load_confirm_mode = false;
+        load_result = -2;
+        SS_RequestLoadLatestDumpState();
+      }
+      return;
+    } else if (remap_mode) {
       if (in_rect(&remap_back_r, x, y)) { leave_remap(); return; }
       if (in_rect(&remap_page_r, x, y)) {
         remap_first_row = remap_first_row == 0 ? 6 : 0;
@@ -1826,6 +1898,20 @@ settings_tap:
       } else if (in_rect(&developer_row_r[0], x, y)) {
         request_dump_now();
       } else if (in_rect(&developer_row_r[1], x, y)) {
+        load_confirm_mode = true;
+      } else if (in_rect(&developer_row_r[2], x, y)) {
+#ifdef __3DS__
+        bool show = !Platform3DS_GetShowFps();
+        Platform3DS_SetShowFps(show);
+#else
+        bool show = !developer_show_fps;
+        developer_show_fps = show;
+#endif
+        update_ini("[General]", "ShowFps", show ? "1" : "0");
+#ifdef __3DS__
+        Platform3DS_PersistRuntimeSettings();
+#endif
+      } else if (in_rect(&developer_row_r[3], x, y)) {
         developer_overlay_mode = true;
 #ifdef __3DS__
         request_bottom_redraw(kBottomRedrawFull);
@@ -2133,6 +2219,12 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
     return;
   static uint32_t frame_no;
   frame_no++;
+  int completed_load = SS_TakeLoadDumpStateResult();
+  if (completed_load >= 0) {
+    load_result = completed_load;
+    load_flash_until = SDL_GetTicks() + 2400;
+    request_bottom_redraw(kBottomRedrawFull);
+  }
   if (!ss_win) {
     if (frame_no < 3 || !ensure_window())
       return;

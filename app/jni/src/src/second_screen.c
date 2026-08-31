@@ -438,6 +438,9 @@ static volatile int g_pending_wide_edge_mode = -1;
 static char g_pending_dump_dir[160];
 static char g_top_screenshot_dir[160];
 static volatile int g_pending_top_screenshot;
+static volatile int g_pending_dump_success;
+static volatile int g_pending_load_dump_state;
+static volatile int g_dump_load_result = -1;
 // Save-state slot picker: kSaveLoad_Save/kSaveLoad_Load, -1 when idle.
 static volatile int g_pending_state_cmd = -1;
 static volatile int g_pending_state_slot;
@@ -474,6 +477,20 @@ void SS_RequestMemoryDump(const char *dump_dir) {
     g_pending_dump_dir[0] = 0;
   }
   g_pending_memory_dump = 1;
+}
+
+void SS_RequestLoadLatestDumpState(void) {
+  if (!g_pending_load_dump_state) {
+    g_dump_load_result = -1;
+    g_pending_load_dump_state = 1;
+  }
+}
+
+int SS_TakeLoadDumpStateResult(void) {
+  int result = g_dump_load_result;
+  if (result >= 0)
+    g_dump_load_result = -1;
+  return result;
 }
 
 void SS_RequestRestart(void) { g_pending_restart = 1; }
@@ -569,7 +586,12 @@ void SecondScreen_CaptureDumpTopHook(const uint8 *px, int pitch, int width, int 
   snprintf(path, sizeof(path), "%s/top-screen.bmp", g_top_screenshot_dir);
   extern bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8 *pixels,
                                           int pitch, int width, int height);
-  Platform3DS_SaveARGB8888Bmp(path, px, pitch, width, height);
+  extern void Platform3DS_ShowDumpSavedOverlay(void);
+  bool screenshot_ok =
+    Platform3DS_SaveARGB8888Bmp(path, px, pitch, width, height);
+  if (screenshot_ok && g_pending_dump_success)
+    Platform3DS_ShowDumpSavedOverlay();
+  g_pending_dump_success = 0;
 #endif
 }
 
@@ -674,9 +696,20 @@ void SecondScreen_RunFrameHook(void) {
                                        const uint8 *ram, size_t ram_size,
                                        const uint8 *sram, size_t sram_size,
                                        const uint16 *vram, size_t vram_words);
-    Platform3DS_DumpMemory(g_top_screenshot_dir, g_ram, 131072, g_zenv.sram, 8192,
-                           g_zenv.vram, 32768);
+    bool state_ok = ZeldaWriteDumpState(g_top_screenshot_dir);
+    bool dump_ok = Platform3DS_DumpMemory(
+      g_top_screenshot_dir, g_ram, 131072, g_zenv.sram, 8192,
+      g_zenv.vram, 32768);
+    g_pending_dump_success = dump_ok;
+    (void)state_ok;
 #endif
+  }
+  if (g_pending_load_dump_state) {
+    g_pending_load_dump_state = 0;
+    ZeldaDumpStateResult result = ZeldaLoadLatestDumpState();
+    if (result == kZeldaDumpStateLoaded)
+      g_ss_has_outdoor = false;
+    g_dump_load_result = (int)result;
   }
   if (g_pending_restart) {
     g_pending_restart = 0;
