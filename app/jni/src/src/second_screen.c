@@ -16,6 +16,9 @@
 #include "zelda_rtl.h"
 #include "snes/ppu.h"
 #include "second_screen_tables.h"
+#ifdef __3DS__
+#include "platform_3ds.h"
+#endif
 
 // Save-state thumbnail size, in the 8:7 shape of the 256x224 SNES picture.
 // The JNI/Java sides hardcode the same numbers (as the other render_* do).
@@ -436,9 +439,6 @@ static volatile int g_pending_restart;
 static volatile int g_pending_display_mode = -1;
 static volatile int g_pending_wide_edge_mode = -1;
 static char g_pending_dump_dir[160];
-static char g_top_screenshot_dir[160];
-static volatile int g_pending_top_screenshot;
-static volatile int g_pending_dump_success;
 static volatile int g_pending_load_dump_state;
 static volatile int g_dump_load_result = -1;
 // Save-state slot picker: kSaveLoad_Save/kSaveLoad_Load, -1 when idle.
@@ -593,28 +593,6 @@ void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch,
   g_ss_thumb_state = 2;
 }
 
-void SecondScreen_CaptureDumpTopHook(const uint8 *px, int pitch,
-                                     int width, int height, bool rgb565) {
-  if (g_pending_top_screenshot != 1 || !px || width <= 0 || height <= 0)
-    return;
-  g_pending_top_screenshot = 0;
-#ifdef __3DS__
-  char path[192];
-  snprintf(path, sizeof(path), "%s/top-screen.bmp", g_top_screenshot_dir);
-  extern bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8 *pixels,
-                                          int pitch, int width, int height);
-  extern bool Platform3DS_SaveRGB565Bmp(const char *path, const uint8 *pixels,
-                                        int pitch, int width, int height);
-  extern void Platform3DS_ShowDumpSavedOverlay(void);
-  bool screenshot_ok = rgb565 ?
-    Platform3DS_SaveRGB565Bmp(path, px, pitch, width, height) :
-    Platform3DS_SaveARGB8888Bmp(path, px, pitch, width, height);
-  if (screenshot_ok && g_pending_dump_success)
-    Platform3DS_ShowDumpSavedOverlay();
-  g_pending_dump_success = 0;
-#endif
-}
-
 // Fills out (kSsThumbW*kSsThumbH ARGB) with the frame grabbed for the last save
 // and clears it; false while none is waiting (same consume pattern as
 // SS_GetCapturedButton).
@@ -708,20 +686,57 @@ void SecondScreen_RunFrameHook(void) {
   if (g_pending_memory_dump) {
     g_pending_memory_dump = 0;
 #ifdef __3DS__
-    strncpy(g_top_screenshot_dir, g_pending_dump_dir,
-            sizeof(g_top_screenshot_dir) - 1);
-    g_top_screenshot_dir[sizeof(g_top_screenshot_dir) - 1] = 0;
-    g_pending_top_screenshot = g_top_screenshot_dir[0] != 0;
-    extern bool Platform3DS_DumpMemory(const char *directory,
-                                       const uint8 *ram, size_t ram_size,
-                                       const uint8 *sram, size_t sram_size,
-                                       const uint16 *vram, size_t vram_words);
-    bool state_ok = ZeldaWriteDumpState(g_top_screenshot_dir);
-    bool dump_ok = Platform3DS_DumpMemory(
-      g_top_screenshot_dir, g_ram, 131072, g_zenv.sram, 8192,
-      g_zenv.vram, 32768);
-    g_pending_dump_success = dump_ok;
-    (void)state_ok;
+    // Freeze the NDSP channel before directory creation or SD writes. SDL's
+    // regular pause only stops its callback and leaves queued audio audible.
+    Platform3DS_MarkDumpTimingDiscontinuity();
+    Platform3DS_SetAudioPausedForDump(true);
+
+    char dump_dir[160];
+    bool directory_ok;
+    if (g_pending_dump_dir[0]) {
+      snprintf(dump_dir, sizeof(dump_dir), "%s", g_pending_dump_dir);
+      directory_ok = true;
+    } else {
+      directory_ok =
+        Platform3DS_CreateDumpDirectory(dump_dir, sizeof(dump_dir));
+    }
+
+    bool screens_ok = false;
+    bool state_ok = false;
+    bool dump_ok = false;
+    if (directory_ok) {
+      char top_path[192];
+      char bottom_path[192];
+      char top_raw_path[192];
+      char bottom_raw_path[192];
+      snprintf(top_path, sizeof(top_path), "%s/top-screen.bmp", dump_dir);
+      snprintf(bottom_path, sizeof(bottom_path), "%s/bottom-screen.bmp",
+               dump_dir);
+      snprintf(top_raw_path, sizeof(top_raw_path), "%s/top-screen.raw",
+               dump_dir);
+      snprintf(bottom_raw_path, sizeof(bottom_raw_path),
+               "%s/bottom-screen.raw", dump_dir);
+
+      Platform3DSCaptureStats capture_stats;
+      memset(&capture_stats, 0, sizeof(capture_stats));
+      // Capture first: these are the physical display framebuffers from the
+      // last completed presentation, including borders and GPU overlays.
+      screens_ok = Platform3DS_SaveDisplayedScreensDetailed(
+        top_path, bottom_path, top_raw_path, bottom_raw_path,
+        &capture_stats);
+      state_ok = ZeldaWriteDumpState(dump_dir);
+      dump_ok = Platform3DS_DumpMemory(
+        dump_dir, g_ram, 131072, g_zenv.sram, 8192,
+        g_zenv.vram, 32768, &capture_stats, screens_ok);
+    }
+
+    if (directory_ok && screens_ok && state_ok && dump_ok)
+      Platform3DS_ShowDumpSavedOverlay();
+    Platform3DS_LogRuntime(
+      "Dump result: directory=%s screens=%s state=%s memory=%s",
+      directory_ok ? "OK" : "FAILED", screens_ok ? "OK" : "FAILED",
+      state_ok ? "OK" : "FAILED", dump_ok ? "OK" : "FAILED");
+    Platform3DS_SetAudioPausedForDump(false);
 #endif
   }
   if (g_pending_load_dump_state) {

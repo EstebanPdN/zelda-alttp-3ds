@@ -28,14 +28,15 @@ https://discord.gg/SMW49UMkw
 - Turbo speed: off, x2, x3, x4 or x5.
 - New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
 - Quick diagnostics: press `L + R + A` to create a dump with memory files,
-  top and bottom screenshots and a validated `load-state.bin` checkpoint. A
-  `DUMP SAVED` notice confirms completion on the top screen.
+  physical 400x240/320x240 screen captures, raw display framebuffers and a
+  validated `load-state.bin` checkpoint. Audio pauses during capture and a
+  `DUMP SAVED` notice confirms complete success on the top screen.
 - Developer settings can load the newest dump checkpoint for the active ROM
   profile and optionally show the current FPS on the top screen.
 - PICA200/Citro2D presentation for both screens with nearest-neighbor sampling
   and RGB565 display output.
-- Old 3DS uses a direct RGB565 PPU path and event-driven Developer overlay
-  refreshes to reduce wide-mode memory traffic and bottom-screen contention.
+- Old 3DS keeps E4's verified BGRX PPU path and uses event-driven Developer
+  overlay refreshes to reduce bottom-screen contention.
 - Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making
   game speed depend on when a VBlank wait returns.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
@@ -84,7 +85,7 @@ Detailed development notes are preserved inside the source snapshot.
 
 Latest stable release: [v2.9](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v2.9)
 
-Latest experimental release: [v3.0-E5](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E5)
+Latest experimental release: [v3.0-E6](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E6)
 
 See [CHANGELOG.md](CHANGELOG.md) for the concise history from v2.9 onward.
 

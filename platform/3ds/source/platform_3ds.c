@@ -85,6 +85,9 @@ static uint64_t g_timed_scheduled_logic_frames;
 static uint64_t g_executed_logic_frames;
 static uint64_t g_catchup_presentations;
 static uint32_t g_max_scheduled_logic_frames;
+static bool g_ignore_next_frame_timing;
+static bool g_dump_audio_pause_active;
+static bool g_dump_audio_was_paused;
 static bool g_gpu_presenter_initialized;
 static bool g_gpu_frame_active;
 static bool g_setup_console_active;
@@ -610,6 +613,29 @@ void Platform3DS_ShowDumpSavedOverlay(void) {
   g_dump_saved_overlay_until_ms = osGetTime() + 1200;
 }
 
+void Platform3DS_SetAudioPausedForDump(bool paused) {
+  // SDL's pause flag stops producing new samples, but the N3DS audio backend
+  // keeps several NDSP wave buffers queued. Pausing channel 0 freezes those
+  // already-queued samples immediately and resumes at the same position.
+  if (paused) {
+    if (!g_dump_audio_pause_active) {
+      g_dump_audio_was_paused = ndspChnIsPaused(0);
+      g_dump_audio_pause_active = true;
+    }
+    ndspChnSetPaused(0, true);
+  } else if (g_dump_audio_pause_active) {
+    ndspChnSetPaused(0, g_dump_audio_was_paused);
+    g_dump_audio_pause_active = false;
+  }
+}
+
+void Platform3DS_MarkDumpTimingDiscontinuity(void) {
+  // The synchronous SD transaction is deliberately outside normal gameplay
+  // timing. Ignore the frame that contains it so the next dump does not
+  // report this diagnostic pause as a PPU or presentation regression.
+  g_ignore_next_frame_timing = true;
+}
+
 uint32_t Platform3DS_GetActiveProfileId(void) {
   return g_active_profile_id;
 }
@@ -659,8 +685,6 @@ bool Platform3DS_InitTopPresenter(void) {
       "Core 1 PPU budget unavailable; disabling Core 1 worker");
   }
 
-  // Zelda's source image is derived from the SNES 15-bit palette. RGB565 keeps
-  // that detail while halving the top framebuffer bandwidth versus RGBA8.
   gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);
   gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
   gfxSetDoubleBuffering(GFX_TOP, true);
@@ -703,10 +727,8 @@ bool Platform3DS_InitTopPresenter(void) {
       g_c2d_flush_size = flush_end - flush_start;
     }
   }
-  GPU_TEXCOLOR top_texture_format =
-    g_is_new_3ds ? GPU_RGBA8 : GPU_RGB565;
   if (!C3D_TexInitVRAM(&g_top_texture, kTopTextureWidth,
-                       kTopTextureHeight, top_texture_format)) {
+                       kTopTextureHeight, GPU_RGBA8)) {
     C2D_Fini();
     C3D_Fini();
     Platform3DS_LogRuntime("ERROR: unable to allocate top GPU texture");
@@ -939,9 +961,8 @@ static float StatusTextWidth(const char *text, float scale) {
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
                                  int width, int height,
                                  int focus_x, int focus_y) {
-  int bytes_per_pixel = g_is_new_3ds ? 4 : 2;
   if (!g_gpu_presenter_initialized || !pixels ||
-      pitch != kTopTextureWidth * bytes_per_pixel ||
+      pitch != kTopTextureWidth * (int)sizeof(uint32_t) ||
       width <= 0 || width > kTopTextureWidth ||
       height <= 0 || height > kTopTextureHeight)
     return;
@@ -950,9 +971,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     return;
   g_gpu_frame_active = true;
   Platform3DS_CleanDataCache(
-    pixels, kTopTextureWidth * kTopTextureHeight * bytes_per_pixel);
-  GX_TRANSFER_FORMAT top_transfer_format =
-    g_is_new_3ds ? GX_TRANSFER_FMT_RGBA8 : GX_TRANSFER_FMT_RGB565;
+    pixels, kTopTextureWidth * kTopTextureHeight * sizeof(uint32_t));
   C3D_SyncDisplayTransfer(
     (u32 *)pixels, GX_BUFFER_DIM(kTopTextureWidth, kTopTextureHeight),
     (u32 *)g_top_texture.data,
@@ -960,8 +979,8 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     GX_TRANSFER_FLIP_VERT(0) |
       GX_TRANSFER_OUT_TILED(1) |
       GX_TRANSFER_RAW_COPY(0) |
-      GX_TRANSFER_IN_FORMAT(top_transfer_format) |
-      GX_TRANSFER_OUT_FORMAT(top_transfer_format) |
+      GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+      GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
 
   const bool stretch = g_display_mode == kPlatform3DSDisplayStretch;
@@ -1022,10 +1041,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   C2D_SceneBegin(g_top_target);
   // Select the texture environment before queuing geometry. This makes the
   // batch self-consistent even if Citro2D has to flush at its object limit.
-  if (g_is_new_3ds)
-    ConfigureArgbTextureEnv();
-  else
-    ConfigureRgb565TextureEnv();
+  ConfigureArgbTextureEnv();
   C2D_DrawImage(image, &params, NULL);
   if (g_show_fps) {
     char label[28];
@@ -1133,6 +1149,10 @@ void Platform3DS_RecordFrameTiming(uint32_t logic_work_us,
                                    uint32_t render_interval_us,
                                    int scheduled_logic_frames,
                                    int executed_logic_frames) {
+  if (g_ignore_next_frame_timing) {
+    g_ignore_next_frame_timing = false;
+    return;
+  }
   g_frame_timing_samples++;
   g_logic_work_total_us += logic_work_us;
   g_top_draw_total_us += top_draw_us;
@@ -3279,14 +3299,74 @@ bool Platform3DS_CreateDumpDirectory(char *out, size_t out_size) {
   return false;
 }
 
-bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8_t *pixels,
-                                 int pitch, int width, int height) {
-  if (!path || !pixels || pitch <= 0 || width <= 0 || height <= 0)
+static void ReadDisplayedPixel(const uint8_t *pixel,
+                               GSPGPU_FramebufferFormat format,
+                               uint8_t *red, uint8_t *green,
+                               uint8_t *blue) {
+  switch (format) {
+  case GSP_RGB565_OES: {
+    uint16_t color;
+    memcpy(&color, pixel, sizeof(color));
+    *red = (uint8_t)(((color >> 11) & 31u) * 255u / 31u);
+    *green = (uint8_t)(((color >> 5) & 63u) * 255u / 63u);
+    *blue = (uint8_t)((color & 31u) * 255u / 31u);
+    break;
+  }
+  case GSP_BGR8_OES:
+    *blue = pixel[0];
+    *green = pixel[1];
+    *red = pixel[2];
+    break;
+  case GSP_RGBA8_OES:
+    *red = pixel[0];
+    *green = pixel[1];
+    *blue = pixel[2];
+    break;
+  case GSP_RGB5_A1_OES: {
+    uint16_t color;
+    memcpy(&color, pixel, sizeof(color));
+    *red = (uint8_t)(((color >> 11) & 31u) * 255u / 31u);
+    *green = (uint8_t)(((color >> 6) & 31u) * 255u / 31u);
+    *blue = (uint8_t)(((color >> 1) & 31u) * 255u / 31u);
+    break;
+  }
+  case GSP_RGBA4_OES: {
+    uint16_t color;
+    memcpy(&color, pixel, sizeof(color));
+    *red = (uint8_t)(((color >> 12) & 15u) * 17u);
+    *green = (uint8_t)(((color >> 8) & 15u) * 17u);
+    *blue = (uint8_t)(((color >> 4) & 15u) * 17u);
+    break;
+  }
+  default:
+    *red = 0;
+    *green = 0;
+    *blue = 0;
+    break;
+  }
+}
+
+static bool SaveDisplayedFramebufferBmp(
+    const char *path, const GSPGPU_CaptureInfoEntry *capture,
+    int width, int height) {
+  if (!path || !capture || !capture->framebuf0_vaddr)
     return false;
+  GSPGPU_FramebufferFormat format =
+    (GSPGPU_FramebufferFormat)(capture->format & 7u);
+  unsigned bytes_per_pixel = gspGetBytesPerPixel(format);
+  if (bytes_per_pixel < 2 || bytes_per_pixel > 4 ||
+      capture->framebuf_widthbytesize == 0)
+    return false;
+
+  const uint8_t *framebuffer =
+    (const uint8_t *)capture->framebuf0_vaddr;
+  size_t framebuffer_size =
+    (size_t)capture->framebuf_widthbytesize * (size_t)width;
+  GSPGPU_InvalidateDataCache(framebuffer, framebuffer_size);
+
   FILE *file = fopen(path, "wb");
   if (!file)
     return false;
-
   int row_size = (width * 3 + 3) & ~3;
   uint32_t file_size = 54u + (uint32_t)row_size * (uint32_t)height;
   uint8_t header[54] = {
@@ -3307,12 +3387,17 @@ bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8_t *pixels,
     ok = false;
   for (int y = height - 1; ok && y >= 0; y--) {
     memset(row, 0, (size_t)row_size);
-    const uint32_t *src = (const uint32_t *)(pixels + (size_t)y * pitch);
     for (int x = 0; x < width; x++) {
-      uint32_t c = src[x];
-      row[x * 3 + 0] = (uint8_t)c;
-      row[x * 3 + 1] = (uint8_t)(c >> 8);
-      row[x * 3 + 2] = (uint8_t)(c >> 16);
+      // 3DS display framebuffers are rotated: each physical X coordinate is
+      // one memory row and Y runs in reverse inside that row.
+      const uint8_t *pixel =
+        framebuffer + (size_t)x * capture->framebuf_widthbytesize +
+        (size_t)(height - 1 - y) * bytes_per_pixel;
+      uint8_t red, green, blue;
+      ReadDisplayedPixel(pixel, format, &red, &green, &blue);
+      row[x * 3 + 0] = blue;
+      row[x * 3 + 1] = green;
+      row[x * 3 + 2] = red;
     }
     ok = fwrite(row, 1, (size_t)row_size, file) == (size_t)row_size;
   }
@@ -3321,61 +3406,82 @@ bool Platform3DS_SaveARGB8888Bmp(const char *path, const uint8_t *pixels,
     ok = false;
   if (!ok)
     remove(path);
-  Platform3DS_LogRuntime("Screenshot %s: %s", path, ok ? "OK" : "FAILED");
   return ok;
 }
 
-bool Platform3DS_SaveRGB565Bmp(const char *path, const uint8_t *pixels,
-                               int pitch, int width, int height) {
-  if (!path || !pixels || pitch <= 0 || width <= 0 || height <= 0)
+static bool SaveDisplayedFramebufferRaw(
+    const char *path, const GSPGPU_CaptureInfoEntry *capture, int width) {
+  if (!path)
+    return true;
+  if (!capture || !capture->framebuf0_vaddr ||
+      capture->framebuf_widthbytesize == 0)
     return false;
-  FILE *file = fopen(path, "wb");
-  if (!file)
-    return false;
+  size_t size = (size_t)capture->framebuf_widthbytesize * (size_t)width;
+  GSPGPU_InvalidateDataCache(capture->framebuf0_vaddr, size);
+  return WriteBlob(path, capture->framebuf0_vaddr, size);
+}
 
-  int row_size = (width * 3 + 3) & ~3;
-  uint32_t file_size = 54u + (uint32_t)row_size * (uint32_t)height;
-  uint8_t header[54] = {
-    'B', 'M',
-    (uint8_t)file_size, (uint8_t)(file_size >> 8),
-    (uint8_t)(file_size >> 16), (uint8_t)(file_size >> 24),
-    0, 0, 0, 0, 54, 0, 0, 0,
-    40, 0, 0, 0,
-    (uint8_t)width, (uint8_t)(width >> 8),
-    (uint8_t)(width >> 16), (uint8_t)(width >> 24),
-    (uint8_t)height, (uint8_t)(height >> 8),
-    (uint8_t)(height >> 16), (uint8_t)(height >> 24),
-    1, 0, 24, 0,
-  };
-  bool ok = fwrite(header, 1, sizeof(header), file) == sizeof(header);
-  uint8_t *row = malloc((size_t)row_size);
-  if (!row)
-    ok = false;
-  for (int y = height - 1; ok && y >= 0; y--) {
-    memset(row, 0, (size_t)row_size);
-    const uint16_t *source =
-      (const uint16_t *)(pixels + (size_t)y * pitch);
-    for (int x = 0; x < width; x++) {
-      uint16_t color = source[x];
-      row[x * 3 + 0] = (uint8_t)((color & 31) * 255 / 31);
-      row[x * 3 + 1] = (uint8_t)(((color >> 5) & 63) * 255 / 63);
-      row[x * 3 + 2] = (uint8_t)(((color >> 11) & 31) * 255 / 31);
-    }
-    ok = fwrite(row, 1, (size_t)row_size, file) == (size_t)row_size;
+bool Platform3DS_SaveDisplayedScreensDetailed(
+    const char *top_path, const char *bottom_path,
+    const char *top_raw_path, const char *bottom_raw_path,
+    Platform3DSCaptureStats *stats) {
+  if (stats)
+    memset(stats, 0, sizeof(*stats));
+
+  GSPGPU_CaptureInfo capture;
+  memset(&capture, 0, sizeof(capture));
+  Result result = GSPGPU_ImportDisplayCaptureInfo(&capture);
+  if (R_FAILED(result)) {
+    Platform3DS_LogRuntime(
+      "Physical display capture import failed: 0x%08lx",
+      (unsigned long)result);
+    return false;
   }
-  free(row);
-  if (fclose(file) != 0)
-    ok = false;
-  if (!ok)
-    remove(path);
-  Platform3DS_LogRuntime("Screenshot %s: %s", path, ok ? "OK" : "FAILED");
+
+  const GSPGPU_CaptureInfoEntry *top =
+    &capture.screencapture[GSP_SCREEN_TOP];
+  const GSPGPU_CaptureInfoEntry *bottom =
+    &capture.screencapture[GSP_SCREEN_BOTTOM];
+  if (stats) {
+    stats->top_format = top->format & 7u;
+    stats->top_stride = top->framebuf_widthbytesize;
+    stats->bottom_format = bottom->format & 7u;
+    stats->bottom_stride = bottom->framebuf_widthbytesize;
+    stats->top_address = (uintptr_t)top->framebuf0_vaddr;
+    stats->bottom_address = (uintptr_t)bottom->framebuf0_vaddr;
+  }
+
+  bool top_ok = SaveDisplayedFramebufferBmp(top_path, top, 400, 240);
+  bool bottom_ok =
+    SaveDisplayedFramebufferBmp(bottom_path, bottom, 320, 240);
+  bool top_raw_ok = SaveDisplayedFramebufferRaw(top_raw_path, top, 400);
+  bool bottom_raw_ok =
+    SaveDisplayedFramebufferRaw(bottom_raw_path, bottom, 320);
+  bool ok = top_ok && bottom_ok && top_raw_ok && bottom_raw_ok;
+  Platform3DS_LogRuntime(
+    "Physical screen capture: top=%s bottom=%s top-raw=%s bottom-raw=%s",
+    top_ok ? "OK" : "FAILED", bottom_ok ? "OK" : "FAILED",
+    top_raw_ok ? "OK" : "FAILED", bottom_raw_ok ? "OK" : "FAILED");
   return ok;
+}
+
+static const char *DisplayedFramebufferFormatName(uint32_t format) {
+  switch ((GSPGPU_FramebufferFormat)(format & 7u)) {
+  case GSP_RGBA8_OES: return "RGBA8";
+  case GSP_BGR8_OES: return "BGR8";
+  case GSP_RGB565_OES: return "RGB565";
+  case GSP_RGB5_A1_OES: return "RGB5A1";
+  case GSP_RGBA4_OES: return "RGBA4";
+  default: return "unknown";
+  }
 }
 
 bool Platform3DS_DumpMemory(const char *directory,
                             const uint8_t *ram, size_t ram_size,
                             const uint8_t *sram, size_t sram_size,
-                            const uint16_t *vram, size_t vram_words) {
+                            const uint16_t *vram, size_t vram_words,
+                            const Platform3DSCaptureStats *capture_stats,
+                            bool screens_ok) {
   char local_directory[128];
   if (!directory || !directory[0]) {
     if (!Platform3DS_CreateDumpDirectory(local_directory, sizeof(local_directory)))
@@ -3390,6 +3496,7 @@ bool Platform3DS_DumpMemory(const char *directory,
   ok = WriteBlob(path, sram, sram_size) && ok;
   snprintf(path, sizeof(path), "%s/vram.bin", directory);
   ok = WriteBlob(path, vram, vram_words * sizeof(*vram)) && ok;
+  ok = screens_ok && ok;
 
   char load_state_path[192];
   snprintf(load_state_path, sizeof(load_state_path), "%s/%s", directory,
@@ -3403,12 +3510,34 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "RAM bytes: %lu\n", (unsigned long)ram_size);
     fprintf(info, "SRAM bytes: %lu\n", (unsigned long)sram_size);
     fprintf(info, "VRAM words: %lu\n", (unsigned long)vram_words);
+    fprintf(info, "Physical screen capture: %s\n",
+            screens_ok ? "complete" : "failed or incomplete");
+    fprintf(info, "Top screen capture: 400x240 BMP plus raw framebuffer\n");
+    fprintf(info, "Bottom screen capture: 320x240 BMP plus raw framebuffer\n");
+    if (capture_stats && capture_stats->top_stride != 0 &&
+        capture_stats->bottom_stride != 0) {
+      fprintf(info, "Top framebuffer format: %s (%lu)\n",
+              DisplayedFramebufferFormatName(capture_stats->top_format),
+              (unsigned long)capture_stats->top_format);
+      fprintf(info, "Top framebuffer stride: %lu bytes\n",
+              (unsigned long)capture_stats->top_stride);
+      fprintf(info, "Top framebuffer address: 0x%08lx\n",
+              (unsigned long)capture_stats->top_address);
+      fprintf(info, "Bottom framebuffer format: %s (%lu)\n",
+              DisplayedFramebufferFormatName(capture_stats->bottom_format),
+              (unsigned long)capture_stats->bottom_format);
+      fprintf(info, "Bottom framebuffer stride: %lu bytes\n",
+              (unsigned long)capture_stats->bottom_stride);
+      fprintf(info, "Bottom framebuffer address: 0x%08lx\n",
+              (unsigned long)capture_stats->bottom_address);
+    } else {
+      fprintf(info, "Physical framebuffer metadata: unavailable\n");
+    }
     fprintf(info, "Load State checkpoint: %s\n",
             load_state_ok ? "load-state.bin (validated)" : "unavailable");
     fprintf(info, "Display mode: %d\n", (int)g_display_mode);
     fprintf(info, "Top presenter: PICA200 RGB565\n");
-    fprintf(info, "Top software pixel path: %s\n",
-            g_is_new_3ds ? "BGRX8888" : "RGB565 direct");
+    fprintf(info, "Top software pixel path: BGRX8888\n");
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",
             g_is_new_3ds ? "yes" : "no");

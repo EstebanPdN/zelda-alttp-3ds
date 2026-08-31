@@ -98,7 +98,6 @@ static uint32 g_3ds_visual_fps_window_frames;
 static uint32 g_3ds_average_fps_samples[20];
 static uint32 g_3ds_average_fps_sample_count;
 static uint32 g_3ds_average_fps_sample_pos;
-static int g_3ds_top_bytes_per_pixel = 4;
 #endif
 static int g_ppu_render_flags = 0;
 static int g_snes_width, g_snes_height;
@@ -232,35 +231,15 @@ static void DrawPpuFrameWithPerf() {
     TicksToMicroseconds(SDL_GetPerformanceCounter() - section_start);
   section_start = SDL_GetPerformanceCounter();
 #endif
-  if (g_display_perf
-#ifdef __3DS__
-      && g_3ds_top_bytes_per_pixel == 4
-#endif
-  )
+  if (g_display_perf)
     RenderNumber(pixel_buffer + pitch * render_scale, pitch, g_curr_fps, render_scale == 4);
   // the second screen's save-state picker grabs a thumbnail off this frame
   extern void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch,
                                              int width, int height,
                                              bool rgb565);
-  SecondScreen_CaptureFrameHook(
-    pixel_buffer, pitch, g_snes_width * render_scale,
-    g_snes_height * render_scale,
-#ifdef __3DS__
-    g_3ds_top_bytes_per_pixel == 2);
-#else
-    false);
-#endif
-  extern void SecondScreen_CaptureDumpTopHook(const uint8 *px, int pitch,
-                                               int width, int height,
-                                               bool rgb565);
-  SecondScreen_CaptureDumpTopHook(
-    pixel_buffer, pitch, g_snes_width * render_scale,
-    g_snes_height * render_scale,
-#ifdef __3DS__
-    g_3ds_top_bytes_per_pixel == 2);
-#else
-    false);
-#endif
+  SecondScreen_CaptureFrameHook(pixel_buffer, pitch,
+                                g_snes_width * render_scale,
+                                g_snes_height * render_scale, false);
 #ifdef __3DS__
   g_3ds_last_capture_us =
     TicksToMicroseconds(SDL_GetPerformanceCounter() - section_start);
@@ -422,10 +401,8 @@ static bool SdlRenderer_Init(SDL_Window *window) {
 
 #ifdef __3DS__
   (void)window;
-  g_3ds_top_bytes_per_pixel = Platform3DS_IsNew3DS() ? 4 : 2;
   size_t top_buffer_size =
-    k3DSTopTextureWidth * k3DSTopTextureHeight *
-    g_3ds_top_bytes_per_pixel;
+    k3DSTopTextureWidth * k3DSTopTextureHeight * sizeof(uint32);
   g_3ds_top_pixels =
     linearMemAlign(top_buffer_size, 64);
   if (!g_3ds_top_pixels) {
@@ -497,7 +474,7 @@ static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pi
     return;
   }
   *pixels = g_3ds_top_pixels;
-  *pitch = k3DSTopTextureWidth * g_3ds_top_bytes_per_pixel;
+  *pitch = k3DSTopTextureWidth * sizeof(uint32);
 #else
   if (SDL_LockTexture(g_texture, &g_sdl_renderer_rect, (void **)pixels, pitch) != 0) {
     printf("Failed to lock texture: %s\n", SDL_GetError());
@@ -519,8 +496,7 @@ static void SdlRenderer_EndDraw() {
       focus_x += (g_sdl_renderer_rect.w - 256) / 2;
   }
   Platform3DS_PresentTopFrame(g_3ds_top_pixels,
-                              k3DSTopTextureWidth *
-                                g_3ds_top_bytes_per_pixel,
+                              k3DSTopTextureWidth * sizeof(uint32),
                               g_sdl_renderer_rect.w,
                               g_sdl_renderer_rect.h,
                               focus_x,
@@ -656,10 +632,6 @@ restart_3ds_runtime:
                        g_config.enhanced_mode7 * kPpuRenderFlags_4x4Mode7 |
                        g_config.extend_y * kPpuRenderFlags_Height240 |
                        g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
-#ifdef __3DS__
-  if (!Platform3DS_IsNew3DS())
-    g_ppu_render_flags |= kPpuRenderFlags_OutputRgb565;
-#endif
   ZeldaEnableMsu(g_config.enable_msu);
   ZeldaSetLanguage(g_config.language);
 

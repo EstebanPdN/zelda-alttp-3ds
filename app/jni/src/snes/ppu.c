@@ -68,6 +68,7 @@ void ppu_reset(Ppu* ppu) {
   memset(ppu->cgram, 0, sizeof(ppu->cgram));
   ppu->cgramPointer = 0;
   ppu->cgramSecondWrite = false;
+  ppu->colorMapDirty = true;
   ppu->cgramBuffer = 0;
   memset(ppu->oam, 0, sizeof(ppu->oam));
   ppu->oamAdr = 0;
@@ -125,6 +126,8 @@ void ppu_saveload(Ppu *ppu, SaveLoadFunc *func, void *ctx) {
   func(ctx, tmp, 10);
   func(ctx, &ppu->cgram, 512);
   func(ctx, tmp, 556);
+  ppu->lastBrightnessMult = 0xff;
+  ppu->colorMapDirty = true;
   func(ctx, tmp, 520);
   for (int i = 0; i < 4; i++) {
     func(ctx, tmp, 4);
@@ -136,7 +139,6 @@ void ppu_saveload(Ppu *ppu, SaveLoadFunc *func, void *ctx) {
 
 int PpuGetCurrentRenderScale(Ppu *ppu, uint32_t render_flags) {
   bool hq = ppu->mode == 7 && !ppu->forcedBlank &&
-    !(render_flags & kPpuRenderFlags_OutputRgb565) &&
     (render_flags & (kPpuRenderFlags_4x4Mode7 | kPpuRenderFlags_NewRenderer)) == (kPpuRenderFlags_4x4Mode7 | kPpuRenderFlags_NewRenderer);
   return hq ? 4 : 1;
 }
@@ -151,6 +153,7 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   if (ppu->brightness != ppu->lastBrightnessMult) {
     uint8_t ppu_brightness = ppu->brightness;
     ppu->lastBrightnessMult = ppu_brightness;
+    ppu->colorMapDirty = true;
     for (int i = 0; i < 32; i++)
       ppu->brightnessMultHalf[i * 2] = ppu->brightnessMultHalf[i * 2 + 1] = ppu->brightnessMult[i] =
       ((i << 3) | (i >> 2)) * ppu_brightness / 15;
@@ -158,14 +161,15 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
     memset(&ppu->brightnessMult[32], ppu->brightnessMult[31], 31);
   }
 
-  for (int i = 0; i < 256; i++) {
-    uint32 color = ppu->cgram[i];
-    uint32 r = ppu->brightnessMult[color & 0x1f];
-    uint32 g = ppu->brightnessMult[(color >> 5) & 0x1f];
-    uint32 b = ppu->brightnessMult[(color >> 10) & 0x1f];
-    ppu->colorMapRgb[i] = r << 16 | g << 8 | b;
-    ppu->colorMapRgb565[i] =
-      (uint16_t)((r & 0xf8) << 8 | (g & 0xfc) << 3 | b >> 3);
+  if (ppu->colorMapDirty) {
+    ppu->colorMapDirty = false;
+    for (int i = 0; i < 256; i++) {
+      uint32 color = ppu->cgram[i];
+      ppu->colorMapRgb[i] =
+        ppu->brightnessMult[color & 0x1f] << 16 |
+        ppu->brightnessMult[(color >> 5) & 0x1f] << 8 |
+        ppu->brightnessMult[(color >> 10) & 0x1f];
+    }
   }
 }
 
@@ -183,15 +187,9 @@ static inline void ClearBackdrop(Ppu *ppu, PpuPixelPrioBufs *buf) {
 }
 
 static inline uint32 PpuGetCached4bppRow(Ppu *ppu, int address) {
-  uint address_index = (uint)address & 0x7fff;
-#ifdef __3DS__
-  uint index = (address_index ^ (address_index >> 11)) & 0x7ff;
-#else
-  uint index = address_index;
-#endif
+  uint index = (uint)address & 0x7fff;
   uint32 bits =
-    ppu->vram[address_index] |
-    ppu->vram[(address_index + 8) & 0x7fff] << 16;
+    ppu->vram[index] | ppu->vram[(index + 8) & 0x7fff] << 16;
   PpuTileCache *cache = ppu->tileCache;
   if (cache->keys[index] != bits) {
     uint32 pixels = 0;
@@ -220,17 +218,22 @@ void ppu_runLine(Ppu *ppu, int line) {
         j = (j + 1 == mod ? 0 : j + 1);
       }
     }
-    // evaluate sprites
-    ClearBackdrop(ppu, &ppu->objBuffer);
-    ppu->lineHasSprites = !ppu->forcedBlank && ppu_evaluateSprites(ppu, line - 1);
-
     // outside of visible range?
     if (line >= 225 + ppu->extraBottomCur) {
-      size_t bytes_per_pixel =
-        (ppu->renderFlags & kPpuRenderFlags_OutputRgb565) ? 2 : 4;
       memset(&ppu->renderBuffer[(line - 1) * ppu->renderPitch], 0,
-             bytes_per_pixel * (256 + ppu->extraLeftRight * 2));
+             sizeof(uint32) * (256 + ppu->extraLeftRight * 2));
       return;
+    }
+
+    // Sprite evaluation is an OAM scan plus a full priority-buffer clear. Do
+    // neither when OBJ is disabled on both main and subscreen.
+    bool sprites_enabled =
+      (ppu->screenEnabled[0] | ppu->screenEnabled[1]) & (1 << 4);
+    if (!ppu->forcedBlank && sprites_enabled) {
+      ClearBackdrop(ppu, &ppu->objBuffer);
+      ppu->lineHasSprites = ppu_evaluateSprites(ppu, line - 1);
+    } else {
+      ppu->lineHasSprites = false;
     }
 
     if (ppu->renderFlags & kPpuRenderFlags_NewRenderer) {
@@ -243,11 +246,9 @@ void ppu_runLine(Ppu *ppu, int line) {
 
       uint8 *dst = ppu->renderBuffer + ((line - 1) * ppu->renderPitch);
       if (ppu->extraLeftRight != 0) {
-        size_t bytes_per_pixel =
-          (ppu->renderFlags & kPpuRenderFlags_OutputRgb565) ? 2 : 4;
-        memset(dst, 0, bytes_per_pixel * ppu->extraLeftRight);
-        memset(dst + bytes_per_pixel * (256 + ppu->extraLeftRight), 0,
-               bytes_per_pixel * ppu->extraLeftRight);
+        memset(dst, 0, sizeof(uint32) * ppu->extraLeftRight);
+        memset(dst + sizeof(uint32) * (256 + ppu->extraLeftRight), 0,
+               sizeof(uint32) * ppu->extraLeftRight);
       }
     }
   }
@@ -905,12 +906,32 @@ static void PpuDrawBackgrounds(Ppu *ppu, int y, bool sub) {
   }
 }
 
+static inline void PpuWriteMappedSpan(
+    uint32 *__restrict dst, const PpuZbufType *__restrict src,
+    uint32 count, const uint32 *__restrict color_map) {
+  while (count >= 8) {
+    dst[0] = color_map[src[0] & 0xff];
+    dst[1] = color_map[src[1] & 0xff];
+    dst[2] = color_map[src[2] & 0xff];
+    dst[3] = color_map[src[3] & 0xff];
+    dst[4] = color_map[src[4] & 0xff];
+    dst[5] = color_map[src[5] & 0xff];
+    dst[6] = color_map[src[6] & 0xff];
+    dst[7] = color_map[src[7] & 0xff];
+    dst += 8;
+    src += 8;
+    count -= 8;
+  }
+  while (count != 0) {
+    *dst++ = color_map[*src++ & 0xff];
+    count--;
+  }
+}
+
 static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   if (ppu->forcedBlank) {
     uint8 *dst = &ppu->renderBuffer[(y - 1) * ppu->renderPitch];
-    size_t bytes_per_pixel =
-      (ppu->renderFlags & kPpuRenderFlags_OutputRgb565) ? 2 : 4;
-    size_t n = bytes_per_pixel * (256 + ppu->extraLeftRight * 2);
+    size_t n = sizeof(uint32) * (256 + ppu->extraLeftRight * 2);
     memset(dst, 0, n);
     return;
   }
@@ -936,17 +957,20 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
 
   // Render also the subscreen?
   bool rendered_subscreen = false;
-  if (ppu->preventMathMode != 3 && ppu->addSubscreen && math_enabled) {
+  if (ppu->preventMathMode != 3 && ppu->addSubscreen && math_enabled &&
+      ppu->screenEnabled[1] != 0) {
     ClearBackdrop(ppu, &ppu->bgBuffers[1]);
-    if (ppu->screenEnabled[1] != 0) {
-      PpuDrawBackgrounds(ppu, y, true);
-      rendered_subscreen = true;
-    }
+    PpuDrawBackgrounds(ppu, y, true);
+    rendered_subscreen = true;
   }
 
   // Color window affects the drawing mode in each region
   PpuWindows cwin;
-  PpuWindows_Calc(&cwin, ppu, 5);
+  uint32 color_window_flags = GET_WINDOW_FLAGS(ppu, 5);
+  if (color_window_flags & (kWindow1Enabled | kWindow2Enabled))
+    PpuWindows_Calc(&cwin, ppu, 5);
+  else
+    PpuWindows_Clear(&cwin, ppu, 5);
   static const uint8 kCwBitsMod[8] = {
     0x00, 0xff, 0xff, 0x00,
     0xff, 0x00, 0xff, 0x00,
@@ -954,9 +978,10 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   uint32 cw_clip_math = ((cwin.bits & kCwBitsMod[ppu->clipMode]) ^ kCwBitsMod[ppu->clipMode + 4]) |
                         ((cwin.bits & kCwBitsMod[ppu->preventMathMode]) ^ kCwBitsMod[ppu->preventMathMode + 4]) << 8;
 
-  bool output_rgb565 =
-    (ppu->renderFlags & kPpuRenderFlags_OutputRgb565) != 0;
-  uint8 *dst_org = &ppu->renderBuffer[(y - 1) * ppu->renderPitch];
+  uint32 *dst =
+    (uint32 *)&ppu->renderBuffer[(y - 1) * ppu->renderPitch];
+  uint32 *dst_org = dst;
+  dst += ppu->extraLeftRight - ppu->extraLeftCur;
 
   uint32 windex = 0;
   do {
@@ -969,20 +994,13 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
       // Math is disabled (or has no effect), so can avoid the per-pixel maths check
       uint32 i = left;
       if (clip_color_mask == 0) {
-        memset(dst_org + left * (output_rgb565 ? 2 : 4), 0,
-               (right - left) * (output_rgb565 ? 2 : 4));
-      } else if (output_rgb565) {
-        uint16_t *dst = (uint16_t *)dst_org + left;
-        do {
-          *dst++ =
-            ppu->colorMapRgb565[ppu->bgBuffers[0].data[i] & 0xff];
-        } while (++i < right);
+        memset(dst, 0, (right - left) * sizeof(*dst));
+        dst += right - left;
       } else {
-        uint32 *dst = (uint32 *)dst_org + left;
-        do {
-          *dst++ =
-            ppu->colorMapRgb[ppu->bgBuffers[0].data[i] & 0xff];
-        } while (++i < right);
+        uint32 count = right - left;
+        PpuWriteMappedSpan(dst, &ppu->bgBuffers[0].data[i], count,
+                           ppu->colorMapRgb);
+        dst += count;
       }
     } else {
       uint8 *half_color_map = ppu->halfColor ? ppu->brightnessMultHalf : ppu->brightnessMult;
@@ -990,18 +1008,20 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
       math_enabled_cur |= ppu->addSubscreen << 8 | ppu->subtractColor << 9;
       // Need to check for each pixel whether to use math or not based on the main screen layer.
       uint32 i = left;
-      uint16_t *dst565 = (uint16_t *)dst_org + left;
-      uint32 *dst8888 = (uint32 *)dst_org + left;
       do {
-        uint32 color = ppu->cgram[ppu->bgBuffers[0].data[i] & 0xff], color2;
-        uint8 main_layer = (ppu->bgBuffers[0].data[i] >> 8) & 0xf;
+        PpuZbufType main_pixel = ppu->bgBuffers[0].data[i];
+        uint32 color = ppu->cgram[main_pixel & 0xff], color2;
+        uint8 main_layer = (main_pixel >> 8) & 0xf;
         uint32 r = color & clip_color_mask;
         uint32 g = (color >> 5) & clip_color_mask;
         uint32 b = (color >> 10) & clip_color_mask;
         uint8 *color_map = ppu->brightnessMult;
         if (math_enabled_cur & (1 << main_layer)) {
           if (math_enabled_cur & 0x100) {  // addSubscreen ?
-            if ((ppu->bgBuffers[1].data[i] & 0xff) != 0)
+            // When TS has no enabled layers, the subscreen is the backdrop.
+            // Do not inspect the uncleared buffer left by an earlier line.
+            if (rendered_subscreen &&
+                (ppu->bgBuffers[1].data[i] & 0xff) != 0)
               color2 = ppu->cgram[ppu->bgBuffers[1].data[i] & 0xff], color_map = half_color_map;
             else  // Don't halve if ppu->addSubscreen && backdrop
               color2 = fixed_color;
@@ -1019,28 +1039,20 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
             b += b2;
           }
         }
-        if (output_rgb565) {
-          uint32 r8 = color_map[r], g8 = color_map[g], b8 = color_map[b];
-          *dst565++ =
-            (uint16_t)((r8 & 0xf8) << 8 | (g8 & 0xfc) << 3 | b8 >> 3);
-        } else {
-          *dst8888++ = color_map[b] | color_map[g] << 8 |
-                       color_map[r] << 16;
-        }
+        *dst++ = color_map[b] | color_map[g] << 8 | color_map[r] << 16;
       } while (++i < right);
     }
   } while (cw_clip_math >>= 1, ++windex < cwin.nr);
 
   // Clear out stuff on the sides.
-  size_t bytes_per_pixel = output_rgb565 ? 2 : 4;
   if (ppu->extraLeftRight - ppu->extraLeftCur != 0)
-    memset(dst_org, 0,
-           bytes_per_pixel * (ppu->extraLeftRight - ppu->extraLeftCur));
+    memset(dst_org, 0, sizeof(*dst_org) *
+           (ppu->extraLeftRight - ppu->extraLeftCur));
   if (ppu->extraLeftRight - ppu->extraRightCur != 0) {
     size_t first = 256 + ppu->extraLeftRight * 2 -
                    (ppu->extraLeftRight - ppu->extraRightCur);
-    memset(dst_org + first * bytes_per_pixel, 0,
-           bytes_per_pixel * (ppu->extraLeftRight - ppu->extraRightCur));
+    memset(dst_org + first, 0, sizeof(*dst_org) *
+           (ppu->extraLeftRight - ppu->extraRightCur));
   }
 }
 
@@ -1097,21 +1109,12 @@ static void ppu_handlePixel(Ppu* ppu, int x, int y) {
     }
   }
   int row = y - 1;
-  uint32 r8 = ((r << 3) | (r >> 2)) * ppu->brightness / 15;
-  uint32 g8 = ((g << 3) | (g >> 2)) * ppu->brightness / 15;
-  uint32 b8 = ((b << 3) | (b >> 2)) * ppu->brightness / 15;
-  if (ppu->renderFlags & kPpuRenderFlags_OutputRgb565) {
-    uint16_t *pixel = (uint16_t *)&ppu->renderBuffer[
-      row * ppu->renderPitch + (x + ppu->extraLeftRight) * 2];
-    *pixel = (uint16_t)((r8 & 0xf8) << 8 | (g8 & 0xfc) << 3 | b8 >> 3);
-  } else {
-    uint8 *pixel = &ppu->renderBuffer[
-      row * ppu->renderPitch + (x + ppu->extraLeftRight) * 4];
-    pixel[0] = (uint8)b8;
-    pixel[1] = (uint8)g8;
-    pixel[2] = (uint8)r8;
-    pixel[3] = 0;
-  }
+  uint8 *pixel = &ppu->renderBuffer[
+    row * ppu->renderPitch + (x + ppu->extraLeftRight) * 4];
+  pixel[0] = ((b << 3) | (b >> 2)) * ppu->brightness / 15;
+  pixel[1] = ((g << 3) | (g >> 2)) * ppu->brightness / 15;
+  pixel[2] = ((r << 3) | (r >> 2)) * ppu->brightness / 15;
+  pixel[3] = 0;
 }
 
 static const int bitDepthsPerMode[10][4] = {
@@ -1580,6 +1583,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
         ppu->cgramBuffer = val;
       } else {
         ppu->cgram[ppu->cgramPointer++] = (val << 8) | ppu->cgramBuffer;
+        ppu->colorMapDirty = true;
       }
       ppu->cgramSecondWrite = !ppu->cgramSecondWrite;
       break;
