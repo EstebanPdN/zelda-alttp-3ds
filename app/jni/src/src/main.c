@@ -569,6 +569,13 @@ void ZeldaSet3DSDisplayMode(int mode) {
   if (!wide)
     PpuSetExtraSideSpace(g_zenv.ppu, 0, 0, 0);
   g_snes_width = extra * 2 + 256;
+// Check if we're in wide mode, and if so enable extended-vertical rendering on the PPU emulator, and set window to 240 pixels high
+  g_config.extend_y = wide;
+  g_snes_height = wide ? 240 : 224;
+  if (wide)
+    g_ppu_render_flags |= kPpuRenderFlags_Height240;
+  else
+    g_ppu_render_flags &= ~kPpuRenderFlags_Height240;
   ZeldaApplyRendererSize();
   Platform3DS_SetDisplayMode(display_mode);
 }
