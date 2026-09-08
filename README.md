@@ -85,7 +85,7 @@ Detailed development notes are preserved inside the source snapshot.
 
 Latest stable release: [v2.9](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v2.9)
 
-Latest experimental release: [v3.0-E8](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E8)
+Latest experimental release: [v3.0-E9](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E9)
 
 See [CHANGELOG.md](CHANGELOG.md) for the concise history from v2.9 onward.
 
@@ -119,3 +119,10 @@ Users are responsible for providing their own legally obtained compatible ROM.
 Quick dumps (`L + R + A`) now use numbered folders such as `dumps/000-dump-20260907-152424/`.
 They include recent performance samples and graphics/audio diagnostics.
 See [3DS controls and diagnostics](platform/3ds/README.md).
+
+E9 includes PR [#30](https://github.com/EstebanPdN/zelda-alttp-3ds/pull/30)
+by arth78 and [#32](https://github.com/EstebanPdN/zelda-alttp-3ds/pull/32)
+by Archaistic. WIDE now shows a centered 400x224 image without vertical
+stretching; its top/bottom margins and ORIGINAL's margins use native black.
+See [the changelog](CHANGELOG.md) for map, ROM-switch and Old-only rendering
+changes. Hardware acceptance, including Old 3DS 60 FPS, remains pending.

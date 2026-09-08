@@ -42,7 +42,7 @@ physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
 `load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
 complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E8 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E9 uses:
 
 ```text
 Short name:  Zelda 3DS EXP 8
@@ -130,3 +130,17 @@ runs asynchronously: `bottom_submit_us` is not its full rendering duration;
 use the full/patch/touch worker statistics in `info.txt` for that cost.
 `gpu_end_us` covers `C3D_FrameEnd`, excluding the preceding C2D flush/clean.
 The recent ring is Old 3DS only; it can be empty immediately after startup.
+
+### E9 display and map repairs
+
+WIDE keeps 400x224 source pixels centered vertically (8-pixel margins).
+ORIGINAL stays 256x224 and STRETCH still fills the display. RGB565 margins are
+cleared with native black. Old map movement requests coalesce at most ten
+updates/second and use map-only patches where possible; actual refresh depends
+on hardware load. Scene changes get priority. Mirror portals are displayed
+from the engine's live return coordinates.
+
+PR #30 (arth78) and #32 (Archaistic) are included. New retains its renderer,
+clock and worker scheduling policy; shared map/display/ROM-switch bug fixes
+also apply to New. Old-only sprite and color caches are excluded from New's
+worker copy. No hardware FPS or graphical acceptance is claimed by host tests.

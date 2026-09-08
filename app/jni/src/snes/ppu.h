@@ -145,6 +145,11 @@ struct Ppu {
   bool fixedMathValid;
   uint8_t subscreenMath[1024];
   uint8_t subscreenMathKey;
+  uint32_t spriteLines[256][4];
+  bool spriteLinesValid;
+  uint32_t backdropMathRgb[256];
+  uint32_t backdropMathKey;
+  bool backdropMathValid;
 
 };
 

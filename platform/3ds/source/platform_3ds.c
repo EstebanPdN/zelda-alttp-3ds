@@ -208,15 +208,6 @@ static void Platform3DS_EndGpuFrame(void) {
   g_last_gpu_end_us = (uint32_t)((svcGetSystemTick() - end_start) * 1000000ull / SYSCLOCK_ARM11);
 }
 
-/* C2D_TargetClear also clears depth. E4 render targets intentionally omit a
- * depth buffer, so preserve Citro2D's ordering barriers and clear color only. */
-static void Platform3DS_ClearTarget(C3D_RenderTarget *target, u32 color) {
-  C2D_Flush();
-  C3D_FrameSplit(0);
-  C3D_RenderTargetClear(
-    target, C3D_CLEAR_COLOR, __builtin_bswap32(color), 0);
-}
-
 static void Platform3DS_DetectModel(void) {
   if (g_model_detected)
     return;
@@ -590,9 +581,9 @@ void Platform3DS_BlankScreens(void) {
   for (int i = 0; i < 3; i++) {
     if (!C3D_FrameBegin(0))
       return;
-    Platform3DS_ClearTarget(g_top_target, C2D_Color32(0, 0, 0, 255));
+    Platform3DS_ClearBlackTarget(g_top_target);
     C2D_SceneBegin(g_top_target);
-    Platform3DS_ClearTarget(g_bottom_target, C2D_Color32(0, 0, 0, 255));
+    Platform3DS_ClearBlackTarget(g_bottom_target);
     C2D_SceneBegin(g_bottom_target);
     Platform3DS_EndGpuFrame();
     gspWaitForVBlank();
@@ -1059,7 +1050,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     .angle = 0.0f,
   };
 
-  Platform3DS_ClearTarget(g_top_target, C2D_Color32(0, 0, 0, 255));
+  Platform3DS_ClearBlackTarget(g_top_target);
   C2D_SceneBegin(g_top_target);
   Platform3DS_DrawMappedImage(image, &params, ConfigureArgbTextureEnv);
   if (g_show_fps) {
@@ -1131,7 +1122,7 @@ void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
     .depth = 0.0f,
     .angle = 0.0f,
   };
-  Platform3DS_ClearTarget(g_bottom_target, C2D_Color32(0, 0, 0, 255));
+  Platform3DS_ClearBlackTarget(g_bottom_target);
   C2D_SceneBegin(g_bottom_target);
   Platform3DS_DrawMappedImage(image, &params,
     g_is_new_3ds ? ConfigureArgbTextureEnv : ConfigureRgb565TextureEnv);
@@ -3554,6 +3545,15 @@ static bool WriteExtendedDiagnostics(const char *directory) {
       fprintf(f, "BG%u scroll=%u,%u map=%04x tiles=%04x wider=%u higher=%u\n",
               i + 1, b->hScroll, b->vScroll, b->tilemapAdr, b->tileAdr, b->tilemapWider, b->tilemapHigher);
     }
+    if ((p->renderFlags & kPpuRenderFlags_Old3DS) && p->spriteLinesValid) {
+      unsigned candidates = 0;
+      unsigned height = (p->renderFlags & kPpuRenderFlags_Height240) ? 240 : 224;
+      for (unsigned line = 0; line < height; line++)
+        for (unsigned word = 0; word < 4; word++)
+          candidates += __builtin_popcount(p->spriteLines[line][word]);
+      fprintf(f, "Old sprite candidates=%u baseline_entries=%u (before X/OBJ limits); backdrop_math_cache=%d\n",
+              candidates, height * 128, p->backdropMathValid);
+    }
     fputs("Mode7 matrix:", f);
     for (unsigned i = 0; i < 8; i++) fprintf(f, " %d", p->m7matrix[i]);
     fputc('\n', f);
@@ -3669,7 +3669,7 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "Display mode: %d\n", (int)g_display_mode);
     fprintf(info, "Top presenter: PICA200 RGB565\n");
     if (!g_is_new_3ds) {
-      fprintf(info, "Old 3DS PPU: E8 packed full-brightness half-add; fixed/subscreen tables; ARMv6 opaque spans\n");
+      fprintf(info, "Old 3DS PPU: E9 sprite-line masks; backdrop/subscreen palette; packed half-add; ARMv6 opaque spans\n");
       fprintf(info, "Old 3DS opaque UI textures: preconverted RGB565\n");
       fprintf(info, "Recent frame samples: %lu (maximum 120)\n", (unsigned long)g_recent_count);
       if (g_recent_count) {

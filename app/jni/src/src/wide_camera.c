@@ -2,6 +2,11 @@
 
 #include <stdint.h>
 
+int WideCamera_IsMapMenu(int module, int submodule) {
+  // Dungeon map, world map, and the flute's destination-selection map.
+  return module == 14 && (submodule == 3 || submodule == 7 || submodule == 10);
+}
+
 int WideCamera_Unwrap16(int value, int reference) {
   return reference + (int16_t)((uint16_t)value - (uint16_t)reference);
 }
