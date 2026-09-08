@@ -42,11 +42,11 @@ physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
 `load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
 complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E6 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E7 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 6
-Long name:   A Link to the Past 3DS experimental 6
+Short name:  Zelda 3DS EXP 7
+Long name:   A Link to the Past 3DS experimental 7
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
 ```
@@ -78,3 +78,45 @@ The script first builds the vendored SDL port, then creates the 3DSX and CIA.
 No ROM or extracted asset file is included in either package.
 
 Release checksums are published in `SHA256SUMS.txt` beside each CIA and 3DSX.
+
+## E7 diagnostics and Old 3DS profile
+
+E7 adds full-resolution color-math lookup tables and ARMv6 opaque tile spans
+on Old 3DS, plus preconverted opaque UI textures. The 60 FPS hardware target
+has not yet been verified. New 3DS retains its existing rendering profile.
+
+New dumps use `dumps/001/`, `002/`, `003/`, and continue numerically after a
+restart (including `999` to `1000`). Existing timestamped dumps are preserved.
+`LOAD STATE` prefers the highest numbered directory and fails visibly if its
+checkpoint is missing, corrupt or belongs to another ROM profile.
+
+Each dump retains the physical BMP/raw screenshots, RAM, SRAM, VRAM and
+validated checkpoint, and adds:
+
+- `frame-times.csv`: up to 120 recent Old 3DS samples, oldest first. Microsecond
+  columns separate logic, PPU, presentation, bottom submission, total work,
+  presentation interval, main/worker rendering, worker join, frame begin,
+  top cache clean/transfer and frame end. Scheduled/executed logic and split
+  line are counts. Timings overlap; do not sum every column. These are wall
+  spans including preemption, not per-thread CPU cycle counts.
+- `audio.txt`: buffer format, queue state, refill wall spans, empty-queue
+  transitions, worker priority and cache maintenance mode. Queue observations
+  are not a count of audible glitches; audio is paused during capture.
+- `ppu.txt`, `cgram.bin`, `oam.bin`, `ppu-main-priority.bin`,
+  `ppu-sub-priority.bin`: current scene, PPU/DMA registers and raw buffers.
+  Registers are post-render snapshots, not a full HDMA trace; priority buffers
+  contain the last main-thread scanline and may include unused/stale spans.
+- `bottom-ui.txt`: UI scale, format, worker state and stable geometry.
+  `bottom-ui.raw` is included only when its source front buffer is stable;
+  its dimensions/pitch/format are recorded in the text file. A busy worker
+  is reported rather than read concurrently.
+- `runtime.log` and `zelda3.ini`, when present; `info.txt` adds model/profile,
+  heap space, cache modes, recent averages and Citro3D timing information.
+- `manifest.txt`: file sizes, FNV-1a checksums and capture completion status.
+  Checksums detect accidental file damage; they are not authentication.
+
+Diagnostic SD writes remain outside normal frame metrics. Bottom redraw work
+runs asynchronously: `bottom_submit_us` is not its full rendering duration;
+use the full/patch/touch worker statistics in `info.txt` for that cost.
+`gpu_end_us` covers `C3D_FrameEnd`, excluding the preceding C2D flush/clean.
+The recent ring is Old 3DS only; it can be empty immediately after startup.

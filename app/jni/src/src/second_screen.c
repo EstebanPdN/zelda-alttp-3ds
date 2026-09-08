@@ -728,6 +728,7 @@ void SecondScreen_RunFrameHook(void) {
       dump_ok = Platform3DS_DumpMemory(
         dump_dir, g_ram, 131072, g_zenv.sram, 8192,
         g_zenv.vram, 32768, &capture_stats, screens_ok);
+      dump_ok = DumpState_WriteManifest(dump_dir, screens_ok && state_ok && dump_ok) && dump_ok;
     }
 
     if (directory_ok && screens_ok && state_ok && dump_ok)

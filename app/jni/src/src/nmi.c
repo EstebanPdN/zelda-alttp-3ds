@@ -216,7 +216,7 @@ void NMI_DoUpdates() {  // 8089e0
   }
 
   if (flag_update_cgram_in_nmi) {
-    memcpy(g_zenv.ppu->cgram, main_palette_buffer, 0x200);
+    PpuUpdateCgram(g_zenv.ppu, main_palette_buffer);
   }
 
   flag_update_hud_in_nmi = 0;

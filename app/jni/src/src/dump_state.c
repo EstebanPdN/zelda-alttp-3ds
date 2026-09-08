@@ -72,6 +72,43 @@ bool DumpState_WriteFile(const char *path, uint32_t profile_id,
   return ok;
 }
 
+static uint32_t DumpNumber(const char *name) {
+  uint32_t number = 0;
+  unsigned digits = 0;
+  for (; name[digits] >= '0' && name[digits] <= '9'; digits++) {
+    uint32_t digit = (uint32_t)(name[digits] - '0');
+    if (number > (UINT32_MAX - digit) / 10) return 0;
+    number = number * 10 + digit;
+  }
+  return digits >= 3 && name[digits] == 0 ? number : 0;
+}
+
+bool DumpState_CreateDirectory(const char *root, char *out, size_t out_size) {
+  if (!root || !out || out_size == 0) return false;
+  out[0] = 0;
+  if (mkdir(root, 0777) != 0 && errno != EEXIST) return false;
+  DIR *dir = opendir(root);
+  if (!dir) return false;
+  uint32_t highest = 0;
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    uint32_t number = DumpNumber(entry->d_name);
+    if (number > highest) highest = number;
+  }
+  closedir(dir);
+  // Never overwrite a capture; preserve gaps and continue across launches.
+  // Width 3 is a minimum, so 999 correctly advances to 1000.
+  for (unsigned attempt = 0; attempt < 1000 && highest != UINT32_MAX; attempt++) {
+    highest++;
+    int length = snprintf(out, out_size, "%s/%03lu", root, (unsigned long)highest);
+    if (length < 0 || length >= (int)out_size) break;
+    if (mkdir(out, 0777) == 0) return true;
+    if (errno != EEXIST) break;
+  }
+  out[0] = 0;
+  return false;
+}
+
 static ZeldaDumpStateResult FindLatestDump(const char *dumps_directory,
                                            char *out, size_t out_size) {
   DIR *directory = opendir(dumps_directory);
@@ -80,9 +117,11 @@ static ZeldaDumpStateResult FindLatestDump(const char *dumps_directory,
                              kZeldaDumpStateIoError;
 
   char latest[256] = "";
+  uint32_t latest_number = 0;
   struct dirent *entry;
   while ((entry = readdir(directory)) != NULL) {
-    if (strncmp(entry->d_name, "dump-", 5) != 0)
+    uint32_t number = DumpNumber(entry->d_name);
+    if (number == 0 && strncmp(entry->d_name, "dump-", 5) != 0)
       continue;
     char path[kDumpStateMaxPath];
     struct stat info;
@@ -92,8 +131,13 @@ static ZeldaDumpStateResult FindLatestDump(const char *dumps_directory,
       continue;
     if (stat(path, &info) != 0 || !S_ISDIR(info.st_mode))
       continue;
-    if (!latest[0] || strcmp(entry->d_name, latest) > 0)
+    // E7 numeric sessions supersede the legacy timestamp layout. If none
+    // exist, old E4/E5/E6 checkpoints remain loadable without migration.
+    if (number > latest_number ||
+        (number == latest_number && (!latest[0] || strcmp(entry->d_name, latest) > 0))) {
       snprintf(latest, sizeof(latest), "%s", entry->d_name);
+      latest_number = number;
+    }
   }
   closedir(directory);
 
@@ -177,4 +221,43 @@ const char *DumpState_ResultLabel(ZeldaDumpStateResult result) {
   case kZeldaDumpStateIoError: return "I O ERROR";
   }
   return "ERROR";
+}
+
+// Written last. A partial capture is explicit even when some files succeeded.
+// FNV-1a detects accidental truncation/corruption; it is not authentication.
+bool DumpState_WriteManifest(const char *directory, bool capture_complete) {
+  char path[kDumpStateMaxPath], manifest[kDumpStateMaxPath];
+  int n = snprintf(manifest, sizeof(manifest), "%s/manifest.txt", directory);
+  if (n < 0 || n >= (int)sizeof(manifest)) return false;
+  DIR *dir = opendir(directory);
+  if (!dir) return false;
+  FILE *out = fopen(manifest, "wb");
+  if (!out) { closedir(dir); return false; }
+  fputs("Dump manifest schema: 1\nchecksum=FNV-1a-32 (non-cryptographic)\nfilename bytes checksum\n", out);
+  bool ok = true;
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    if (!strcmp(entry->d_name, "manifest.txt") || entry->d_name[0] == '.') continue;
+    n = snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+    if (n < 0 || n >= (int)sizeof(path)) { ok = false; continue; }
+    struct stat st;
+    if (stat(path, &st) != 0) { ok = false; continue; }
+    if (!S_ISREG(st.st_mode)) continue;
+    FILE *in = fopen(path, "rb");
+    if (!in) { ok = false; continue; }
+    uint32_t hash = 2166136261u;
+    size_t bytes = 0, count;
+    uint8_t buffer[4096];
+    while ((count = fread(buffer, 1, sizeof(buffer), in)) != 0) {
+      bytes += count;
+      for (size_t i = 0; i < count; i++) { hash ^= buffer[i]; hash *= 16777619u; }
+    }
+    if (ferror(in) || bytes != (size_t)st.st_size) ok = false;
+    if (fclose(in) != 0) ok = false;
+    fprintf(out, "%s %lu %08lx\n", entry->d_name, (unsigned long)bytes, (unsigned long)hash);
+  }
+  closedir(dir);
+  fprintf(out, "capture_complete=%s\n", capture_complete && ok ? "yes" : "no");
+  ok = !ferror(out) && ok;
+  return fclose(out) == 0 && ok;
 }
