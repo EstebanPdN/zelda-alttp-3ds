@@ -3547,6 +3547,8 @@ static bool WriteExtendedDiagnostics(const char *directory) {
     fputs("PPU diagnostic schema: 1\nPhase: current post-render registers; not a per-scanline HDMA trace.\n"
           "Binary data: little-endian u16 CGRAM/OAM/priority buffers. RAM and VRAM are in ram.bin/vram.bin.\n"
           "Priority buffers describe the final main-thread scanline, not a complete frame.\n", f);
+    if (!g_is_new_3ds && PpuGpuOutputActive())
+      fputs("Current output is PICA200: CPU priority/sprite caches below are retained diagnostic memory, NOT current rendered pixels.\n", f);
     fprintf(f, "mode=%u brightness=%u forced_blank=%u render_flags=0x%02x pitch=%lu\n",
             p->mode, p->brightness, p->forcedBlank, p->renderFlags, (unsigned long)p->renderPitch);
     fprintf(f, "side_space configured/left/right/bottom=%u/%u/%u/%u obj_x_offset=%d\n",

@@ -1871,7 +1871,10 @@ void ZeldaWriteSram() {
 
 void ZeldaWriteGameDiagnostics(FILE *file) {
 #ifdef __3DS__
-  if (g_zenv.ppu && (g_zenv.ppu->renderFlags & kPpuRenderFlags_Old3DS)) {
+  if (g_zenv.ppu && (g_zenv.ppu->renderFlags & kPpuRenderFlags_Old3DS) && PpuGpuOutputActive()) {
+    fputs("PPU CPU phase sample unavailable for current GPU frame; see PICA history in ppu.txt.\n", file);
+  } else if (g_zenv.ppu && (g_zenv.ppu->renderFlags & kPpuRenderFlags_Old3DS)) {
+    fputs("PPU sample frame and age count CPU-rendered frames only.\n", file);
     fprintf(file, "PPU phase schema=1 interval=64 frames sample_frame=%lu age=%lu scene=0x%08lx split=%d\n",
       (unsigned long)g_ppu_phase_main.frame,
       (unsigned long)(g_zenv.ppu->phase.frame - g_ppu_phase_main.frame),
