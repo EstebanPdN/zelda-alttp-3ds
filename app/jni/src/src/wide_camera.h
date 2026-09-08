@@ -1,6 +1,8 @@
 #ifndef ZELDA3_WIDE_CAMERA_H_
 #define ZELDA3_WIDE_CAMERA_H_
 
+int WideCamera_IsMapMenu(int module, int submodule);
+
 int WideCamera_Unwrap16(int value, int reference);
 int WideCamera_ClampToBounds(int logical_x, int left_bound,
                              int right_bound, int margin);

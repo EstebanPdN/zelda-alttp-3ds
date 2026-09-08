@@ -67,6 +67,8 @@ bool SS_RenderIconSheet(uint32_t *px);
 bool SS_RenderGlyphSheet(uint32_t *px);
 bool SS_RenderLetterSheet(uint32_t *px);
 bool SS_RenderWorldMap(uint32_t *px, bool dark);
+bool SS_GetMirrorPortal(int *out);
+void SS_ResetRomCaches(void);
 bool SS_RenderLinkFace(uint32_t *px, int chunk);
 int  SS_GetDungeonLayout(int palace, uint8_t *out, int cap);
 bool SS_RenderDungeonFloor(int palace, int floorIdx, uint32_t *px);
@@ -167,8 +169,7 @@ static SDL_Texture *tex_map[2], *tex_icons, *tex_glyphs, *tex_letters, *tex_face
 static SDL_Texture *tex_floor, *tex_mapicons;
 static SDL_Texture *tex_bg_menu, *tex_bg_parch, *tex_bg_stone;
 static SDL_Texture *tex_triforce;
-static bool ss_is_new_3ds;  // forward decl: draw_cinema() (below) needs this
-                             // before its real definition later in the file
+static bool ss_is_new_3ds;  // Model is set before drawing the cinema card.
 static bool art_ready;
 
 typedef struct {
@@ -625,6 +626,16 @@ static void draw_overworld(RectFS r, int link_x, int link_y, int area) {
     float my = oy + (128.0f + marks[i][2] / 4096.0f * 256.0f) * scale;
     draw_x_mark(mx, my, 8 * u, 8 * u, COL_OUTLINE);
     draw_x_mark(mx, my, 8 * u, 4.5f * u, COL(224, 40, 32));
+  }
+
+  // The mirror return point uses the same projection and clipping as Link.
+  int portal[2];
+  if (!dark && SS_GetMirrorPortal(portal)) {
+    float mx = ox + (128.0f + portal[0] / 4096.0f * 256.0f) * scale;
+    float my = oy + (128.0f + portal[1] / 4096.0f * 256.0f) * scale;
+    fill_round(mx - 9*u, my - 9*u, 18*u, 18*u, 9*u, COL_OUTLINE);
+    fill_round(mx - 7*u, my - 7*u, 14*u, 14*u, 7*u, COL(240, 192, 255));
+    fill_round(mx - 3*u, my - 3*u, 6*u, 6*u, 3*u, COL(80, 48, 176));
   }
 
   // Link's bobbing head
@@ -1442,13 +1453,13 @@ static SDL_Window *main_win;
 static bool ss_enabled;
 #ifdef __3DS__
 static uint8_t *ss_present_pixels[2];
-static bool ss_is_new_3ds;
 static int ss_front_buffer = -1;
 static int ss_worker_buffer;
 static bool ss_worker_busy;
 static bool ss_frame_ready;
 static uint32_t ss_redraw_requests;
 static bool ss_worker_sidebar_patch;
+static bool ss_worker_map_patch;
 static bool ss_worker_running;
 static Thread ss_worker_thread;
 static LightEvent ss_worker_start;
@@ -1464,6 +1475,7 @@ static uint64_t ss_patch_redraw_count;
 static uint64_t ss_patch_redraw_total_ticks;
 static uint64_t ss_patch_redraw_max_ticks;
 static bool ss_touch_redraw_pending;
+static bool ss_scene_redraw_pending;
 static uint64_t ss_touch_request_ticks;
 static uint64_t ss_worker_touch_request_ticks;
 static uint64_t ss_touch_redraw_count;
@@ -1490,6 +1502,7 @@ static uint32_t bottom_sdl_pixel_format(void) {
 enum {
   kBottomRedrawHud = 1 << 0,
   kBottomRedrawFull = 1 << 1,
+  kBottomRedrawMap = 1 << 2,
 };
 
 static void request_bottom_redraw(uint32_t request) {
@@ -1525,6 +1538,7 @@ bool SecondScreenSDL_Init(SDL_Window *main_window) {
   const char *env = SDL_getenv("ZELDA3_SECOND_SCREEN");
   if (!env || env[0] != '1') return false;
   main_win = main_window;
+  ss_is_new_3ds = true; // Preserve the desktop pulse animation.
   ss_enabled = true;
   return true;
 #endif
@@ -1688,6 +1702,7 @@ typedef struct BottomCriticalState {
   uint8_t arrows;
   uint16_t rupees;
   uint32_t inventory_hash;
+  int portal_x, portal_y;
 } BottomCriticalState;
 
 static void request_bottom_redraw_on_state_change(void) {
@@ -1703,6 +1718,10 @@ static void request_bottom_redraw_on_state_change(void) {
   current.dungeon = SS_GetDungeon();
   current.indoors = SS_IsIndoors() ? 1 : 0;
   current.equipped = SS_GetEquippedSlot();
+  int portal[2];
+  if (SS_GetMirrorPortal(portal)) {
+    current.portal_x = portal[0]; current.portal_y = portal[1];
+  }
   current.health_cap = local_sram[0x6c];
   current.health_cur = local_sram[0x6d];
   current.magic = local_sram[0x6e];
@@ -1728,8 +1747,18 @@ static void request_bottom_redraw_on_state_change(void) {
      current.dungeon != previous.dungeon ||
      current.indoors != previous.indoors ||
      current.equipped != previous.equipped ||
+     current.portal_x != previous.portal_x || current.portal_y != previous.portal_y ||
      (!ss_is_new_3ds &&
       current.inventory_hash != previous.inventory_hash));
+  if (!ss_is_new_3ds && initialized && tab == TAB_MAP &&
+      (current.module != previous.module || current.area != previous.area ||
+       current.dungeon != previous.dungeon || current.indoors != previous.indoors)) {
+    // Finish a stale map promptly at room/scene boundaries instead of leaving
+    // an idle-priority redraw starved behind a continuously busy top renderer.
+    ss_scene_redraw_pending = true;
+    ss_worker_interactive = true;
+    prioritize_bottom_touch();
+  }
   bool hud_changed = initialized &&
     (current.health_cap != previous.health_cap ||
      current.health_cur != previous.health_cur ||
@@ -1738,6 +1767,18 @@ static void request_bottom_redraw_on_state_change(void) {
      current.bombs != previous.bombs ||
      current.arrows != previous.arrows ||
      current.rupees != previous.rupees);
+  // Movement must invalidate the Old map; the idle fallback is intentionally
+  // slow. Coalesce movement while a worker is busy, at most ten requests/sec.
+  static int map_x, map_y;
+  static uint32_t map_request_ms;
+  int x = SS_GetLinkX(), y = SS_GetLinkY();
+  uint32_t now = SDL_GetTicks();
+  if (!ss_is_new_3ds && tab == TAB_MAP &&
+      mode_for_module(current.module) == MODE_GAME &&
+      (x / 4 != map_x / 4 || y / 4 != map_y / 4) && now - map_request_ms >= 100) {
+    map_x = x; map_y = y; map_request_ms = now;
+    request_bottom_redraw(kBottomRedrawMap);
+  }
   previous = current;
   initialized = true;
   if (full_changed || (ss_is_new_3ds && hud_changed))
@@ -1753,6 +1794,25 @@ static bool can_patch_bottom_sidebar(void) {
          mode_for_module(module) == MODE_GAME;
 }
 
+static bool can_patch_bottom_map(void) {
+  return !ss_is_new_3ds && art_ready && ss_front_buffer >= 0 && tab == TAB_MAP &&
+    !SS_IsIndoors() && SS_GetArea() < 0x80 &&
+    ((SS_GetModule() & 0xff) == 9 || (SS_GetModule() & 0xff) == 11);
+}
+
+static void draw_bottom_map_patch(void) {
+  SS_ReadSram(sram, sizeof(sram));
+  SDL_Rect clip = {(int)floorf(map_area_r.x), (int)floorf(map_area_r.y),
+    (int)ceilf(map_area_r.x + map_area_r.w) - (int)floorf(map_area_r.x),
+    (int)ceilf(map_area_r.y + map_area_r.h) - (int)floorf(map_area_r.y)};
+  SDL_RenderSetClipRect(ss_r, &clip);
+  draw_overworld(map_area_r, SS_GetLinkX(), SS_GetLinkY(), SS_GetArea());
+  SDL_RenderSetClipRect(ss_r, NULL);
+  uint8_t *destination = ss_present_pixels[ss_worker_buffer] +
+    clip.y * bottom_buffer_pitch() + clip.x * bottom_bytes_per_pixel();
+  SDL_RenderReadPixels(ss_r, &clip, bottom_sdl_pixel_format(), destination, bottom_buffer_pitch());
+}
+
 static bool bottom_needs_periodic_redraw(void) {
   if (ss_is_new_3ds)
     return true;
@@ -1762,7 +1822,7 @@ static bool bottom_needs_periodic_redraw(void) {
   if (developer_overlay_mode)
     return false;
   if (mode_for_module(SS_GetModule() & 0xff) != MODE_GAME)
-    return true;
+    return tab == TAB_SETTINGS; // Keep settings timers alive; the Old cinema card is static.
   return tab == TAB_MAP || tab == TAB_ITEMS;
 }
 
@@ -2199,13 +2259,16 @@ static void second_screen_worker_main(void *unused) {
       svcSetThreadPriority(CUR_THREAD_HANDLE, priority);
     }
     uint64_t start = !ss_is_new_3ds ? svcGetSystemTick() : 0;
-    if (ss_worker_sidebar_patch)
+    if (ss_worker_map_patch) {
+      draw_bottom_map_patch();
+      if (ss_worker_sidebar_patch) draw_bottom_sidebar_patch();
+    } else if (ss_worker_sidebar_patch)
       draw_bottom_sidebar_patch();
     else
       draw_second_screen(ss_worker_logic_frames);
     if (!ss_is_new_3ds) {
       uint64_t elapsed = svcGetSystemTick() - start;
-      if (ss_worker_sidebar_patch) {
+      if (ss_worker_sidebar_patch || ss_worker_map_patch) {
         ss_patch_redraw_count++;
         ss_patch_redraw_total_ticks += elapsed;
         if (elapsed > ss_patch_redraw_max_ticks)
@@ -2300,18 +2363,19 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
       (requests != 0 || periodic_redraw)) {
     requests = __atomic_exchange_n(&ss_redraw_requests, 0,
                                    __ATOMIC_ACQ_REL);
-    ss_worker_sidebar_patch = !periodic_redraw &&
-      (requests & kBottomRedrawFull) == 0 &&
-      (requests & kBottomRedrawHud) != 0 &&
-      can_patch_bottom_sidebar();
-    ss_worker_buffer = ss_worker_sidebar_patch ? ss_front_buffer :
+    bool patch_only = !periodic_redraw && (requests & kBottomRedrawFull) == 0 &&
+      (!(requests & kBottomRedrawMap) || can_patch_bottom_map()) &&
+      (!(requests & kBottomRedrawHud) || can_patch_bottom_sidebar());
+    ss_worker_map_patch = patch_only && (requests & kBottomRedrawMap);
+    ss_worker_sidebar_patch = patch_only && (requests & kBottomRedrawHud);
+    ss_worker_buffer = (ss_worker_sidebar_patch || ss_worker_map_patch) ? ss_front_buffer :
       (ss_front_buffer < 0 ? 0 : 1 - ss_front_buffer);
     ss_worker_touch_request_ticks = 0;
     ss_worker_interactive = false;
     if (!ss_worker_sidebar_patch && !ss_is_new_3ds &&
-        ss_touch_redraw_pending) {
-      ss_worker_touch_request_ticks = ss_touch_request_ticks;
-      ss_touch_redraw_pending = false;
+        (ss_touch_redraw_pending || ss_scene_redraw_pending)) {
+      ss_worker_touch_request_ticks = ss_touch_redraw_pending ? ss_touch_request_ticks : 0;
+      ss_touch_redraw_pending = ss_scene_redraw_pending = false;
       ss_worker_interactive = true;
       prioritize_bottom_touch();
     }
@@ -2340,6 +2404,9 @@ bool SecondScreenSDL_WriteDiagnostics(const char *directory) {
   if (!f) return false;
   fprintf(f, "Bottom UI schema: 1\nsize=%dx%d scale=%.6f format=%s pitch=%d\n",
           W, H, u, ss_is_new_3ds ? "ARGB8888" : "RGB565", bottom_buffer_pitch());
+  fprintf(f, "map_patch=%d scene_redraw_pending=%d redraw_requests=0x%lx\n",
+          ss_worker_map_patch, ss_scene_redraw_pending,
+          (unsigned long)__atomic_load_n(&ss_redraw_requests, __ATOMIC_ACQUIRE));
   fprintf(f, "enabled=%d tab=%d settings_remap=%d screen=%d developer=%d overlay=%d load_confirm=%d\n",
           ss_enabled, tab, remap_mode, screen_mode, developer_mode,
           developer_overlay_mode, load_confirm_mode);
@@ -2446,7 +2513,7 @@ void SecondScreenSDL_Shutdown(void) {
   if (ss_worker_thread) {
     ss_worker_running = false;
     LightEvent_Signal(&ss_worker_start);
-    Result join_result = threadJoin(ss_worker_thread, 2000000000ull);
+    Result join_result = threadJoin(ss_worker_thread, UINT64_MAX);
     if (R_FAILED(join_result))
       Platform3DS_LogRuntime("WARNING: second screen worker join timeout: 0x%08lx",
                              (unsigned long)join_result);
@@ -2458,8 +2525,26 @@ void SecondScreenSDL_Shutdown(void) {
     ss_present_pixels[i] = NULL;
   }
 #endif
-  if (!ss_win) return;
+  // A ROM restart reuses these statics. No job or completed frame from the
+  // old renderer may survive after its events/buffers have been destroyed.
+#ifdef __3DS__
+  ss_worker_busy = ss_frame_ready = false;
+  ss_front_buffer = -1;
+  ss_worker_buffer = 0;
+  ss_redraw_requests = kBottomRedrawFull;
+  ss_worker_sidebar_patch = ss_worker_map_patch = ss_worker_interactive = false;
+  ss_touch_redraw_pending = ss_scene_redraw_pending = false;
+  ss_worker_touch_request_ticks = ss_touch_request_ticks = 0;
+  ss_full_redraw_count = ss_full_redraw_total_ticks = ss_full_redraw_max_ticks = 0;
+  ss_patch_redraw_count = ss_patch_redraw_total_ticks = ss_patch_redraw_max_ticks = 0;
+  ss_touch_redraw_count = ss_touch_redraw_total_ticks = ss_touch_redraw_max_ticks = 0;
+#endif
+  SS_ResetRomCaches();
+  has_last_outdoor = hud_pref_applied = ss_needs_rebuild = false;
+  view_floor_offset = 0;
+  view_floor_touched_at = 0;
   destroy_textures();
+  if (!ss_win) return;
   SDL_DestroyRenderer(ss_r); ss_r = NULL;
   SDL_DestroyWindow(ss_win); ss_win = NULL;
 }

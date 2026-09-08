@@ -4,6 +4,11 @@
 #include "wide_camera.h"
 
 static void TestWrappedCoordinates(void) {
+  assert(WideCamera_IsMapMenu(14, 3));
+  assert(WideCamera_IsMapMenu(14, 7));
+  assert(WideCamera_IsMapMenu(14, 10));
+  assert(!WideCamera_IsMapMenu(9, 7));
+  assert(!WideCamera_IsMapMenu(14, 2));
   assert(WideCamera_Unwrap16(0xff00, 0x0000) == -256);
   assert(WideCamera_Unwrap16(0x0000, 0xff00) == 65536);
   assert(WideCamera_ClampToBounds(0, -256, 0, 72) == -72);

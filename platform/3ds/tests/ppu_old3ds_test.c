@@ -129,6 +129,20 @@ static void LoadDump(Ppu *p, const char *directory) {
   }
   ppu_write(p, 0x0b, 0x22); ppu_write(p, 0x0c, 7);
   p->extraLeftRight = p->extraLeftCur = p->extraRightCur = 72;
+  snprintf(path, sizeof(path), "%s/ppu.txt", directory);
+  f = fopen(path, "rb");
+  if (f) {
+    char text[256]; unsigned configured, left, right, bottom;
+    while (fgets(text, sizeof(text), f)) {
+      if (sscanf(text, "side_space configured/left/right/bottom=%u/%u/%u/%u",
+                 &configured, &left, &right, &bottom) == 4) {
+        if (configured > kPpuExtraLeftRight || left > configured || right > configured || bottom > 16) exit(2);
+        p->extraLeftRight = configured; p->extraLeftCur = left;
+        p->extraRightCur = right; p->extraBottomCur = bottom;
+      }
+    }
+    fclose(f);
+  }
   // Reconstructed static register state, not full game/HDMA playback. The
   // randomized suite separately exercises changing windows and math registers.
 }
@@ -149,7 +163,7 @@ int main(int argc, char **argv) {
     for (int frame = 0; frame < 3; frame++) {
       const unsigned flags = kPpuRenderFlags_NewRenderer |
         (s & 2 ? kPpuRenderFlags_NoSpriteLimits : 0);
-      ref_PpuBeginDrawing(a, (uint8_t *)oa, PITCH * 4, flags);
+      ref_PpuBeginDrawing(a, (uint8_t *)oa, PITCH * 4, flags | candidate_flags);
       PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, flags | candidate_flags);
       // Full frames also test destination borders, 224/240 and Mode 7.
       for (int line = 1; line <= HEIGHT; line++) {
@@ -161,11 +175,19 @@ int main(int argc, char **argv) {
             ref_ppu_write(a, regs[r], v); ppu_write(b, regs[r], v);
           }
         }
+        if ((s & 8) && line == 117) {
+          const uint8_t regs[] = {0x02, 0x03, 0x04, 0x04, 0x01};
+          for (unsigned r = 0; r < sizeof(regs); r++) {
+            uint8_t v = regs[r] == 0x01 ? 2 : Random();
+            if (regs[r] == 0x03) v &= 1;
+            ref_ppu_write(a, regs[r], v); ppu_write(b, regs[r], v);
+          }
+        }
         ref_ppu_runLine(a, line); ppu_runLine(b, line);
       }
       if (memcmp(ra, rb, words * 4)) {
         for (size_t i = 0; i < words; i++) if (ra[i] != rb[i]) {
-          fprintf(stderr, "FAIL scene=%u frame=%d word=%zu E6=%08x E8=%08x\n",
+          fprintf(stderr, "FAIL scene=%u frame=%d word=%zu E6=%08x E9=%08x\n",
                   s, frame, i, ra[i], rb[i]); break;
         }
         return 1;
@@ -201,7 +223,7 @@ int main(int argc, char **argv) {
       double begin = Now();
       for (int frame = 0; frame < 1000; frame++) {
         if (variant) PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, 9 | candidate_flags);
-        else ref_PpuBeginDrawing(a, (uint8_t *)oa, PITCH * 4, 9);
+        else ref_PpuBeginDrawing(a, (uint8_t *)oa, PITCH * 4, 9 | candidate_flags);
         for (int line = 1; line <= 224; line++) {
           if (variant) ppu_runLine(b, line); else ref_ppu_runLine(a, line);
         }
@@ -210,7 +232,7 @@ int main(int argc, char **argv) {
       hashes[variant] = Hash(variant ? ob : oa, PITCH * 224);
     }
     if (hashes[0] != hashes[1]) return 1;
-    printf("HOST %-20s E6 %.3f ms E8 %.3f ms ratio %.3f hash %08x\n",
+    printf("HOST %-20s E6 %.3f ms E9 %.3f ms ratio %.3f hash %08x\n",
            names[scenario], times[0], times[1], times[1]/times[0], hashes[0]);
   }
   for (int dump = 2; dump < argc; dump++) {
@@ -220,8 +242,8 @@ int main(int argc, char **argv) {
     for (int v = 0; v < 2; v++) {
       double start = Now();
       for (int frame = 0; frame < 1000; frame++) {
-        if (v) PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, 9 | candidate_flags);
-        else ref_PpuBeginDrawing(a, (uint8_t *)oa, PITCH * 4, 9);
+        if (v) PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, 1 | candidate_flags);
+        else ref_PpuBeginDrawing(a, (uint8_t *)oa, PITCH * 4, 1 | candidate_flags);
         for (int y = 1; y <= 224; y++) {
           if (v) ppu_runLine(b, y); else ref_ppu_runLine(a, y);
         }
@@ -230,7 +252,7 @@ int main(int argc, char **argv) {
       hashes[v] = Hash(v ? ob : oa, PITCH * 224);
     }
     if (memcmp(ra, rb, words * 4)) { fputs("FAIL reconstructed dump parity\n", stderr); return 1; }
-    printf("DUMP %s E6 %.3f ms E8 %.3f ms ratio %.3f hash %08x (static reconstruction)\n",
+    printf("DUMP %s E6 %.3f ms E9 %.3f ms ratio %.3f hash %08x (static reconstruction)\n",
            argv[dump], times[0], times[1], times[1]/times[0], hashes[0]);
   }
   ref_ppu_free(a); ppu_free(b); free(ra); free(rb);

@@ -21,6 +21,7 @@ static void ppu_calculateMode7Starts(Ppu* ppu, int y);
 static int ppu_getPixelForMode7(Ppu* ppu, int x, int layer, bool priority);
 static bool ppu_getWindowState(Ppu* ppu, int layer, int x);
 static bool ppu_evaluateSprites(Ppu* ppu, int line);
+static bool PpuEvaluateVisibleSprites(Ppu *ppu, int line);
 static void PpuDrawWholeLine(Ppu *ppu, uint y);
 
 #define IS_SCREEN_ENABLED(ppu, sub, layer) (ppu->screenEnabled[sub] & (1 << layer))
@@ -59,7 +60,7 @@ void PpuUpdateCgram(Ppu *ppu, const uint16_t *colors) {
     return;
   memcpy(ppu->cgram, colors, sizeof(ppu->cgram));
   ppu->colorMapDirty = true;
-  ppu->fixedMathValid = false;
+  ppu->fixedMathValid = false; ppu->backdropMathValid = false;
 }
 
 void ppu_reset(Ppu* ppu) {
@@ -71,6 +72,7 @@ void ppu_reset(Ppu* ppu) {
   ppu->extraRightCur = 0;
   ppu->extraBottomCur = 0;
   ppu->renderObjXOffset = 0;
+  ppu->spriteLinesValid = false;
   ppu->windowExtLeft = ppu->windowExtRight = NULL;
   ppu->vramPointer = 0;
   ppu->vramIncrementOnHigh = false;
@@ -79,7 +81,7 @@ void ppu_reset(Ppu* ppu) {
   ppu->cgramPointer = 0;
   ppu->cgramSecondWrite = false;
   ppu->colorMapDirty = true;
-  ppu->fixedMathValid = false;
+  ppu->fixedMathValid = false; ppu->backdropMathValid = false;
   ppu->cgramBuffer = 0;
   memset(ppu->oam, 0, sizeof(ppu->oam));
   ppu->oamAdr = 0;
@@ -140,7 +142,7 @@ void ppu_saveload(Ppu *ppu, SaveLoadFunc *func, void *ctx) {
   ppu->lastBrightnessMult = 0xff;
   ppu->subscreenMathKey = 0xff;
   ppu->colorMapDirty = true;
-  ppu->fixedMathValid = false;
+  ppu->fixedMathValid = false; ppu->backdropMathValid = false;
   func(ctx, tmp, 520);
   for (int i = 0; i < 4; i++) {
     func(ctx, tmp, 4);
@@ -156,18 +158,36 @@ int PpuGetCurrentRenderScale(Ppu *ppu, uint32_t render_flags) {
   return hq ? 4 : 1;
 }
 
+// Build once per Old frame instead of scanning all 128 OAM entries for each
+// scanline. Bit order preserves OAM priority and sprite/tile-limit behavior.
+static void PpuBuildSpriteLines(Ppu *ppu) {
+  memset(ppu->spriteLines, 0, sizeof(ppu->spriteLines));
+  for (unsigned sprite = 0; sprite < 128; sprite++) {
+    unsigned index = sprite * 2;
+    unsigned y = ppu->oam[index] >> 8;
+    if (y == 0xf0) continue; // Same hidden-sprite convention as the base PPU.
+    unsigned high = ppu->oam[0x100 + (index >> 4)] >> (index & 15);
+    unsigned size = kSpriteSizes[ppu->objSize][(high >> 1) & 1];
+    for (unsigned row = 0; row < size; row++)
+      ppu->spriteLines[(y + row) & 255][sprite >> 5] |= 1u << (sprite & 31);
+  }
+  ppu->spriteLinesValid = true;
+}
+
 void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_flags) {
   ppu->renderFlags = render_flags;
   ppu->renderPitch = (uint)pitch;
   ppu->renderBuffer = pixels;
   ppu->renderObjXOffset = 0;
+  if (render_flags & kPpuRenderFlags_Old3DS)
+    PpuBuildSpriteLines(ppu);
 
   // Cache the brightness computation
   if (ppu->brightness != ppu->lastBrightnessMult) {
     uint8_t ppu_brightness = ppu->brightness;
     ppu->lastBrightnessMult = ppu_brightness;
     ppu->colorMapDirty = true;
-    ppu->fixedMathValid = false;
+    ppu->fixedMathValid = false; ppu->backdropMathValid = false;
     for (int i = 0; i < 32; i++)
       ppu->brightnessMultHalf[i * 2] = ppu->brightnessMultHalf[i * 2 + 1] = ppu->brightnessMult[i] =
       ((i << 3) | (i >> 2)) * ppu_brightness / 15;
@@ -176,7 +196,7 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   }
 
   if (ppu->colorMapDirty) {
-    ppu->fixedMathValid = false;
+    ppu->fixedMathValid = false; ppu->backdropMathValid = false;
     ppu->colorMapDirty = false;
     for (int i = 0; i < 256; i++) {
       uint32 color = ppu->cgram[i];
@@ -249,7 +269,9 @@ void ppu_runLine(Ppu *ppu, int line) {
       (ppu->screenEnabled[0] | ppu->screenEnabled[1]) & (1 << 4);
     if (!ppu->forcedBlank && sprites_enabled) {
       ClearBackdrop(ppu, &ppu->objBuffer);
-      ppu->lineHasSprites = ppu_evaluateSprites(ppu, line - 1);
+      ppu->lineHasSprites = (ppu->renderFlags & kPpuRenderFlags_Old3DS) &&
+                            ppu->spriteLinesValid ?
+        PpuEvaluateVisibleSprites(ppu, line - 1) : ppu_evaluateSprites(ppu, line - 1);
     } else {
       ppu->lineHasSprites = false;
     }
@@ -1031,6 +1053,36 @@ static void PpuPrepareSubscreenMath(Ppu *ppu) {
   ppu->subscreenMathKey = key;
 }
 
+// In Zelda's storm the main backdrop is blended with the terrain subscreen.
+// Its main color is always CGRAM[0], so cache the 256 possible results once
+// instead of doing three component operations for every background pixel.
+static void PpuWriteBackdropSubMath(Ppu *ppu, uint32 *dst, uint32 left,
+                                    uint32 right, bool unclipped) {
+  uint32 key = ppu->fixedMathKey | (uint32)ppu->halfColor << 22 |
+    (uint32)unclipped << 23;
+  if (!ppu->backdropMathValid || ppu->backdropMathKey != key) {
+    PpuPrepareSubscreenMath(ppu);
+    const uint8 *map = ppu->subscreenMath;
+    uint32 a = unclipped ? ppu->cgram[0] : 0;
+    ppu->backdropMathRgb[0] = unclipped ? ppu->fixedMathRgb[0] : ppu->fixedMathBlack;
+    for (unsigned i = 1; i < 256; i++) {
+      uint32 b = ppu->cgram[i];
+      uint32 r = map[(a & 31) | ((b & 31) << 5)];
+      uint32 g = map[((a >> 5) & 31) | (b & 0x3e0)];
+      uint32 blue = map[((a >> 10) & 31) | ((b >> 5) & 0x3e0)];
+      ppu->backdropMathRgb[i] = blue | g << 8 | r << 16;
+    }
+    ppu->backdropMathKey = key;
+    ppu->backdropMathValid = true;
+  }
+  for (unsigned i = left; i < right; i++) {
+    uint32 pixel = ppu->bgBuffers[0].data[i];
+    *dst++ = (pixel & 0xf00) == 0x500 ?
+      ppu->backdropMathRgb[ppu->bgBuffers[1].data[i] & 255] :
+      (unclipped ? ppu->colorMapRgb[pixel & 255] : 0);
+  }
+}
+
 // Rain uses full-brightness half-add. Store RGB5 in separate bytes, so a
 // single addition handles all three channels without cross-channel carries.
 // Shift/mask performs SNES floor((a+b)/2), then expand 5 bits to 8 exactly.
@@ -1058,6 +1110,10 @@ static void PpuWriteFullBrightnessHalfAdd(Ppu *ppu, uint32 *dst, uint32 left,
 static void PpuWriteSubscreenMathSpan(Ppu *ppu, uint32 *dst, uint32 left,
                                      uint32 right, uint32 mask, bool unclipped) {
   PpuPrepareFixedMath(ppu);
+  if (mask == (1u << 5)) {
+    PpuWriteBackdropSubMath(ppu, dst, left, right, unclipped);
+    return;
+  }
   if (ppu->lastBrightnessMult == 15 && ppu->halfColor && !ppu->subtractColor) {
     PpuWriteFullBrightnessHalfAdd(ppu, dst, left, right, mask, unclipped);
     return;
@@ -1591,6 +1647,76 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
   return (tilesLeft != tilesLeftOrg);
 }
 
+static bool PpuEvaluateVisibleSprites(Ppu *ppu, int line) {
+  // Old-only candidate iteration; all fetch/priority rules match the base path.
+  int spritesLeft = 32 + 1, tilesLeft = 34 + 1;
+  uint8 spriteSizes[2] = { kSpriteSizes[ppu->objSize][0], kSpriteSizes[ppu->objSize][1] };
+  int extra_left_right = ppu->extraLeftRight;
+  if (ppu->renderFlags & kPpuRenderFlags_NoSpriteLimits)
+    spritesLeft = tilesLeft = 1024;
+  int tilesLeftOrg = tilesLeft;
+
+  for (unsigned word = 0; word < 4; word++) {
+   uint32 remaining = ppu->spriteLines[line & 255][word];
+   while (remaining) {
+    int index = (word * 32 + __builtin_ctz(remaining)) * 2;
+    remaining &= remaining - 1;
+    int yy = ppu->oam[index] >> 8;
+    // check if the sprite is on this line and get the sprite size
+    int row = (line - yy) & 0xff;
+    int highOam = ppu->oam[0x100 + (index >> 4)] >> (index & 15);
+    int spriteSize = spriteSizes[(highOam >> 1) & 1];
+    // in y-range, get the x location, using the high bit as well
+    int x = (ppu->oam[index] & 0xff) + (highOam & 1) * 256;
+    x -= (x >= 256 + extra_left_right) * 512;
+    x += ppu->renderObjXOffset;
+    // if in x-range
+    if (x <= -(spriteSize + extra_left_right))
+      continue;
+    // break if we found 32 sprites already
+    if (--spritesLeft == 0) {
+      return tilesLeft != tilesLeftOrg;
+    }
+    // get some data for the sprite and y-flip row if needed
+    int oam1 = ppu->oam[index + 1];
+    int objAdr = (oam1 & 0x100) ? ppu->objTileAdr2 : ppu->objTileAdr1;
+    if (oam1 & 0x8000)
+      row = spriteSize - 1 - row;
+    // fetch all tiles in x-range
+    int paletteBase = 0x80 + 16 * ((oam1 & 0xe00) >> 9);
+    int prio = SPRITE_PRIO_TO_PRIO((oam1 & 0x3000) >> 12, (oam1 & 0x800) == 0);
+    PpuZbufType z = paletteBase + (prio << 8);
+
+    for (int col = 0; col < spriteSize; col += 8) {
+      if (col + x > -8 - extra_left_right && col + x < 256 + extra_left_right) {
+        // break if we found 34 8*1 slivers already
+        if (--tilesLeft == 0) {
+          return true;
+        }
+        // figure out which tile this uses, looping within 16x16 pages, and get it's data
+        int usedCol = oam1 & 0x4000 ? spriteSize - 1 - col : col;
+        int usedTile = ((((oam1 & 0xff) >> 4) + (row >> 3)) << 4) | (((oam1 & 0xf) + (usedCol >> 3)) & 0xf);
+        uint32 pixels = PpuGetCached4bppRow(
+          ppu, objAdr + usedTile * 16 + (row & 0x7));
+        // go over each pixel
+        int px_left = IntMax(-(col + x + kPpuExtraLeftRight), 0);
+        int px_right = IntMin(256 + kPpuExtraLeftRight - (col + x), 8);
+        PpuZbufType *dst = ppu->objBuffer.data + col + x + px_left + kPpuExtraLeftRight;
+
+        for (int px = px_left; px < px_right; px++, dst++) {
+          int shift = oam1 & 0x4000 ? px : 7 - px;
+          int pixel = (pixels >> (shift * 4)) & 0xf;
+          // draw it in the buffer if there is a pixel here, and the buffer there is still empty
+          if (pixel != 0 && (dst[0] & 0xff) == 0)
+            dst[0] = z + pixel;
+        }
+      }
+    }
+   }
+  }
+  return (tilesLeft != tilesLeftOrg);
+}
+
 uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
   switch (adr) {
   case 0x34:
@@ -1611,6 +1737,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       break;
     }
     case 0x01: {
+      ppu->spriteLinesValid = false;
       assert(val == 2);
       break;
     }
@@ -1626,6 +1753,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       break;
     }
     case 0x04: {
+      ppu->spriteLinesValid = false;
       if (!ppu->oamSecondWrite) {
         ppu->oamBuffer = val;
       } else {
@@ -1757,7 +1885,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       } else {
         ppu->cgram[ppu->cgramPointer++] = (val << 8) | ppu->cgramBuffer;
         ppu->colorMapDirty = true;
-        ppu->fixedMathValid = false;
+        ppu->fixedMathValid = false; ppu->backdropMathValid = false;
       }
       ppu->cgramSecondWrite = !ppu->cgramSecondWrite;
       break;

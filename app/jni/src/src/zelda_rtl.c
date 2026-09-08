@@ -11,6 +11,7 @@
 #include "spc_player.h"
 #include "util.h"
 #include "dump_state.h"
+#include <stddef.h>
 #include <SDL.h>
 #include "audio.h"
 #include "assets.h"
@@ -268,11 +269,9 @@ int ZeldaGetWidescreenFixedCameraMargin(void) {
       !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
       context == 0)
     return 0;
-  if (IsDungeonMapMenuActive())
-    return 0;
-  if (context == 7 &&
-      main_module_index == 14 && submodule_index == 7 &&
-      overworld_map_state >= 4)
+  // Map sprites are projected in map-screen coordinates, not the gameplay
+  // camera. Applying the outdoor/dungeon camera delta hides or shifts them.
+  if (WideCamera_IsMapMenu(main_module_index, submodule_index))
     return 0;
   if (context == 7) {
     if (hdr_dungeon_dark_with_lantern && TS_copy != 0)
@@ -647,13 +646,19 @@ void ZeldaShutdownPpuWorker(void) {
       continue;
     __atomic_store_n(&state->running, false, __ATOMIC_RELEASE);
     LightEvent_Signal(&state->start);
-    Result join_result = threadJoin(state->thread, 2000000000ull);
+    Result join_result = threadJoin(state->thread, UINT64_MAX);
     if (R_FAILED(join_result))
       Platform3DS_LogRuntime("WARNING: PPU worker join timeout: 0x%08lx",
                              (unsigned long)join_result);
     threadFree(state->thread);
     state->thread = NULL;
   }
+  g_ppu_worker_initialized = false;
+  g_ppu_split_line = g_ppu_last_split_line = 112;
+  g_ppu_old3ds_worker_lines = g_ppu_old3ds_last_worker_lines = 56;
+  g_ppu_main_duration_ticks = 0;
+  g_ppu_join_us = 0;
+  g_ppu_system_worker.duration_ticks = g_ppu_new_worker.duration_ticks = 0;
 }
 
 bool ZeldaGetPpuWorkerStats(int *split_line,
@@ -795,7 +800,11 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       PpuWorkerState *state = workers[i];
       if (!state->thread)
         continue;
-      memcpy(&state->ppu, g_zenv.ppu, sizeof(Ppu));
+      // The appended candidate/color caches are Old-only. New keeps the
+      // original snapshot span and does not copy unused Old frame data.
+      size_t snapshot_size = (render_flags & kPpuRenderFlags_Old3DS) ?
+        sizeof(Ppu) : offsetof(Ppu, spriteLines);
+      memcpy(&state->ppu, g_zenv.ppu, snapshot_size);
       state->ppu.tileCache = &state->tile_cache;
       state->height = height;
       state->irq_state = irq_state;

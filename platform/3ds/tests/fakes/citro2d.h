@@ -5,6 +5,10 @@
 typedef struct { uint8_t rgba[4]; } TestTexture;
 typedef struct { TestTexture *tex; } C2D_Image;
 typedef struct { int unused; } C2D_DrawParams;
+typedef struct { uint32_t clear; } C3D_RenderTarget;
+enum { C3D_CLEAR_COLOR=1 };
+void C3D_FrameSplit(unsigned);
+void C3D_RenderTargetClear(C3D_RenderTarget *,unsigned,uint32_t,uint32_t);
 typedef struct { int source[3], operand[3], function; uint32_t color; } C3D_TexEnv;
 enum { C3D_RGB=1, C3D_Alpha=2, C3D_Both=3 };
 enum { GPU_TEXTURE0=1, GPU_CONSTANT, GPU_PREVIOUS };

@@ -1,6 +1,6 @@
 # Changelog
 
-Concise cumulative history from v2.9 through v3.0-E8.
+Concise cumulative history from v2.9 through v3.0-E9.
 
 ## v2.9
 
@@ -112,3 +112,28 @@ requires hardware validation; no emulator or host benchmark establishes it.
 
 E8's hardware FPS and the reported New 3DS flicker require on-device retesting;
 local image/state tests do not establish console performance or stability.
+
+## v3.0-E9
+
+- Clear RGB565 targets with native black, removing the incorrect RGBA fill
+  used for the ORIGINAL margins.
+- Include arth78's PR #30: keep WIDE at native 400x224, centered without
+  fractional vertical stretching. STRETCH remains available.
+- Include Archaistic's PR #32: use a baked antialiased Triforce mask, static
+  on Old and animated on New; avoid periodic Old cinema redraws.
+- Keep gameplay camera offsets out of dungeon/world/flute map menus so
+  projected markers remain aligned (issues #36/#37).
+- Add movement-triggered Old overworld map patches and prioritize scene
+  transitions instead of waiting for the idle fallback (issue #34).
+- Show the live mirror-return portal on the bottom overworld map (issue #21).
+- Join and reset UI/PPU workers and ROM-specific map caches when switching
+  ROMs; discard old frame/worker state before restarting (issue #24).
+- Precompute Old sprite scanline candidates and backdrop/subscreen colors,
+  preserving sprite order/limits, clipping, palette invalidation and rounding.
+  New uses the existing renderer path and does not copy the added Old caches.
+- Add sprite-candidate and map-redraw context to diagnostics.
+
+PR #31 is an alternative to #30 and is not included: its 240-line WIDE view
+adds rendering work and requires additional gameplay/HDMA coverage. No console
+FPS claim is made; E9 graphics, scene transitions and performance need hardware
+confirmation. Rain-lightning issue #35 remains unconfirmed.

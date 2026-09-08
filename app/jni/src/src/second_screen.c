@@ -76,6 +76,15 @@ int SS_GetDungeon(void) {
   return (palace == 0xff ? 0xff : palace >> 1) | ((dung_cur_floor & 0xFF) << 8);
 }
 
+// Same live mirror-return coordinates as WorldMap_HandleSprites.
+bool SS_GetMirrorPortal(int *out) {
+  unsigned x = bird_travel_x_hi[15] << 8 | bird_travel_x_lo[15];
+  unsigned y = bird_travel_y_hi[15] << 8 | bird_travel_y_lo[15];
+  if (!(x | y) || (overworld_screen_index & 0x40)) return false;
+  out[0] = x; out[1] = y;
+  return true;
+}
+
 // Copies save_dung_info (g_ram[0xF000..0xF500): uint16 per room; low nibble =
 // visited quadrant bits) into the caller's buffer (up to 0x500 bytes).
 void SS_ReadDungFlags(uint8 *out, int n) {
@@ -322,6 +331,12 @@ int SS_GetDungeonLayout(int palace, uint8 *out, int cap) {
 // 0x80|palace loaded by Module0E_03_01_00_PrepMapGraphics.
 static uint8 g_ss_dmap_tiles[192 * 64];
 static int g_ss_dmap_palace = -1;
+
+// Called after the UI worker is joined, before another ROM uses its assets.
+void SS_ResetRomCaches(void) {
+  g_ss_dmap_palace = -1;
+  g_ss_has_outdoor = false;
+}
 
 static void SS_EnsureDmapTiles(int palace) {
   if (g_ss_dmap_palace == palace) return;
