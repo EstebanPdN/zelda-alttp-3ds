@@ -285,7 +285,7 @@ static void draw_frame(float x, float y, float w, float h, float t, uint32_t c) 
 }
 // rounded-rect fill; nested insets give rounded borders
 static void fill_round(float x, float y, float w, float h, float rad, uint32_t c) {
-#ifdef __3DS__
+#if defined(__3DS__) || defined(ZELDA3_TEST_3DS_UI)
   if (Platform3DS_GetHardwareProfile()->integer_ui_rounding) {
     set_color(c);
     SecondScreenFillRound(ss_r, x, y, w, h, rad);

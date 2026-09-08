@@ -144,3 +144,23 @@ PR #30 (arth78) and #32 (Archaistic) are included. New retains its renderer,
 clock and worker scheduling policy; shared map/display/ROM-switch bug fixes
 also apply to New. Old-only sprite and color caches are excluded from New's
 worker copy. No hardware FPS or graphical acceptance is claimed by host tests.
+
+## Local E10 regression candidate
+
+E10 restores integer rounded controls on both hardware profiles. New retains
+its E6 renderer policy, texture format, frame cadence and clock settings. The
+Old PPU implementation is unchanged from E9. A runtime exit handler stops
+audio/render workers before libctru frees their heap stacks; fatal errors are
+logged before cleanup and shown through the existing error screen.
+
+The supplied E9 crash matches all 96 captured instruction bytes. It faults in
+ndspiReadChnState while pushing to an unmapped stack. Heap teardown with a
+live audio worker is a supported hypothesis, not a confirmed explanation of
+why the application was exiting. E10 is a mitigation and diagnostic candidate;
+Old startup recovery and 60 FPS still require hardware confirmation.
+
+E9 mistakenly kept the E8 diagnostics version macro. E10 corrects that macro,
+filenames and HOME Menu metadata. Existing dump numbering is preserved.
+
+Builds E10 and later remain local until the owner explicitly publishes them.
+Do not push commits/tags or upload release assets during this testing series.

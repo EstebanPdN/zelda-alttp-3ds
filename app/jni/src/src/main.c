@@ -117,9 +117,27 @@ static uint32 TicksToMicroseconds(uint64 ticks) {
 }
 #endif
 
+#ifdef __3DS__
+// Error returns and Die() must stop workers before libctru unmaps their heap
+// stacks. The normal ROM-switch path still performs its existing cleanup.
+static void Shutdown3DSRuntimeAtExit(void) {
+  SDL_QuitSubSystem(SDL_INIT_AUDIO);
+  ZeldaShutdownPpuWorker();
+  SecondScreenSDL_Shutdown();
+  if (g_renderer_funcs.Destroy)
+    g_renderer_funcs.Destroy();
+  SDL_Quit();
+}
+#endif
+
 void NORETURN Die(const char *error) {
 #if defined(NDEBUG) && defined(_WIN32)
   SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kWindowTitle, error, NULL);
+#endif
+#ifdef __3DS__
+  Platform3DS_LogRuntime("FATAL before runtime shutdown: %s", error);
+  Shutdown3DSRuntimeAtExit();
+  Platform3DS_ShowFatalError(error);
 #endif
   fprintf(stderr, "Error: %s\n", error);
   exit(1);
@@ -585,6 +603,10 @@ void OpenGLRenderer_Create(struct RendererFuncs *funcs, bool use_opengl_es);
 
 //#undef main
 int main(int argc, char** argv) {
+#ifdef __3DS__
+  if (atexit(Shutdown3DSRuntimeAtExit) != 0)
+    return 1;
+#endif
   argc--, argv++;
   const char *config_file = NULL;
   if (argc >= 2 && strcmp(argv[0], "--config") == 0) {

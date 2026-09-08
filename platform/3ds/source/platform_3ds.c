@@ -1461,6 +1461,14 @@ static void SetupAudioStop(void) {
 }
 
 static void SetupAudioStart(void) {
+  static bool exit_cleanup_registered;
+  if (!exit_cleanup_registered) {
+    if (atexit(SetupAudioStop) != 0) {
+      LogSetup("Setup audio exit cleanup registration failed");
+      return;
+    }
+    exit_cleanup_registered = true;
+  }
   if (g_setup_audio_initialized)
     return;
   if (R_FAILED(ndspInit())) {
