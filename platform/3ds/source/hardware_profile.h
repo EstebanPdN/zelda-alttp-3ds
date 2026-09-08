@@ -13,7 +13,7 @@ typedef struct Platform3DSHardwareProfile {
 
 static inline const Platform3DSHardwareProfile *Platform3DS_ProfileForModel(bool is_new) {
   static const Platform3DSHardwareProfile old_profile = {
-    "Old 3DS E11", true, true, true, true
+    "Old 3DS E12", true, true, true, true
   };
   static const Platform3DSHardwareProfile new_profile = {
     "New 3DS E6 renderer", false, false, false, true

@@ -20,6 +20,7 @@
 #ifdef __3DS__
 #include <3ds.h>
 #include "platform_3ds.h"
+#include "ppu_gpu.h"
 #endif
 /*
  * The saving functions have been rewritten in this file to support saving to external storage on android.
@@ -548,6 +549,27 @@ static void ZeldaDrawPpuLines(Ppu *ppu, int height,
 }
 
 #ifdef __3DS__
+static bool ZeldaTryGpuPpu(Ppu *ppu, int height, uint8 irq_state) {
+  if (!PpuGpuBegin(ppu, height)) return false;
+  SimpleHdma chans[2];
+  SimpleHdma_Init(&chans[0], &g_zenv.dma->channel[6]);
+  SimpleHdma_Init(&chans[1], &g_zenv.dma->channel[7]);
+  for (int i=0; i<=height; i++) {
+    if (i==128 && irq_state) {
+      ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8);
+      ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8 >> 8);
+      ppu_write(ppu, (uint8)BG3VOFS, 0);
+      ppu_write(ppu, (uint8)BG3VOFS, 0);
+    }
+    if (i) PpuGpuLine(ppu, i-1);
+    SimpleHdma_DoLine(&chans[0], ppu);
+    SimpleHdma_DoLine(&chans[1], ppu);
+  }
+  return PpuGpuFinish(ppu);
+}
+#endif
+
+#ifdef __3DS__
 typedef struct PpuWorkerState {
   Ppu ppu;
   PpuTileCache tile_cache;
@@ -664,6 +686,12 @@ void ZeldaShutdownPpuWorker(void) {
 bool ZeldaGetPpuWorkerStats(int *split_line,
                             uint32 *main_time_us,
                             uint32 *worker_time_us) {
+  if (PpuGpuOutputActive()) {
+    if (split_line) *split_line=0;
+    if (main_time_us) *main_time_us=0;
+    if (worker_time_us) *worker_time_us=0;
+    return false;
+  }
   if (!g_ppu_system_worker.thread && !g_ppu_new_worker.thread)
     return false;
   if (split_line)
@@ -743,7 +771,19 @@ static int g_ppu_phase_split;
 void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   SimpleHdma hdma_probe;
 
-  PpuBeginDrawing(g_zenv.ppu, pixel_buffer, pitch, render_flags);
+#ifdef __3DS__
+  bool gpu_candidate = (render_flags & kPpuRenderFlags_Old3DS) && PpuGpuCanAttempt();
+  if (gpu_candidate) {
+    // The GPU consumes register/tile/OAM state; do not rasterize or rebuild
+    // E11's software background cache on a GPU frame.
+    g_zenv.ppu->renderFlags = render_flags;
+    g_zenv.ppu->renderPitch = pitch;
+    g_zenv.ppu->renderBuffer = pixel_buffer;
+    g_zenv.ppu->renderObjXOffset = 0;
+    g_zenv.ppu->phase.active = false;
+  } else
+#endif
+    PpuBeginDrawing(g_zenv.ppu, pixel_buffer, pitch, render_flags);
 
   dma_startDma(g_zenv.dma, HDMAEN_copy, true);
   SimpleHdma_Init(&hdma_probe, &g_zenv.dma->channel[6]);
@@ -775,6 +815,16 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   uint8 irq_state = irq_flag;
 
 #ifdef __3DS__
+  if (gpu_candidate) {
+    if (ZeldaTryGpuPpu(g_zenv.ppu, height, irq_state)) {
+      g_ppu_join_us = 0;
+      goto rendering_complete;
+    }
+    int obj_offset = g_zenv.ppu->renderObjXOffset;
+    PpuBeginDrawing(g_zenv.ppu, pixel_buffer, pitch, render_flags);
+    g_zenv.ppu->renderObjXOffset = obj_offset;
+  }
+  if (render_flags & kPpuRenderFlags_Old3DS) PpuGpuCpuFrame();
   if (ZeldaEnsurePpuWorkers()) {
     PpuWorkerState *system_worker = &g_ppu_system_worker;
     PpuWorkerState *new_worker = &g_ppu_new_worker;
@@ -834,6 +884,9 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
     ZeldaDrawPpuLines(g_zenv.ppu, height, 1, height, irq_state);
   }
 
+#ifdef __3DS__
+rendering_complete:
+#endif
   if (irq_state & 0x80) {
     irq_flag = 0;
     zelda_snes_dummy_write(NMITIMEN, 0x81);
@@ -1813,6 +1866,7 @@ void ZeldaWriteSram() {
 }
 #ifdef __3DS__
 #include "platform_3ds.h"
+#include "ppu_gpu.h"
 #endif
 
 void ZeldaWriteGameDiagnostics(FILE *file) {

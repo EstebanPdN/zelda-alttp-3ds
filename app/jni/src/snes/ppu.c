@@ -325,11 +325,7 @@ void ppu_runLine(Ppu *ppu, int line) {
   }
 }
 
-typedef struct PpuWindows {
-  int16 edges[6];
-  uint8 nr;
-  uint8 bits;
-} PpuWindows;
+typedef PpuWindowSpans PpuWindows;
 
 static void PpuWindows_Clear(PpuWindows *win, Ppu *ppu, uint layer) {
   win->edges[0] = -(layer != 2 ? ppu->extraLeftCur : 0);
@@ -402,6 +398,11 @@ static void PpuWindows_Calc(PpuWindows *win, Ppu *ppu, uint layer) {
   if ((winflags & (kWindow2Enabled | kWindow2Inversed)) == (kWindow2Enabled | kWindow2Inversed))
     w2_bits = ~w2_bits;
   win->bits = w1_bits | w2_bits;
+}
+
+void PpuGetWindowSpans(Ppu *p, unsigned layer, bool enabled, PpuWindowSpans *out) {
+  if (enabled) PpuWindows_Calc(out, p, layer);
+  else PpuWindows_Clear(out, p, layer);
 }
 
 static bool PpuDrawRetainedBackground(Ppu *ppu, unsigned y, bool sub, unsigned layer) {
@@ -1799,6 +1800,7 @@ uint8_t ppu_read(Ppu* ppu, uint8_t adr) {
 }
 
 void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
+  if (ppu->gpuRecording && (adr==0x18 || adr==0x19 || adr==0x22 || adr==0x04)) ppu->gpuInvalidWrite=true;
   switch(adr) {
     case 0x00: {  // INIDISP
       ppu->brightness = val & 0xf;

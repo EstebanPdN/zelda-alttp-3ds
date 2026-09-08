@@ -1,6 +1,6 @@
 # Changelog
 
-Concise cumulative history from v2.9 through local v3.0-E11.
+Concise cumulative history from v2.9 through local v3.0-E12.
 
 ## v2.9
 
@@ -157,3 +157,24 @@ confirmation. Rain-lightning issue #35 remains unconfirmed.
 - Document the PICA200 renderer design. The GPU backend is not implemented in E11;
   host/ARM replay improvements are not physical-console FPS measurements.
 - Keep CIA/3DSX, frozen source, symbols and LAN installation QR local only.
+
+## v3.0-E12 (local)
+
+- Implemented an Old 3DS PICA200 PPU backend: cached palette-aware tiled atlas,
+  background/sprite geometry, depth and first-opaque-sprite stencil ownership,
+  main/subscreen render targets and a six-stage SNES color compositor.
+- Captures scanline registers after HDMA/IRQ updates and skips CPU pixel
+  rendering and E11 background-plane preparation on supported GPU frames.
+- Checks 65,536 color cases and 89,600 synthetic scene pixels through PICA at
+  startup. Records any mismatch and disables the GPU backend for that session.
+- Falls back per frame for Mode 7, brightness fades, mosaic, live VRAM/CGRAM/OAM
+  changes, capacity limits and requested CPU thumbnails/overlays. Fallback is
+  visible in dumps; no frame skipping or low-resolution substitute is added.
+- Restores Citro2D's color-only depth policy and disables the second sampler
+  before drawing the top screen and the existing bottom interface.
+- Adds GPU frame counts, timings, tile/vertex work, fallback reasons, a rolling
+  120-frame history and the resolved GPU image to numbered dumps.
+- New 3DS retains its renderer and profile settings. E10/E11 bottom-menu
+  integer geometry and ordered SDL/NDSP shutdown remain in place.
+- CIA, 3DSX, symbols, exact source and QR remain local. Physical Old 3DS 60 FPS
+  and visual acceptance are pending; desktop/emulator timing is not that result.

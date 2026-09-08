@@ -30,7 +30,12 @@ set(ZELDA3_3DS_SOURCES
   "${ZELDA3_NATIVE}/src/platform/linux/second_screen_sdl.c"
   "${ZELDA3_NATIVE}/third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c"
   "${CMAKE_CURRENT_LIST_DIR}/source/platform_3ds.c"
+  "${CMAKE_CURRENT_LIST_DIR}/source/ppu_gpu.c"
+  "${CMAKE_CURRENT_LIST_DIR}/source/ppu_gpu_model.c"
 )
+
+ctr_add_shader_library(alttp_pica_shader source/ppu_gpu.v.pica)
+dkp_add_embedded_binary_library(alttp_pica_shader_bin alttp_pica_shader)
 
 add_executable(zelda3-3ds ${ZELDA3_3DS_SOURCES})
 set_source_files_properties(
@@ -52,7 +57,7 @@ target_include_directories(zelda3-3ds PRIVATE
 
 target_compile_definitions(zelda3-3ds PRIVATE
   SYSTEM_VOLUME_MIXER_AVAILABLE=0
-  ZELDA3_3DS_VERSION=\"3.0-E11\"
+  ZELDA3_3DS_VERSION=\"3.0-E12\"
   NDEBUG=1
 )
 
@@ -74,6 +79,7 @@ target_link_options(zelda3-3ds PRIVATE -O3 -flto -Wl,--gc-sections)
 target_link_libraries(zelda3-3ds PRIVATE
   SDL2::SDL2main
   SDL2::SDL2-static
+  alttp_pica_shader_bin
   citro2d
   citro3d
   ctru
@@ -96,15 +102,15 @@ configure_file(
 set(ZELDA3_SMDH "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds.smdh")
 ctr_generate_smdh(
   OUTPUT "${ZELDA3_SMDH}"
-  NAME "Zelda 3DS EXP 11"
-  DESCRIPTION "A Link to the Past 3DS experimental 11"
+  NAME "Zelda 3DS EXP 12"
+  DESCRIPTION "A Link to the Past 3DS experimental 12"
   AUTHOR "EstebanPdN"
   ICON "${CMAKE_CURRENT_LIST_DIR}/assets/icon.png"
 )
 
 ctr_create_3dsx(zelda3-3ds-3dsx
   TARGET zelda3-3ds
-  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v3.0-E11.3dsx"
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v3.0-E12.3dsx"
   SMDH "${ZELDA3_SMDH}"
   ROMFS "${ZELDA3_ROMFS}"
 )

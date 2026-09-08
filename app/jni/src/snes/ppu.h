@@ -52,6 +52,12 @@ enum {
 };
 
 
+typedef struct PpuWindowSpans {
+  int16_t edges[6];
+  uint8_t nr, bits;
+} PpuWindowSpans;
+void PpuGetWindowSpans(Ppu *ppu, unsigned layer, bool enabled, PpuWindowSpans *out);
+
 typedef struct PpuPhaseProfile {
   uint64_t prepare, sprites, main, sub, compose, mode7;
   uint32_t frame, lines, retainedRows, rebuiltTiles;
@@ -159,6 +165,7 @@ struct Ppu {
   struct PpuRetainedMaps *retained;
   bool retainedAttempted, retainedUsable;
   PpuPhaseProfile phase;
+  bool gpuRecording, gpuInvalidWrite;
 
 };
 
