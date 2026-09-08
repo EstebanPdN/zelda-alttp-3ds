@@ -1024,7 +1024,18 @@ static void update_ini(const char *section, const char *key, const char *value) 
   if (!done)
     olen += sprintf(out + olen, "%s\n%s = %s\n", section, key, value);
   f = fopen("zelda3.ini", "wb");
-  if (f) { fwrite(out, 1, olen, f); fclose(f); }
+  bool saved = false;
+  if (f) {
+    saved = fwrite(out, 1, olen, f) == olen;
+    if (fclose(f) != 0) saved = false;
+  }
+#ifdef __3DS__
+  // The launcher restores this ROM's profile INI over the working copy on
+  // every boot. Persist ALL successful menu writes, not only ShowFps.
+  if (saved) Platform3DS_PersistRuntimeSettings();
+#else
+  (void)saved;
+#endif
   free(out);
   free(buf);
 }
@@ -2011,9 +2022,6 @@ settings_tap:
         developer_show_fps = show;
 #endif
         update_ini("[General]", "ShowFps", show ? "1" : "0");
-#ifdef __3DS__
-        Platform3DS_PersistRuntimeSettings();
-#endif
       } else if (in_rect(&developer_row_r[3], x, y)) {
         developer_overlay_mode = true;
 #ifdef __3DS__

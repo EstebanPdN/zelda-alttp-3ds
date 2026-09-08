@@ -14,3 +14,10 @@ static inline void PicaC3DUnbindSecondary(void) {
   ctx->tex[1]=NULL;
   ctx->flags|=C3DiF_Tex(1);
 }
+
+// FrameSync waits for VBlank counters, NOT for the command queue. Wait for
+// actual DMA/draw completion before CPU buffer reuse/readback; no VBlank tax.
+// Only called outside an application frame and after the layout canary.
+static inline bool PicaC3DWaitIdle(void) {
+  return gxCmdQueueWait(&C3Di_GetContext()->gxQueue, -1);
+}

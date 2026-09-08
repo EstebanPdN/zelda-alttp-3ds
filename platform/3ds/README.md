@@ -42,10 +42,10 @@ physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
 `load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
 complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E12 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E13 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 12
+Short name:  Zelda 3DS EXP 13
 Long name:   A Link to the Past 3DS experimental 11
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
@@ -182,3 +182,8 @@ CSV remains available for steady-state cadence. Dump numbering stays
 See `PICA200-E12.md` for the implemented rendering path, fallback conditions,
 startup probes, dump formats, dependency compatibility and hardware test limits.
 The New 3DS renderer/profile and bottom-interface scaling are preserved.
+
+### E13 physical probe and settings repairs
+
+See `PICA200-E13.md` for the hardware evidence, GX completion fence,
+subtractive color precision correction, and persistent menu settings.

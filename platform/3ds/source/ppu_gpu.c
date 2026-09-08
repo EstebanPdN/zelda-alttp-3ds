@@ -39,6 +39,8 @@ static struct {
   const char *reason;
   FrameRecord history[120];
   unsigned historyNext,historyCount;
+  Result readbackCacheResult;
+  uint32_t probeBandErrors[16];
 } g;
 static uint32_t Us(uint64_t start) { return (uint32_t)((svcGetSystemTick()-start)*1000000ull/SYSCLOCK_ARM11); }
 static bool Clean(const void *p,size_t bytes) {
@@ -107,7 +109,7 @@ static void RestoreC2D(void) {
   C3D_DepthTest(false,GPU_ALWAYS,GPU_WRITE_COLOR);
 }
 static bool DrawLayers(C3D_RenderTarget *target,unsigned sub) {
-  C3D_FrameSplit(0);
+  C3D_FrameSplit(GX_CMDLIST_FLUSH);
   C3D_RenderTargetClear(target,C3D_CLEAR_ALL,0,0);
   if(!C3D_FrameDrawOn(target)) return false;
   BindState();Viewport();ResetTev();
@@ -159,7 +161,14 @@ static void ConfigureCompose(unsigned flags) {
     C3D_TexEnvFunc(e,C3D_RGB,GPU_REPLACE);
   }
   e=C3D_GetTexEnv(3);
-  C3D_TexEnvColor(e,Rgba(0,0,0,(flags&8)?255:127));
+  // Subtraction cancels the atlas RGB bias. Restore one sub-RGB5 unit after
+  // selection: physical PICA can land just below an exact 8*n boundary when
+  // interpolating the full/half result. +1 preserves every SNES result under
+  // integer TEV too (full=8*n, half=4*n), including clamped black.
+  unsigned bias=(flags&1)?1:0;
+  C3D_TexEnvColor(e,Rgba(bias,bias,bias,(flags&8)?255:127));
+  C3D_TexEnvSrc(e,C3D_RGB,GPU_PREVIOUS,GPU_CONSTANT,GPU_PREVIOUS);
+  C3D_TexEnvFunc(e,C3D_RGB,GPU_ADD);
   C3D_TexEnvSrc(e,C3D_Alpha,GPU_TEXTURE0,GPU_CONSTANT,GPU_PREVIOUS);
   C3D_TexEnvFunc(e,C3D_Alpha,GPU_SUBTRACT);C3D_TexEnvScale(e,C3D_Alpha,GPU_TEVSCALE_2);
   e=C3D_GetTexEnv(4);
@@ -172,7 +181,7 @@ static void ConfigureCompose(unsigned flags) {
   C3D_TexEnvColor(e,0xffffffff);C3D_TexEnvFunc(e,C3D_Alpha,GPU_REPLACE);
 }
 static bool DrawComposition(void) {
-  C3D_FrameSplit(0);
+  C3D_FrameSplit(GX_CMDLIST_FLUSH);
   C3D_RenderTargetClear(g.resultTarget,C3D_CLEAR_COLOR,0,0);
   if(!C3D_FrameDrawOn(g.resultTarget)) return false;
   BindState();Viewport();
@@ -185,14 +194,19 @@ static uint16_t Pack(uint16_t rgb) { return ((rgb&31)<<11)|((rgb&992)<<1)|((rgb>
 static uint32_t Encoded(uint16_t rgb,unsigned alpha) {
   return (((rgb&31)*8+1)<<24)|((((rgb>>5)&31)*8+1)<<16)|((((rgb>>10)&31)*8+1)<<8)|alpha;
 }
-static void TransferReadback(GX_TRANSFER_FORMAT output) {
-  C3D_FrameSplit(0);
-  Clean(g.readback,512*256*4);
-  C3D_SyncDisplayTransfer(g.result.data,GX_BUFFER_DIM(512,256),g.readback,GX_BUFFER_DIM(512,256),
-    GX_TRANSFER_FLIP_VERT(0)|GX_TRANSFER_OUT_TILED(0)|GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB5A1)|GX_TRANSFER_OUT_FORMAT(output));
+static bool TransferReadback(GX_TRANSFER_FORMAT output) {
+  C3D_FrameSplit(GX_CMDLIST_FLUSH);
+  if(!Clean(g.readback,512*256*4)) return false;
+  return R_SUCCEEDED(GX_DisplayTransfer(g.result.data,GX_BUFFER_DIM(512,256),g.readback,GX_BUFFER_DIM(512,256),
+    GX_TRANSFER_FLIP_VERT(0)|GX_TRANSFER_OUT_TILED(0)|GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB5A1)|GX_TRANSFER_OUT_FORMAT(output)));
+}
+static bool FinishReadback(size_t bytes) {
+  if(!PicaC3DWaitIdle()) return false;
+  g.readbackCacheResult=GSPGPU_InvalidateDataCache(g.readback,bytes);
+  return R_SUCCEEDED(g.readbackCacheResult);
 }
 static bool ColorProbe(void) {
-  C3D_FrameSync();
+  if(!PicaC3DWaitIdle()) {g.reason="probe-queue-wait";return false;}
   ResetRanges(512,256);
   // Outside a frame, SyncDisplayTransfer waits for source consumption.
   // Inside a frame it only queues the copy: reusing this staging buffer there
@@ -203,7 +217,7 @@ static bool ColorProbe(void) {
       uint16_t rgb=n|(((n*(which?11:7))&31)<<5)|(((n*(which?3:13))&31)<<10);
       g.readback[i]=Encoded(rgb,(i&(1u<<(which?11:10)))?255:127);
     }
-    Clean(g.readback,512*256*4);
+    if(!Clean(g.readback,512*256*4)) {g.reason="probe-upload-cache";return false;}
     C3D_SyncDisplayTransfer(g.readback,GX_BUFFER_DIM(512,256),(which?g.sub.data:g.main.data),GX_BUFFER_DIM(512,256),
       GX_TRANSFER_OUT_TILED(1)|GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8)|GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8));
   }
@@ -213,11 +227,11 @@ static bool ColorProbe(void) {
     PicaQuad q={0,y,512,y+8,0,4096-(int)y*16,4096,4096-(int)(y+8)*16,1,255,255,255,255};
     Emit(NULL,4+flags,&q);
   }
-  Clean(g.vertices,g.count*sizeof(Vertex));
-  bool ok=DrawComposition();
-  if(ok) TransferReadback(GX_TRANSFER_FMT_RGB5A1);
-  RestoreC2D();C3D_FrameEnd(GX_CMDLIST_FLUSH);C3D_FrameSync();
-  GSPGPU_InvalidateDataCache(g.readback,512*256*2);
+  bool ok=Clean(g.vertices,g.count*sizeof(Vertex)) && DrawComposition();
+  if(ok) ok=TransferReadback(GX_TRANSFER_FMT_RGB5A1);
+  RestoreC2D();C3D_FrameEnd(GX_CMDLIST_FLUSH);
+  bool readbackOk=FinishReadback(512*256*2);
+  if(!readbackOk) {g.reason="probe-readback-sync-cache";return false;}
   if(!ok) {g.reason="probe-draw";return false;}
   for(unsigned i=0;i<65536;i++) {
     unsigned m=i&31,s=(i>>5)&31;
@@ -227,7 +241,7 @@ static bool ColorProbe(void) {
     uint16_t actual=((uint16_t*)g.readback)[i];g.probePixels++;
     if(expected!=actual) {
       if(!g.probeErrors) {g.firstBad=i;g.expected=expected;g.actual=actual;}
-      g.probeErrors++;
+      g.probeErrors++;g.probeBandErrors[i>>12]++;
     }
   }
   if(g.probeErrors) {
@@ -286,9 +300,10 @@ static bool GeometryProbe(void) {
   bool ok=PicaBuildFrame(&frame) && Clean(g.atlas.data,g.atlas.size) && Clean(g.vertices,g.count*sizeof(Vertex));
   if(ok && C3D_FrameBegin(0)) {
     ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition();
-    if(ok) TransferReadback(GX_TRANSFER_FMT_RGB5A1);
-    RestoreC2D();C3D_FrameEnd(GX_CMDLIST_FLUSH);C3D_FrameSync();
-    ok=ok && R_SUCCEEDED(GSPGPU_InvalidateDataCache(g.readback,512*256*2));
+    if(ok) ok=TransferReadback(GX_TRANSFER_FMT_RGB5A1);
+    RestoreC2D();C3D_FrameEnd(GX_CMDLIST_FLUSH);
+    bool readbackOk=FinishReadback(512*256*2);
+    ok=ok && readbackOk;
   } else ok=false;
   if(ok) for(unsigned y=0;y<224;y++) for(unsigned x=0;x<400;x++) {
     uint16_t actual=((uint16_t*)g.readback)[y*512+x];g.geometryPixels++;
@@ -341,6 +356,7 @@ bool PpuGpuInit(void) {
 }
 void PpuGpuShutdown(void) {
   if(!g.initialized) return;
+  if(PicaC3DCompatible()) PicaC3DWaitIdle();
   if(g.mainTarget) C3D_RenderTargetDelete(g.mainTarget);
   if(g.subTarget) C3D_RenderTargetDelete(g.subTarget);
   if(g.resultTarget) C3D_RenderTargetDelete(g.resultTarget);
@@ -360,7 +376,9 @@ void PpuGpuForceCpuFrame(void) {g.forceCpu=true;}
 bool PpuGpuBegin(Ppu *p,unsigned height) {
   g.prepared=g.output=false;g.frames++;
   if(!g.ready || g.forceCpu || height>PICA_MAX_LINES) return false;
-  uint64_t start=svcGetSystemTick();C3D_FrameSync();g.syncUs=Us(start);
+  uint64_t start=svcGetSystemTick();
+  if(!PicaC3DWaitIdle()) {g.reason="prior-gpu-wait";return false;}
+  g.syncUs=Us(start);
   memcpy(g.saved,p,sizeof(Ppu));g.captured=0;ResetRanges(256+p->extraLeftRight*2,height);
   PicaAtlasBegin(g.cache);p->gpuRecording=true;p->gpuInvalidWrite=false;
   return true;
@@ -420,12 +438,15 @@ bool PpuGpuDraw(void) {
   return ok;
 }
 void PpuGpuWriteDiagnostics(FILE *f) {
-  fprintf(f,"PICA200 schema=1 initialized=%u enabled=%u output=%u reason=%s\n",g.initialized,g.ready,g.output,g.reason?g.reason:"not-initialized");
+  fprintf(f,"PICA200 schema=2 initialized=%u enabled=%u output=%u reason=%s\n",g.initialized,g.ready,g.output,g.reason?g.reason:"not-initialized");
   fprintf(f,"PICA frames_attempted=%llu submitted=%llu cpu_frames=%llu width=%u height=%u vertices=%u\n",g.frames,g.gpuFrames,g.cpuFrames,g.width,g.height,g.count);
   fprintf(f,"PICA prepare_us=%lu prior_gpu_wait_us=%lu geometry_build_us=%lu submit_us=%lu tile_upload_bytes=%lu\n",(unsigned long)g.prepareUs,(unsigned long)g.syncUs,(unsigned long)g.buildUs,(unsigned long)g.submitUs,(unsigned long)g.uploadBytes);
   if(g.cache) fprintf(f,"PICA tile_hits=%lu tile_decodes=%lu live_slots=%lu\n",(unsigned long)g.cache->hits,(unsigned long)g.cache->decodes,(unsigned long)g.cache->live);
   fprintf(f,"PICA color_probe_pixels=%llu mismatches=%llu first=%lu expected=%04lx actual=%04lx\n",g.probePixels,g.probeErrors,(unsigned long)g.firstBad,(unsigned long)g.expected,(unsigned long)g.actual);
   fprintf(f,"PICA geometry_probe_pixels=%llu mismatches=%llu first=%lu expected=%04lx actual=%04lx\n",g.geometryPixels,g.geometryErrors,(unsigned long)g.firstBad,(unsigned long)g.expected,(unsigned long)g.actual);
+  fprintf(f,"PICA queue_fence=GX-completion readback_cache_result=%08lx color_band_errors=",(unsigned long)g.readbackCacheResult);
+  for(unsigned i=0;i<16;i++) fprintf(f,"%s%lu",i?",":"",(unsigned long)g.probeBandErrors[i]);
+  fputc('\n',f);
   fputs("PICA recent-frame history: GPU preparation/submit wall spans; CPU rows describe GPU preflight only, not CPU PPU time.\n",f);
   fputs("number,gpu,prepare_us,prior_gpu_wait_us,build_us,submit_us,upload_bytes,vertices,decodes,reason\n",f);
   for(unsigned i=0;i<g.historyCount;i++) {
@@ -438,12 +459,12 @@ void PpuGpuWriteDiagnostics(FILE *f) {
 }
 const uint32_t *PpuGpuReadback(void) {
   if(!g.output || !g.readback) return NULL;
-  C3D_FrameSync();
   // Called at dump time outside an application frame. A private readback frame
   // keeps Citro3D/GX ordering valid and does not submit screen targets.
   if(!C3D_FrameBegin(0)) return NULL;
-  TransferReadback(GX_TRANSFER_FMT_RGBA8);C3D_FrameEnd(GX_CMDLIST_FLUSH);C3D_FrameSync();
-  if(R_FAILED(GSPGPU_InvalidateDataCache(g.readback,512*256*4))) return NULL;
+  bool ok=TransferReadback(GX_TRANSFER_FMT_RGBA8);C3D_FrameEnd(GX_CMDLIST_FLUSH);
+  bool readbackOk=FinishReadback(512*256*4);
+  if(!ok || !readbackOk) return NULL;
   for(unsigned i=0;i<512*256;i++) g.readback[i]>>=8;
   return g.readback;
 }
