@@ -571,6 +571,8 @@ static int g_ppu_last_split_line = 112;
 static int g_ppu_old3ds_worker_lines = 56;
 static int g_ppu_old3ds_last_worker_lines = 56;
 static uint64 g_ppu_main_duration_ticks;
+static uint32 g_ppu_join_us;
+uint32 ZeldaGetPpuJoinTimeUs(void) { return g_ppu_join_us; }
 
 static void ZeldaPpuWorkerMain(void *argument) {
   PpuWorkerState *state = (PpuWorkerState *)argument;
@@ -713,6 +715,7 @@ static int ZeldaOld3DSChooseWorkerLines(int height) {
   return worker_lines;
 }
 #else
+uint32 ZeldaGetPpuJoinTimeUs(void) { return 0; }
 void ZeldaShutdownPpuWorker(void) {
 }
 
@@ -804,10 +807,12 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
     ZeldaDrawPpuLines(g_zenv.ppu, height,
                       main_first, main_last, irq_state);
     g_ppu_main_duration_ticks = svcGetSystemTick() - main_start;
+    uint64 join_start = svcGetSystemTick();
     for (size_t i = 0; i < countof(workers); i++) {
       if (workers[i]->thread)
         LightEvent_Wait(&workers[i]->done);
     }
+    g_ppu_join_us = (uint32)((svcGetSystemTick() - join_start) * 1000000ull / SYSCLOCK_ARM11);
   } else
 #endif
   {
@@ -1782,3 +1787,16 @@ void ZeldaWriteSram() {
 #ifdef __3DS__
 #include "platform_3ds.h"
 #endif
+
+void ZeldaWriteGameDiagnostics(FILE *file) {
+  fprintf(file, "Scene: module=%u submodule=%u room=%u area=%u indoors=%u Link=(%u,%u)\nHDMA enable copy=%02x\n",
+          main_module_index, submodule_index, dungeon_room_index, overworld_screen_index,
+          player_is_indoors, link_x_coord, link_y_coord, HDMAEN_copy);
+  for (unsigned i = 0; i < 8; i++) {
+    const DmaChannel *d = &g_zenv.dma->channel[i];
+    fprintf(file, "DMA%u source=%02x:%04x B-bus=%02x mode=%u indirect=%u bank=%02x size=%u table=%04x repeat=%u active=%u\n", i,
+            d->aBank, d->aAdr, d->bAdr, d->mode, d->indirect, d->indBank,
+            d->size, d->tableAdr, d->repCount, d->hdmaActive);
+  }
+
+}

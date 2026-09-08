@@ -44,6 +44,11 @@ struct SDL_PrivateAudioData
     LightLock lock;
     CondVar cv;
     SDL_bool isCancelled;
+    /* Zelda3 E7 diagnostics; no PCM format, queue or scheduling changes. */
+    Uint64 refillStart, refillTotalUs;
+    Uint32 refillCount, refillLastUs, refillMaxUs, emptyQueueEvents;
+    Uint32 workerPriority;
+    SDL_bool queueWasEmpty;
 };
 
 #endif /* _SDL_n3dsaudio_h_ */

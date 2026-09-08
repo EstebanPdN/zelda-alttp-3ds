@@ -51,6 +51,8 @@ void ZeldaInitialize();
 void ZeldaReset(bool preserve_sram);
 void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags);
 void ZeldaShutdownPpuWorker(void);
+uint32 ZeldaGetPpuJoinTimeUs(void);
+void ZeldaWriteGameDiagnostics(FILE *file);
 bool ZeldaGetPpuWorkerStats(int *split_line,
                             uint32 *main_time_us,
                             uint32 *worker_time_us);

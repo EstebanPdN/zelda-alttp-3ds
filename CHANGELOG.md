@@ -1,6 +1,6 @@
 # Changelog
 
-Concise cumulative history from v2.9 through v3.0-E6.
+Concise cumulative history from v2.9 through v3.0-E7.
 
 ## v2.9
 
@@ -71,3 +71,24 @@ The E4 cache strategy was adapted to this engine after studying
 - Paused the active NDSP channel for the entire synchronous dump transaction,
   so already-queued music stops and resumes at the same playback position.
 - Excluded the deliberate dump I/O frame from subsequent performance metrics.
+
+## v3.0-E7
+
+- Added Old 3DS fixed-color and subscreen component lookup tables, skipped
+  subscreen drawing when no visible main pixel uses color math, and processed
+  opaque tile rows with aligned ARMv6 paired priority operations.
+- Fixed palette-cache invalidation for direct NMI palette uploads.
+- Preconverted opaque bottom-screen maps and backgrounds to RGB565 on Old
+  3DS, avoiding repeated conversion during software scaling. Alpha sprites
+  retain ARGB8888 and nearest sampling.
+- Fixed the stray horizontal line inside selected item borders at reduced UI
+  scale. The shared rounded-rectangle fix also covers gear slots, menu boxes,
+  settings, tabs and confirmation buttons.
+- Numbered new dumps `001`, `002`, `003`, continuing after restart without
+  overwriting existing folders; legacy timestamped dumps remain loadable.
+- Added 120 recent frame samples, PPU worker/join timings, GPU submission
+  timings, audio queue/refill diagnostics, scene/register information, CGRAM,
+  OAM, priority buffers, bottom-UI diagnostics and a capture manifest.
+
+Full-resolution rendering remains enabled. E7's 60 FPS target on Old 3DS
+requires hardware validation; no emulator or host benchmark establishes it.

@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <assert.h>
 #include "ppu.h"
+#include "ppu_bg_span.h"
 #include "src/types.h"
 
 static const uint8 kSpriteSizes[8][2] = {
@@ -53,9 +54,18 @@ void ppu_free(Ppu* ppu) {
   free(ppu);
 }
 
+void PpuUpdateCgram(Ppu *ppu, const uint16_t *colors) {
+  if (memcmp(ppu->cgram, colors, sizeof(ppu->cgram)) == 0)
+    return;
+  memcpy(ppu->cgram, colors, sizeof(ppu->cgram));
+  ppu->colorMapDirty = true;
+  ppu->fixedMathValid = false;
+}
+
 void ppu_reset(Ppu* ppu) {
   memset(ppu->vram, 0, sizeof(ppu->vram));
   ppu->lastBrightnessMult = 0xff;
+  ppu->subscreenMathKey = 0xff;
   ppu->lastMosaicModulo = 0xff;
   ppu->extraLeftCur = 0;
   ppu->extraRightCur = 0;
@@ -69,6 +79,7 @@ void ppu_reset(Ppu* ppu) {
   ppu->cgramPointer = 0;
   ppu->cgramSecondWrite = false;
   ppu->colorMapDirty = true;
+  ppu->fixedMathValid = false;
   ppu->cgramBuffer = 0;
   memset(ppu->oam, 0, sizeof(ppu->oam));
   ppu->oamAdr = 0;
@@ -127,7 +138,9 @@ void ppu_saveload(Ppu *ppu, SaveLoadFunc *func, void *ctx) {
   func(ctx, &ppu->cgram, 512);
   func(ctx, tmp, 556);
   ppu->lastBrightnessMult = 0xff;
+  ppu->subscreenMathKey = 0xff;
   ppu->colorMapDirty = true;
+  ppu->fixedMathValid = false;
   func(ctx, tmp, 520);
   for (int i = 0; i < 4; i++) {
     func(ctx, tmp, 4);
@@ -154,6 +167,7 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
     uint8_t ppu_brightness = ppu->brightness;
     ppu->lastBrightnessMult = ppu_brightness;
     ppu->colorMapDirty = true;
+    ppu->fixedMathValid = false;
     for (int i = 0; i < 32; i++)
       ppu->brightnessMultHalf[i * 2] = ppu->brightnessMultHalf[i * 2 + 1] = ppu->brightnessMult[i] =
       ((i << 3) | (i >> 2)) * ppu_brightness / 15;
@@ -162,6 +176,7 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   }
 
   if (ppu->colorMapDirty) {
+    ppu->fixedMathValid = false;
     ppu->colorMapDirty = false;
     for (int i = 0; i < 256; i++) {
       uint32 color = ppu->cgram[i];
@@ -399,7 +414,9 @@ static void PpuDrawBackground_4bpp(Ppu *ppu, uint y, bool sub, uint layer, PpuZb
       uint32 pixels = READ_PIXELS(ta, tile & 0x3ff);
       if (pixels) {
         z += ((tile & 0x1c00) >> kPaletteShift);
-        if (tile & 0x4000) {
+        if ((ppu->renderFlags & kPpuRenderFlags_Old3DS) && PpuRowIsOpaque(pixels)) {
+          PpuDrawOpaqueBgRow(dstz, pixels, z, (tile & 0x4000) != 0);
+        } else if (tile & 0x4000) {
           DO_PIXEL(0); DO_PIXEL(1); DO_PIXEL(2); DO_PIXEL(3);
           DO_PIXEL(4); DO_PIXEL(5); DO_PIXEL(6); DO_PIXEL(7);
         } else {
@@ -498,7 +515,9 @@ static void PpuDrawBackground_2bpp(Ppu *ppu, uint y, bool sub, uint layer, PpuZb
       uint32 pixels = READ_PIXELS(ta, tile & 0x3ff);
       if (pixels & 0x33333333) {
         z += ((tile & 0x1c00) >> kPaletteShift);
-        if (tile & 0x4000) {
+        if ((ppu->renderFlags & kPpuRenderFlags_Old3DS) && PpuRowIsOpaque((pixels & 0x33333333u))) {
+          PpuDrawOpaqueBgRow(dstz, (pixels & 0x33333333u), z, (tile & 0x4000) != 0);
+        } else if (tile & 0x4000) {
           DO_PIXEL(0); DO_PIXEL(1); DO_PIXEL(2); DO_PIXEL(3);
           DO_PIXEL(4); DO_PIXEL(5); DO_PIXEL(6); DO_PIXEL(7);
         } else {
@@ -928,6 +947,113 @@ static inline void PpuWriteMappedSpan(
   }
 }
 
+// Fixed color math is a function of CGRAM and a handful of registers, not
+// screen position. Keep it out of the pixel loop (especially dark interiors).
+static uint32 PpuFixedMathColor(Ppu *ppu, uint32 color, bool halve) {
+  int r = color & 31, g = (color >> 5) & 31, b = (color >> 10) & 31;
+  if (ppu->subtractColor) {
+    r = IntMax(r - ppu->fixedColorR, 0);
+    g = IntMax(g - ppu->fixedColorG, 0);
+    b = IntMax(b - ppu->fixedColorB, 0);
+  } else {
+    r += ppu->fixedColorR;
+    g += ppu->fixedColorG;
+    b += ppu->fixedColorB;
+  }
+  const uint8 *map = halve ? ppu->brightnessMultHalf : ppu->brightnessMult;
+  return map[b] | map[g] << 8 | map[r] << 16;
+}
+
+static void PpuPrepareFixedMath(Ppu *ppu) {
+  // A subscreen backdrop uses fixed color WITHOUT halving, even when the
+  // half flag is set. Do not conflate it with a real subscreen color.
+  bool halve = ppu->halfColor && !ppu->addSubscreen;
+  uint32 key = ppu->fixedColorR | ppu->fixedColorG << 5 |
+    ppu->fixedColorB << 10 | halve << 15 | ppu->subtractColor << 16 |
+    ppu->lastBrightnessMult << 17;
+  if (ppu->fixedMathValid && ppu->fixedMathKey == key)
+    return;
+  for (uint i = 0; i < 256; i++)
+    ppu->fixedMathRgb[i] = PpuFixedMathColor(ppu, ppu->cgram[i], halve);
+  ppu->fixedMathBlack = PpuFixedMathColor(ppu, 0, halve);
+  ppu->fixedMathKey = key;
+  ppu->fixedMathValid = true;
+}
+
+// A screen may be enabled in TS yet contribute to no visible main pixel.
+// The graveyard capture, for example, enables math only for backdrop.
+static bool PpuLineUsesMath(Ppu *ppu, uint32 mask) {
+  const PpuZbufType *p = ppu->bgBuffers[0].data +
+    kPpuExtraLeftRight - ppu->extraLeftCur;
+  const PpuZbufType *end = p + 256 + ppu->extraLeftCur + ppu->extraRightCur;
+  while (p != end) {
+    if (mask & (1u << ((*p++ >> 8) & 15)))
+      return true;
+  }
+  return false;
+}
+
+static void PpuWriteFixedMathSpan(Ppu *ppu, uint32 *dst,
+                                 const PpuZbufType *src, uint32 count,
+                                 uint32 mask, bool unclipped) {
+  if (unclipped) {
+    while (count--) {
+      uint32 pixel = *src++;
+      *dst++ = (mask & (1u << ((pixel >> 8) & 15))) ?
+        ppu->fixedMathRgb[pixel & 255] : ppu->colorMapRgb[pixel & 255];
+    }
+  } else {
+    uint32 black = ppu->fixedMathBlack;
+    while (count--) {
+      uint32 pixel = *src++;
+      *dst++ = (mask & (1u << ((pixel >> 8) & 15))) ? black : 0;
+    }
+  }
+}
+
+// One 1 KiB table evaluates a pair of 5-bit components, including clamp,
+// half-color rounding and brightness. Rebuilt only on math/brightness changes.
+static void PpuPrepareSubscreenMath(Ppu *ppu) {
+  uint8 key = ppu->lastBrightnessMult | ppu->halfColor << 4 |
+    ppu->subtractColor << 5;
+  if (ppu->subscreenMathKey == key)
+    return;
+  const uint8 *map = ppu->halfColor ? ppu->brightnessMultHalf : ppu->brightnessMult;
+  for (uint b = 0; b < 32; b++) {
+    for (uint a = 0; a < 32; a++) {
+      uint component = ppu->subtractColor ? (a >= b ? a - b : 0) : a + b;
+      ppu->subscreenMath[a | b << 5] = map[component];
+    }
+  }
+  ppu->subscreenMathKey = key;
+}
+
+static void PpuWriteSubscreenMathSpan(Ppu *ppu, uint32 *dst, uint32 left,
+                                     uint32 right, uint32 mask, bool unclipped) {
+  PpuPrepareFixedMath(ppu);
+  PpuPrepareSubscreenMath(ppu);
+  const uint8 *map = ppu->subscreenMath;
+  for (uint i = left; i < right; i++) {
+    uint32 pixel = ppu->bgBuffers[0].data[i];
+    uint32 index = pixel & 255;
+    if (!(mask & (1u << ((pixel >> 8) & 15)))) {
+      *dst++ = unclipped ? ppu->colorMapRgb[index] : 0;
+      continue;
+    }
+    uint32 sub_index = ppu->bgBuffers[1].data[i] & 255;
+    if (sub_index == 0) {
+      *dst++ = unclipped ? ppu->fixedMathRgb[index] : ppu->fixedMathBlack;
+      continue;
+    }
+    uint32 color = unclipped ? ppu->cgram[index] : 0;
+    uint32 color2 = ppu->cgram[sub_index];
+    uint32 r = map[(color & 31) | ((color2 & 31) << 5)];
+    uint32 g = map[((color >> 5) & 31) | (color2 & 0x3e0)];
+    uint32 b = map[((color >> 10) & 31) | ((color2 >> 5) & 0x3e0)];
+    *dst++ = b | g << 8 | r << 16;
+  }
+}
+
 static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   if (ppu->forcedBlank) {
     uint8 *dst = &ppu->renderBuffer[(y - 1) * ppu->renderPitch];
@@ -954,6 +1080,13 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
 
   // The 6:th bit is automatically zero, math is never applied to the first half of the sprites.
   uint32 math_enabled = ppu->mathEnabled;
+  // E6 refreshes its normal palette at BeginDrawing. Mid-frame CGRAM writes
+  // therefore require the original path until the next palette refresh.
+  bool old3ds = (ppu->renderFlags & kPpuRenderFlags_Old3DS) != 0 &&
+    !ppu->colorMapDirty;
+  if (old3ds && math_enabled && ppu->preventMathMode != 3 &&
+      !PpuLineUsesMath(ppu, math_enabled))
+    math_enabled = 0;
 
   // Render also the subscreen?
   bool rendered_subscreen = false;
@@ -1002,6 +1135,15 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
                            ppu->colorMapRgb);
         dst += count;
       }
+    } else if (old3ds && !rendered_subscreen) {
+      PpuPrepareFixedMath(ppu);
+      PpuWriteFixedMathSpan(ppu, dst, &ppu->bgBuffers[0].data[left],
+                            right - left, math_enabled_cur, clip_color_mask != 0);
+      dst += right - left;
+    } else if (old3ds) {
+      PpuWriteSubscreenMathSpan(ppu, dst, left, right, math_enabled_cur,
+                                clip_color_mask != 0);
+      dst += right - left;
     } else {
       uint8 *half_color_map = ppu->halfColor ? ppu->brightnessMultHalf : ppu->brightnessMult;
       // Store this in locals
@@ -1584,6 +1726,7 @@ void ppu_write(Ppu* ppu, uint8_t adr, uint8_t val) {
       } else {
         ppu->cgram[ppu->cgramPointer++] = (val << 8) | ppu->cgramBuffer;
         ppu->colorMapDirty = true;
+        ppu->fixedMathValid = false;
       }
       ppu->cgramSecondWrite = !ppu->cgramSecondWrite;
       break;

@@ -20,6 +20,7 @@
 #include "types.h"
 #include "util.h"
 #include "zelda_rtl.h"
+#include "snes/ppu.h"
 
 extern void SecondScreenSDL_OpenDeveloperOverlay(void);
 
@@ -59,6 +60,46 @@ static bool g_model_detected;
 static bool g_irrst_initialized;
 static bool g_core1_time_enabled;
 static int g_core1_time_limit_percent;
+// Last 120 presented-frame samples: scene-local evidence, without old menu,
+// loading or diagnostic-I/O outliers dominating a session-wide average.
+enum { kRecentFrameCount = 120 };
+typedef struct RecentFrameTiming {
+  uint32_t ppu, work, interval;
+  uint32_t logic, present, bottom, scheduled, executed;
+  uint32_t ppu_main, ppu_worker, ppu_join, split;
+  uint32_t gpu_begin, top_transfer, gpu_end;
+} RecentFrameTiming;
+static uint32_t g_last_gpu_begin_us, g_last_top_transfer_us, g_last_gpu_end_us;
+static RecentFrameTiming g_recent_frames[kRecentFrameCount];
+static uint32_t g_recent_count, g_recent_next, g_recent_over_budget;
+static uint64_t g_recent_ppu_us, g_recent_work_us, g_recent_interval_us;
+
+static void RecordRecentFrame(uint32_t ppu, uint32_t work, uint32_t interval,
+                              uint32_t logic, uint32_t present, uint32_t bottom,
+                              int scheduled, int executed) {
+  if (interval == 0) return;
+  RecentFrameTiming *old = &g_recent_frames[g_recent_next];
+  g_recent_ppu_us -= old->ppu;
+  g_recent_work_us -= old->work;
+  g_recent_interval_us -= old->interval;
+  g_recent_over_budget -= old->work > 16667;
+  *old = (RecentFrameTiming){.ppu = ppu, .work = work, .interval = interval,
+    .logic = logic, .present = present, .bottom = bottom,
+    .scheduled = scheduled, .executed = executed,
+    .gpu_begin = g_last_gpu_begin_us, .top_transfer = g_last_top_transfer_us,
+    .gpu_end = g_last_gpu_end_us};
+  int split = 0;
+  ZeldaGetPpuWorkerStats(&split, &old->ppu_main, &old->ppu_worker);
+  old->split = split;
+  old->ppu_join = ZeldaGetPpuJoinTimeUs();
+  g_recent_ppu_us += ppu;
+  g_recent_work_us += work;
+  g_recent_interval_us += interval;
+  g_recent_over_budget += work > 16667;
+  if (g_recent_count < kRecentFrameCount) g_recent_count++;
+  g_recent_next = (g_recent_next + 1) % kRecentFrameCount;
+}
+
 static uint64_t g_frame_timing_samples;
 static uint64_t g_top_work_total_us;
 static uint64_t g_total_work_total_us;
@@ -156,7 +197,9 @@ static void Platform3DS_EndGpuFrame(void) {
   C2D_Flush();
   bool clean = g_c2d_flush_base && g_c2d_flush_size &&
     Platform3DS_CleanDataCache(g_c2d_flush_base, g_c2d_flush_size);
+  uint64_t end_start = svcGetSystemTick();
   C3D_FrameEnd(clean ? GX_CMDLIST_FLUSH : 0);
+  g_last_gpu_end_us = (uint32_t)((svcGetSystemTick() - end_start) * 1000000ull / SYSCLOCK_ARM11);
 }
 
 /* C2D_TargetClear also clears depth. E4 render targets intentionally omit a
@@ -791,6 +834,9 @@ bool Platform3DS_InitTopPresenter(void) {
       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
   g_gpu_presenter_initialized = true;
 
+  memset(g_recent_frames, 0, sizeof(g_recent_frames));
+  g_recent_count = g_recent_next = g_recent_over_budget = 0;
+  g_recent_ppu_us = g_recent_work_us = g_recent_interval_us = 0;
   g_frame_timing_samples = 0;
   g_top_work_total_us = 0;
   g_total_work_total_us = 0;
@@ -967,8 +1013,12 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
       height <= 0 || height > kTopTextureHeight)
     return;
 
-  if (!C3D_FrameBegin(0))
-    return;
+  g_last_top_transfer_us = g_last_gpu_end_us = 0;
+  uint64_t begin_start = svcGetSystemTick();
+  bool began = C3D_FrameBegin(0);
+  g_last_gpu_begin_us = (uint32_t)((svcGetSystemTick() - begin_start) * 1000000ull / SYSCLOCK_ARM11);
+  if (!began) return;
+  uint64_t transfer_start = svcGetSystemTick();
   g_gpu_frame_active = true;
   Platform3DS_CleanDataCache(
     pixels, kTopTextureWidth * kTopTextureHeight * sizeof(uint32_t));
@@ -983,6 +1033,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
       GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
 
+  g_last_top_transfer_us = (uint32_t)((svcGetSystemTick() - transfer_start) * 1000000ull / SYSCLOCK_ARM11);
   const bool stretch = g_display_mode == kPlatform3DSDisplayStretch;
   const bool wide = g_display_mode == kPlatform3DSDisplayUltraWideMod;
   static const float zoom_values[5] = { 1.0f, 1.2f, 1.5f, 2.0f, 2.5f };
@@ -1153,6 +1204,10 @@ void Platform3DS_RecordFrameTiming(uint32_t logic_work_us,
     g_ignore_next_frame_timing = false;
     return;
   }
+  if (!g_is_new_3ds)
+    RecordRecentFrame(ppu_draw_us, total_work_us, render_interval_us,
+                      logic_work_us, present_us, bottom_work_us,
+                      scheduled_logic_frames, executed_logic_frames);
   g_frame_timing_samples++;
   g_logic_work_total_us += logic_work_us;
   g_top_draw_total_us += top_draw_us;
@@ -3274,29 +3329,9 @@ static void MakeTimestamp(char *stamp, size_t stamp_size) {
 }
 
 bool Platform3DS_CreateDumpDirectory(char *out, size_t out_size) {
-  if (!out || out_size == 0)
-    return false;
-  if (!EnsureDirectory("dumps")) {
-    Platform3DS_LogRuntime("Dump directory create failed: dumps");
-    return false;
-  }
-  char stamp[32];
-  MakeTimestamp(stamp, sizeof(stamp));
-  for (int attempt = 0; attempt < 100; attempt++) {
-    if (attempt == 0)
-      snprintf(out, out_size, "dumps/dump-%s", stamp);
-    else
-      snprintf(out, out_size, "dumps/dump-%s-%02d", stamp, attempt);
-    if (mkdir(out, 0777) == 0) {
-      Platform3DS_LogRuntime("Dump session directory: %s", out);
-      return true;
-    }
-    if (errno != EEXIST)
-      break;
-  }
-  Platform3DS_LogRuntime("Dump session directory create failed");
-  out[0] = 0;
-  return false;
+  bool ok = DumpState_CreateDirectory("dumps", out, out_size);
+  Platform3DS_LogRuntime("Dump session directory: %s", ok ? out : "FAILED");
+  return ok;
 }
 
 static void ReadDisplayedPixel(const uint8_t *pixel,
@@ -3476,6 +3511,108 @@ static const char *DisplayedFramebufferFormatName(uint32_t format) {
   }
 }
 
+extern void Zelda3_N3DSAudioGetStats(uint32_t values[16]);
+extern bool SecondScreenSDL_WriteDiagnostics(const char *directory);
+
+static bool CloseDiagnosticFile(FILE *file) {
+  bool ok = !ferror(file);
+  return fclose(file) == 0 && ok;
+}
+
+static bool WriteExtendedDiagnostics(const char *directory) {
+  char path[256];
+  uint32_t audio[16];
+  Zelda3_N3DSAudioGetStats(audio);
+  snprintf(path, sizeof(path), "%s/audio.txt", directory);
+  FILE *f = fopen(path, "wb");
+  bool ok = f != NULL;
+  if (f) {
+    fprintf(f, "Audio diagnostic schema: 1\nActive: %lu\n", (unsigned long)audio[0]);
+    fprintf(f, "Rate: %lu Hz; samples/buffer: %lu; channels: %lu; buffers: %lu; SDL format: 0x%04lx\n",
+            (unsigned long)audio[1], (unsigned long)audio[2], (unsigned long)audio[3],
+            (unsigned long)audio[4], (unsigned long)audio[15]);
+    fprintf(f, "Queue at capture: queued=%lu playing=%lu free=%lu\n",
+            (unsigned long)audio[5], (unsigned long)audio[6], (unsigned long)audio[7]);
+    fprintf(f, "Refill samples: %lu; average/last/max wall span: %lu/%lu/%lu us\n",
+            (unsigned long)audio[8], (unsigned long)audio[9], (unsigned long)audio[10], (unsigned long)audio[11]);
+    fprintf(f, "Empty queue transitions while unpaused: %lu\nWorker priority: 0x%02lx\nCache mode: %lu (1=SVC, 2=DSP fallback)\n",
+            (unsigned long)audio[12], (unsigned long)audio[13], (unsigned long)audio[14]);
+    fprintf(f, "Refill wall span includes callback work and thread preemption; it is not CPU-only time.\n"
+               "Queue paused for dump: %d; previously paused: %d. Empty-queue transitions are observations, not an audible-glitch count.\n",
+            g_dump_audio_pause_active, g_dump_audio_was_paused);
+    ok = CloseDiagnosticFile(f) && ok;
+  }
+
+  snprintf(path, sizeof(path), "%s/frame-times.csv", directory);
+  f = fopen(path, "wb");
+  if (!f) ok = false;
+  else {
+    fputs("sample,logic_us,ppu_us,present_us,bottom_submit_us,total_work_us,interval_us,logic_scheduled,logic_executed,ppu_main_us,ppu_worker_us,ppu_join_us,split_line,gpu_begin_us,top_clean_transfer_us,gpu_end_us\n", f);
+    unsigned first = (g_recent_next + kRecentFrameCount - g_recent_count) % kRecentFrameCount;
+    for (unsigned i = 0; i < g_recent_count; i++) {
+      const RecentFrameTiming *v = &g_recent_frames[(first + i) % kRecentFrameCount];
+      fprintf(f, "%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n", i + 1,
+              (unsigned long)v->logic, (unsigned long)v->ppu, (unsigned long)v->present,
+              (unsigned long)v->bottom, (unsigned long)v->work, (unsigned long)v->interval,
+              (unsigned long)v->scheduled, (unsigned long)v->executed,
+              (unsigned long)v->ppu_main, (unsigned long)v->ppu_worker, (unsigned long)v->ppu_join,
+              (unsigned long)v->split, (unsigned long)v->gpu_begin,
+              (unsigned long)v->top_transfer, (unsigned long)v->gpu_end);
+    }
+    ok = CloseDiagnosticFile(f) && ok;
+  }
+
+  Ppu *p = g_zenv.ppu;
+  snprintf(path, sizeof(path), "%s/ppu.txt", directory);
+  f = fopen(path, "wb");
+  if (!f || !p) { if (f) fclose(f); ok = false; }
+  else {
+    fputs("PPU diagnostic schema: 1\nPhase: current post-render registers; not a per-scanline HDMA trace.\n"
+          "Binary data: little-endian u16 CGRAM/OAM/priority buffers. RAM and VRAM are in ram.bin/vram.bin.\n"
+          "Priority buffers describe the final main-thread scanline, not a complete frame.\n", f);
+    fprintf(f, "mode=%u brightness=%u forced_blank=%u render_flags=0x%02x pitch=%lu\n",
+            p->mode, p->brightness, p->forcedBlank, p->renderFlags, (unsigned long)p->renderPitch);
+    fprintf(f, "side_space configured/left/right/bottom=%u/%u/%u/%u obj_x_offset=%d\n",
+            p->extraLeftRight, p->extraLeftCur, p->extraRightCur, p->extraBottomCur, p->renderObjXOffset);
+    fprintf(f, "TM=%02x TS=%02x TMW=%02x TSW=%02x mosaic_size=%u mosaic_enabled=%02x\n",
+            p->screenEnabled[0], p->screenEnabled[1], p->screenWindowed[0], p->screenWindowed[1],
+            p->mosaicSize, p->mosaicEnabled);
+    fprintf(f, "math_enabled=%02x clip=%u prevent=%u subscreen=%u subtract=%u half=%u fixed_rgb5=%u,%u,%u\n",
+            p->mathEnabled, p->clipMode, p->preventMathMode, p->addSubscreen, p->subtractColor,
+            p->halfColor, p->fixedColorR, p->fixedColorG, p->fixedColorB);
+    fprintf(f, "windowsel=%06lx W1=%u,%u W2=%u,%u extended_window=%u current_ext=%d,%d\n",
+            (unsigned long)p->windowsel, p->window1left, p->window1right, p->window2left,
+            p->window2right, p->windowExtLeft != NULL, p->windowExtLeftCur, p->windowExtRightCur);
+    fprintf(f, "OBJ bases=%04x,%04x size=%u\n", p->objTileAdr1, p->objTileAdr2, p->objSize);
+    for (unsigned i = 0; i < 4; i++) {
+      const BgLayer *b = &p->bgLayer[i];
+      fprintf(f, "BG%u scroll=%u,%u map=%04x tiles=%04x wider=%u higher=%u\n",
+              i + 1, b->hScroll, b->vScroll, b->tilemapAdr, b->tileAdr, b->tilemapWider, b->tilemapHigher);
+    }
+    fputs("Mode7 matrix:", f);
+    for (unsigned i = 0; i < 8; i++) fprintf(f, " %d", p->m7matrix[i]);
+    ZeldaWriteGameDiagnostics(f);
+    ok = CloseDiagnosticFile(f) && ok;
+    const struct { const char *name; const void *data; size_t size; } blobs[] = {
+      {"cgram.bin", p->cgram, sizeof(p->cgram)}, {"oam.bin", p->oam, sizeof(p->oam)},
+      {"ppu-main-priority.bin", &p->bgBuffers[0], sizeof(p->bgBuffers[0])},
+      {"ppu-sub-priority.bin", &p->bgBuffers[1], sizeof(p->bgBuffers[1])},
+    };
+    for (unsigned i = 0; i < sizeof(blobs) / sizeof(blobs[0]); i++) {
+      snprintf(path, sizeof(path), "%s/%s", directory, blobs[i].name);
+      ok = WriteBlob(path, blobs[i].data, blobs[i].size) && ok;
+    }
+  }
+  ok = SecondScreenSDL_WriteDiagnostics(directory) && ok;
+  // Snapshot optional context only when present; no ROM/assets are copied.
+  const char *context[] = {"runtime.log", "zelda3.ini"};
+  for (unsigned i = 0; i < 2; i++) if (IsRegularFile(context[i])) {
+    snprintf(path, sizeof(path), "%s/%s", directory, context[i]);
+    ok = CopyFileReplacing(context[i], path) && ok;
+  }
+  return ok;
+}
+
 bool Platform3DS_DumpMemory(const char *directory,
                             const uint8_t *ram, size_t ram_size,
                             const uint8_t *sram, size_t sram_size,
@@ -3506,7 +3643,19 @@ bool Platform3DS_DumpMemory(const char *directory,
   snprintf(path, sizeof(path), "%s/info.txt", directory);
   FILE *info = fopen(path, "wb");
   if (info) {
+    char captured_at[32]; MakeTimestamp(captured_at, sizeof(captured_at));
     fprintf(info, "Zelda 3DS v%s memory dump\n", ZELDA3_3DS_VERSION);
+    fprintf(info, "Dump schema: 2; captured at: %s; session: %s\n", captured_at, directory);
+    fprintf(info, "Active ROM profile ID: %08lx\n", (unsigned long)g_active_profile_id);
+    ZeldaWriteGameDiagnostics(info);
+    fprintf(info, "Display/camera/zoom/FPS overlay: %d/%d/%d/%d\n",
+            g_display_mode, g_wide_edge_mode, g_wide_zoom_index, g_show_fps);
+    fprintf(info, "Linear heap free: %lu bytes; VRAM free: %lu bytes\n",
+            (unsigned long)linearSpaceFree(), (unsigned long)vramSpaceFree());
+    fprintf(info, "Cache clean mode: %d (1=direct SVC, 2=GX fallback); C2D range: %lu bytes\n",
+            g_cache_clean_mode, (unsigned long)g_c2d_flush_size);
+    fprintf(info, "Citro3D last completed GPU draw: %.3f ms; CPU processing: %.3f ms; command usage: %.3f\n",
+            C3D_GetDrawingTime(), C3D_GetProcessingTime(), C3D_GetCmdBufUsage());
     fprintf(info, "RAM bytes: %lu\n", (unsigned long)ram_size);
     fprintf(info, "SRAM bytes: %lu\n", (unsigned long)sram_size);
     fprintf(info, "VRAM words: %lu\n", (unsigned long)vram_words);
@@ -3537,6 +3686,19 @@ bool Platform3DS_DumpMemory(const char *directory,
             load_state_ok ? "load-state.bin (validated)" : "unavailable");
     fprintf(info, "Display mode: %d\n", (int)g_display_mode);
     fprintf(info, "Top presenter: PICA200 RGB565\n");
+    if (!g_is_new_3ds) {
+      fprintf(info, "Old 3DS PPU: E7 fixed/subscreen color tables, visible-math culling, ARMv6 opaque spans\n");
+      fprintf(info, "Old 3DS opaque UI textures: preconverted RGB565\n");
+      fprintf(info, "Recent frame samples: %lu (maximum 120)\n", (unsigned long)g_recent_count);
+      if (g_recent_count) {
+        fprintf(info, "Recent average PPU draw: %lu us\n", (unsigned long)(g_recent_ppu_us / g_recent_count));
+        fprintf(info, "Recent average total frame work: %lu us\n", (unsigned long)(g_recent_work_us / g_recent_count));
+        fprintf(info, "Recent work frames over 16.67 ms: %lu/%lu\n",
+                (unsigned long)g_recent_over_budget, (unsigned long)g_recent_count);
+        fprintf(info, "Recent presentation rate: %.2f Hz\n",
+                g_recent_interval_us ? 1000000.0 * g_recent_count / g_recent_interval_us : 0.0);
+      }
+    }
     fprintf(info, "Top software pixel path: BGRX8888\n");
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",
@@ -3680,11 +3842,13 @@ bool Platform3DS_DumpMemory(const char *directory,
       fprintf(info, "Turbo speed: x%d\n", g_turbo_multiplier);
     else
       fprintf(info, "Turbo speed: off\n");
-    if (fclose(info) != 0)
+    if (!CloseDiagnosticFile(info))
       ok = false;
   } else {
     ok = false;
   }
+
+  ok = WriteExtendedDiagnostics(directory) && ok;
 
   Platform3DS_LogRuntime("Memory dump %s: %s", directory,
                          ok ? "OK" : "FAILED");

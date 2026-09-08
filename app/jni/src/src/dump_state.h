@@ -16,6 +16,10 @@ typedef enum ZeldaDumpStateResult {
   kZeldaDumpStateIoError,
 } ZeldaDumpStateResult;
 
+bool DumpState_WriteManifest(const char *directory, bool capture_complete);
+
+bool DumpState_CreateDirectory(const char *root, char *out, size_t out_size);
+
 bool DumpState_WriteFile(const char *path, uint32_t profile_id,
                          const void *payload, size_t payload_size);
 ZeldaDumpStateResult DumpState_ReadLatest(const char *dumps_directory,

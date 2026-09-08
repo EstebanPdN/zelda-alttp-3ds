@@ -43,6 +43,8 @@ enum Platform3DSCStickMode {
 #include "../../dump_state.h"
 #include "../../second_screen_tables.h"  // kIconCount/kIconCols/kGlyphCount/kGlyphCols
 #include "ss_sheets.h"             // generated cell indices for icons/glyphs/letters
+#include "second_screen_texture.h"
+#include "second_screen_shapes.h"
 #include "ss_textures.h"           // baked theme background tiles (menu/parchment/stone)
 
 #ifndef ZELDA3_3DS_VERSION
@@ -278,6 +280,10 @@ static void draw_frame(float x, float y, float w, float h, float t, uint32_t c) 
 }
 // rounded-rect fill; nested insets give rounded borders
 static void fill_round(float x, float y, float w, float h, float rad, uint32_t c) {
+#ifdef __3DS__
+  set_color(c);
+  SecondScreenFillRound(ss_r, x, y, w, h, rad);
+#else
   if (rad > w / 2) rad = w / 2;
   if (rad > h / 2) rad = h / 2;
   set_color(c);
@@ -291,6 +297,7 @@ static void fill_round(float x, float y, float w, float h, float rad, uint32_t c
     SDL_RenderFillRectF(ss_r, &t);
     SDL_RenderFillRectF(ss_r, &b);
   }
+#endif
 }
 static void fill_circle(float cx, float cy, float r, uint32_t c) {
   set_color(c);
@@ -468,12 +475,11 @@ static void slot_bg(float x, float y, float size) {
 
 // textures from second_screen.c buffers
 static SDL_Texture *make_tex(int w, int h, const void *px, bool blend) {
-  SDL_Texture *t = SDL_CreateTexture(ss_r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, w, h);
-  if (!t) return NULL;
-  SDL_UpdateTexture(t, NULL, px, w * 4);
-  SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
-  if (blend) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-  return t;
+  bool prefer_rgb565 = false;
+#ifdef __3DS__
+  prefer_rgb565 = !Platform3DS_IsNew3DS();
+#endif
+  return SecondScreenCreateTexture(ss_r, w, h, px, blend, prefer_rgb565);
 }
 
 // Tile a theme texture across r at 2x, clipped
@@ -2297,6 +2303,47 @@ void SecondScreenSDL_Update(int logic_frames) {
     ss_present_pixels[ss_front_buffer],
     bottom_buffer_pitch(), W, H);
   ss_frame_ready = false;
+}
+
+// Called on the main thread during the paused dump transaction. Do not read
+// worker-owned geometry or pixels while a redraw is in flight.
+bool SecondScreenSDL_WriteDiagnostics(const char *directory) {
+  char path[256];
+  snprintf(path, sizeof(path), "%s/bottom-ui.txt", directory);
+  FILE *f = fopen(path, "wb");
+  if (!f) return false;
+  fprintf(f, "Bottom UI schema: 1\nsize=%dx%d scale=%.6f format=%s pitch=%d\n",
+          W, H, u, ss_is_new_3ds ? "ARGB8888" : "RGB565", bottom_buffer_pitch());
+  fprintf(f, "enabled=%d tab=%d settings_remap=%d screen=%d developer=%d overlay=%d load_confirm=%d\n",
+          ss_enabled, tab, remap_mode, screen_mode, developer_mode,
+          developer_overlay_mode, load_confirm_mode);
+  fprintf(f, "worker_busy=%d sidebar_patch=%d front=%d worker_buffer=%d frame_ready=%d pending_redraw=0x%lx\n",
+          ss_worker_busy, ss_worker_sidebar_patch, ss_front_buffer, ss_worker_buffer,
+          ss_frame_ready, (unsigned long)__atomic_load_n(&ss_redraw_requests, __ATOMIC_ACQUIRE));
+  fprintf(f, "worker_priority idle/interactive=0x%lx/0x%lx interactive=%d\n",
+          (unsigned long)ss_worker_idle_priority, (unsigned long)ss_worker_interactive_priority,
+          ss_worker_interactive);
+  bool capture = !ss_worker_busy && ss_front_buffer >= 0 && ss_present_pixels[ss_front_buffer];
+  fprintf(f, "Source pixel capture: %s\n", capture ? "bottom-ui.raw; linear little-endian, 512x256 including padding" : "omitted (no stable front buffer)");
+  if (!ss_worker_busy) {
+    fprintf(f, "grid_x/y/cell=%.6f,%.6f,%.6f room=%d floor=%d palace=%d\n",
+            grid_x, grid_y, grid_cell, cur_room, cur_floor_now, cur_palace);
+    const RectFS rects[] = {map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_ring_r};
+    const char *names[] = {"map", "items_tab", "gear_tab", "map_tab", "settings_tab", "equipped_ring"};
+    for (unsigned i = 0; i < sizeof(rects) / sizeof(rects[0]); i++)
+      fprintf(f, "%s=%.6f,%.6f,%.6f,%.6f\n", names[i], rects[i].x, rects[i].y, rects[i].w, rects[i].h);
+  }
+  bool ok = !ferror(f);
+  ok = fclose(f) == 0 && ok;
+  if (capture) {
+    snprintf(path, sizeof(path), "%s/bottom-ui.raw", directory);
+    f = fopen(path, "wb");
+    if (!f) return false;
+    size_t size = (size_t)bottom_buffer_pitch() * k3DSBottomTextureHeight;
+    ok = fwrite(ss_present_pixels[ss_front_buffer], 1, size, f) == size && ok;
+    ok = fclose(f) == 0 && ok;
+  }
+  return ok;
 }
 
 void SecondScreenSDL_GetOld3DSWorkerStats(

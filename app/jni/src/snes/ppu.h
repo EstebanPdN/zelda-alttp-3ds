@@ -47,6 +47,8 @@ enum {
   kPpuRenderFlags_Height240 = 4,
   // Disable sprite render limits
   kPpuRenderFlags_NoSpriteLimits = 8,
+  // Full-resolution, E6-equivalent Old 3DS composition fast paths.
+  kPpuRenderFlags_Old3DS = 16,
 };
 
 
@@ -135,11 +137,20 @@ struct Ppu {
   PpuPixelPrioBufs bgBuffers[2];
   PpuPixelPrioBufs objBuffer;
   uint16_t vram[0x8000];
+  // Derived colors only; never serialized. Each PPU worker owns its copy.
+  uint32_t fixedMathRgb[256];
+  uint32_t fixedMathBlack;
+  uint32_t fixedMathKey;
+  bool fixedMathValid;
+  uint8_t subscreenMath[1024];
+  uint8_t subscreenMathKey;
+
 };
 
 Ppu* ppu_init();
 void ppu_free(Ppu* ppu);
 void ppu_reset(Ppu* ppu);
+void PpuUpdateCgram(Ppu *ppu, const uint16_t *colors);
 void ppu_handleVblank(Ppu* ppu);
 void ppu_runLine(Ppu* ppu, int line);
 uint8_t ppu_read(Ppu* ppu, uint8_t adr);
