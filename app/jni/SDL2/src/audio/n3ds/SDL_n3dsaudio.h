@@ -49,6 +49,7 @@ struct SDL_PrivateAudioData
     Uint32 refillCount, refillLastUs, refillMaxUs, emptyQueueEvents;
     Uint32 workerPriority;
     SDL_bool queueWasEmpty;
+    bool diagnosticsEnabled;
 };
 
 #endif /* _SDL_n3dsaudio_h_ */

@@ -1,3 +1,6 @@
+#ifdef __3DS__
+#include "platform_3ds.h"
+#endif
 #include "nmi.h"
 #include "zelda_rtl.h"
 #include "variables.h"
@@ -216,7 +219,12 @@ void NMI_DoUpdates() {  // 8089e0
   }
 
   if (flag_update_cgram_in_nmi) {
-    PpuUpdateCgram(g_zenv.ppu, main_palette_buffer);
+#ifdef __3DS__
+    if (Platform3DS_GetHardwareProfile()->live_palette_upload)
+      PpuUpdateCgram(g_zenv.ppu, main_palette_buffer);
+    else
+#endif
+      memcpy(g_zenv.ppu->cgram, main_palette_buffer, 0x200);
   }
 
   flag_update_hud_in_nmi = 0;

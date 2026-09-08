@@ -3,6 +3,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "hardware_profile.h"
+
+const Platform3DSHardwareProfile *Platform3DS_GetHardwareProfile(void);
 
 struct Config;
 

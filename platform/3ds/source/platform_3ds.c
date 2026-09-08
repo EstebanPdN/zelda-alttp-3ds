@@ -1,4 +1,5 @@
 #include "platform_3ds.h"
+#include "present_image.h"
 
 #include <3ds.h>
 #include <citro2d.h>
@@ -56,6 +57,9 @@ static volatile bool g_system_suspended;
 static char g_active_save_directory[512] = "saves";
 static uint32_t g_active_profile_id;
 static bool g_is_new_3ds;
+const Platform3DSHardwareProfile *Platform3DS_GetHardwareProfile(void) {
+  return Platform3DS_ProfileForModel(g_is_new_3ds);
+}
 static bool g_model_detected;
 static bool g_irrst_initialized;
 static bool g_core1_time_enabled;
@@ -135,6 +139,8 @@ static bool g_setup_console_active;
 static C3D_RenderTarget *g_top_target;
 static C3D_RenderTarget *g_bottom_target;
 static C3D_Tex g_top_texture;
+static const uint8_t *g_last_top_source;
+static int g_last_top_source_pitch, g_last_top_source_width, g_last_top_source_height;
 static C3D_Tex g_bottom_texture;
 static Tex3DS_SubTexture g_top_subtexture;
 static Tex3DS_SubTexture g_bottom_subtexture;
@@ -874,6 +880,7 @@ bool Platform3DS_InitTopPresenter(void) {
 }
 
 void Platform3DS_ShutdownTopPresenter(void) {
+  g_last_top_source = NULL;
   if (!g_gpu_presenter_initialized)
     return;
   Platform3DS_EndFrame();
@@ -898,46 +905,6 @@ void Platform3DS_ShutdownTopPresenter(void) {
     irrstExit();
     g_irrst_initialized = false;
   }
-}
-
-static void ConfigureArgbTextureEnv(void) {
-  C3D_TexEnv *env = C3D_GetTexEnv(0);
-  C3D_TexEnvInit(env);
-  C3D_TexEnvSrc(env, C3D_RGB, GPU_TEXTURE0, GPU_CONSTANT, GPU_PREVIOUS);
-  C3D_TexEnvOpRgb(env, GPU_TEVOP_RGB_SRC_G,
-                  GPU_TEVOP_RGB_SRC_COLOR,
-                  GPU_TEVOP_RGB_SRC_COLOR);
-  C3D_TexEnvFunc(env, C3D_RGB, GPU_MODULATE);
-  C3D_TexEnvSrc(env, C3D_Alpha, GPU_CONSTANT, GPU_CONSTANT, GPU_CONSTANT);
-  C3D_TexEnvFunc(env, C3D_Alpha, GPU_REPLACE);
-  C3D_TexEnvColor(env, C2D_Color32(255, 0, 0, 255));
-
-  env = C3D_GetTexEnv(1);
-  C3D_TexEnvInit(env);
-  C3D_TexEnvSrc(env, C3D_RGB, GPU_TEXTURE0, GPU_CONSTANT, GPU_PREVIOUS);
-  C3D_TexEnvOpRgb(env, GPU_TEVOP_RGB_SRC_B,
-                  GPU_TEVOP_RGB_SRC_COLOR,
-                  GPU_TEVOP_RGB_SRC_COLOR);
-  C3D_TexEnvFunc(env, C3D_RGB, GPU_MULTIPLY_ADD);
-  C3D_TexEnvColor(env, C2D_Color32(0, 255, 0, 255));
-
-  env = C3D_GetTexEnv(2);
-  C3D_TexEnvInit(env);
-  C3D_TexEnvSrc(env, C3D_RGB, GPU_TEXTURE0, GPU_CONSTANT, GPU_PREVIOUS);
-  C3D_TexEnvOpRgb(env, GPU_TEVOP_RGB_SRC_ALPHA,
-                  GPU_TEVOP_RGB_SRC_COLOR,
-                  GPU_TEVOP_RGB_SRC_COLOR);
-  C3D_TexEnvFunc(env, C3D_RGB, GPU_MULTIPLY_ADD);
-  C3D_TexEnvColor(env, C2D_Color32(0, 0, 255, 255));
-}
-
-static void ConfigureRgb565TextureEnv(void) {
-  C3D_TexEnv *env = C3D_GetTexEnv(0);
-  C3D_TexEnvInit(env);
-  C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, 0, 0);
-  C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
-  for (int i = 1; i < 3; i++)
-    C3D_TexEnvInit(C3D_GetTexEnv(i));
 }
 
 static const uint8_t *StatusGlyph(char c) {
@@ -1018,6 +985,10 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   bool began = C3D_FrameBegin(0);
   g_last_gpu_begin_us = (uint32_t)((svcGetSystemTick() - begin_start) * 1000000ull / SYSCLOCK_ARM11);
   if (!began) return;
+  g_last_top_source = pixels;
+  g_last_top_source_pitch = pitch;
+  g_last_top_source_width = width;
+  g_last_top_source_height = height;
   uint64_t transfer_start = svcGetSystemTick();
   g_gpu_frame_active = true;
   Platform3DS_CleanDataCache(
@@ -1090,10 +1061,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
 
   Platform3DS_ClearTarget(g_top_target, C2D_Color32(0, 0, 0, 255));
   C2D_SceneBegin(g_top_target);
-  // Select the texture environment before queuing geometry. This makes the
-  // batch self-consistent even if Citro2D has to flush at its object limit.
-  ConfigureArgbTextureEnv();
-  C2D_DrawImage(image, &params, NULL);
+  Platform3DS_DrawMappedImage(image, &params, ConfigureArgbTextureEnv);
   if (g_show_fps) {
     char label[28];
     snprintf(label, sizeof(label), "FPS %u", g_current_fps);
@@ -1165,11 +1133,8 @@ void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
   };
   Platform3DS_ClearTarget(g_bottom_target, C2D_Color32(0, 0, 0, 255));
   C2D_SceneBegin(g_bottom_target);
-  if (g_is_new_3ds)
-    ConfigureArgbTextureEnv();
-  else
-    ConfigureRgb565TextureEnv();
-  C2D_DrawImage(image, &params, NULL);
+  Platform3DS_DrawMappedImage(image, &params,
+    g_is_new_3ds ? ConfigureArgbTextureEnv : ConfigureRgb565TextureEnv);
 }
 
 void Platform3DS_EndFrame(void) {
@@ -3538,7 +3503,7 @@ static bool WriteExtendedDiagnostics(const char *directory) {
     fprintf(f, "Empty queue transitions while unpaused: %lu\nWorker priority: 0x%02lx\nCache mode: %lu (1=SVC, 2=DSP fallback)\n",
             (unsigned long)audio[12], (unsigned long)audio[13], (unsigned long)audio[14]);
     fprintf(f, "Refill wall span includes callback work and thread preemption; it is not CPU-only time.\n"
-               "Queue paused for dump: %d; previously paused: %d. Empty-queue transitions are observations, not an audible-glitch count.\n",
+               "Refill instrumentation is Old 3DS only. Queue paused for dump: %d; previously paused: %d. Empty-queue transitions are observations, not an audible-glitch count.\n",
             g_dump_audio_pause_active, g_dump_audio_was_paused);
     ok = CloseDiagnosticFile(f) && ok;
   }
@@ -3591,6 +3556,7 @@ static bool WriteExtendedDiagnostics(const char *directory) {
     }
     fputs("Mode7 matrix:", f);
     for (unsigned i = 0; i < 8; i++) fprintf(f, " %d", p->m7matrix[i]);
+    fputc('\n', f);
     ZeldaWriteGameDiagnostics(f);
     ok = CloseDiagnosticFile(f) && ok;
     const struct { const char *name; const void *data; size_t size; } blobs[] = {
@@ -3601,6 +3567,22 @@ static bool WriteExtendedDiagnostics(const char *directory) {
     for (unsigned i = 0; i < sizeof(blobs) / sizeof(blobs[0]); i++) {
       snprintf(path, sizeof(path), "%s/%s", directory, blobs[i].name);
       ok = WriteBlob(path, blobs[i].data, blobs[i].size) && ok;
+    }
+  }
+  // The frame source remains owned by the presenter until the next BeginDraw.
+  // Dumps run on the game thread before that point, with PPU workers joined.
+  if (g_last_top_source) {
+    snprintf(path, sizeof(path), "%s/top-source.raw", directory);
+    ok = WriteBlob(path, g_last_top_source,
+      (size_t)g_last_top_source_pitch * g_last_top_source_height) && ok;
+    snprintf(path, sizeof(path), "%s/top-source.txt", directory);
+    f = fopen(path, "wb");
+    if (!f) ok = false;
+    else {
+      fprintf(f, "CPU source of the last submitted top frame; linear BGRX8888 (little-endian 0x00RRGGBB).\n"
+                 "width=%d height=%d pitch=%d bytes\nPhysical capture may differ by one presentation.\n",
+              g_last_top_source_width, g_last_top_source_height, g_last_top_source_pitch);
+      ok = CloseDiagnosticFile(f) && ok;
     }
   }
   ok = SecondScreenSDL_WriteDiagnostics(directory) && ok;
@@ -3687,7 +3669,7 @@ bool Platform3DS_DumpMemory(const char *directory,
     fprintf(info, "Display mode: %d\n", (int)g_display_mode);
     fprintf(info, "Top presenter: PICA200 RGB565\n");
     if (!g_is_new_3ds) {
-      fprintf(info, "Old 3DS PPU: E7 fixed/subscreen color tables, visible-math culling, ARMv6 opaque spans\n");
+      fprintf(info, "Old 3DS PPU: E8 packed full-brightness half-add; fixed/subscreen tables; ARMv6 opaque spans\n");
       fprintf(info, "Old 3DS opaque UI textures: preconverted RGB565\n");
       fprintf(info, "Recent frame samples: %lu (maximum 120)\n", (unsigned long)g_recent_count);
       if (g_recent_count) {
@@ -3699,6 +3681,7 @@ bool Platform3DS_DumpMemory(const char *directory,
                 g_recent_interval_us ? 1000000.0 * g_recent_count / g_recent_interval_us : 0.0);
       }
     }
+    fprintf(info, "Hardware policy: %s\n", Platform3DS_GetHardwareProfile()->name);
     fprintf(info, "Top software pixel path: BGRX8888\n");
     fprintf(info, "Frame pacing: 60 Hz high-resolution timer\n");
     fprintf(info, "New 3DS speedup requested: %s\n",

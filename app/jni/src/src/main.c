@@ -633,7 +633,7 @@ restart_3ds_runtime:
                        g_config.extend_y * kPpuRenderFlags_Height240 |
                        g_config.no_sprite_limits * kPpuRenderFlags_NoSpriteLimits;
 #ifdef __3DS__
-  if (!Platform3DS_IsNew3DS())
+  if (Platform3DS_GetHardwareProfile()->old_ppu)
     g_ppu_render_flags |= kPpuRenderFlags_Old3DS;
 #endif
   ZeldaEnableMsu(g_config.enable_msu);

@@ -1,6 +1,6 @@
 # Changelog
 
-Concise cumulative history from v2.9 through v3.0-E7.
+Concise cumulative history from v2.9 through v3.0-E8.
 
 ## v2.9
 
@@ -92,3 +92,23 @@ The E4 cache strategy was adapted to this engine after studying
 
 Full-resolution rendering remains enabled. E7's 60 FPS target on Old 3DS
 requires hardware validation; no emulator or host benchmark establishes it.
+
+## v3.0-E8
+
+- Corrected the texture-environment submission order on both screens. Apply
+  the channel mapping after Citro2D's lazy image-mode update and immediately
+  flush the image before another texture, overlay or screen can change it.
+- Added explicit Old 3DS and New 3DS hardware policies. New 3DS restores E6
+  palette-upload and UI behavior and excludes Old PPU/UI/audio experiments.
+  New 3DS keeps its existing renderer, scheduler and cache strategy.
+- Added an Old-only packed full-brightness half-add path for rain composition,
+  preserving exact SNES rounding and output colors at full resolution.
+- Changed dump names to `000-dump-YYYYMMDD-HHMMSS`, `001-dump-...`, matching
+  the Mario Kart naming convention. Continue across restarts, recover the
+  counter from existing folders, and reset to zero for an empty collection.
+- Retained loading support for E7 numeric-only and older timestamped dumps.
+- Added the last submitted CPU top-image source and its format metadata to
+  dumps, so source colors can be compared with physical display captures.
+
+E8's hardware FPS and the reported New 3DS flicker require on-device retesting;
+local image/state tests do not establish console performance or stability.

@@ -281,9 +281,12 @@ static void draw_frame(float x, float y, float w, float h, float t, uint32_t c) 
 // rounded-rect fill; nested insets give rounded borders
 static void fill_round(float x, float y, float w, float h, float rad, uint32_t c) {
 #ifdef __3DS__
-  set_color(c);
-  SecondScreenFillRound(ss_r, x, y, w, h, rad);
-#else
+  if (Platform3DS_GetHardwareProfile()->integer_ui_rounding) {
+    set_color(c);
+    SecondScreenFillRound(ss_r, x, y, w, h, rad);
+    return;
+  }
+#endif
   if (rad > w / 2) rad = w / 2;
   if (rad > h / 2) rad = h / 2;
   set_color(c);
@@ -297,7 +300,6 @@ static void fill_round(float x, float y, float w, float h, float rad, uint32_t c
     SDL_RenderFillRectF(ss_r, &t);
     SDL_RenderFillRectF(ss_r, &b);
   }
-#endif
 }
 static void fill_circle(float cx, float cy, float r, uint32_t c) {
   set_color(c);
@@ -477,7 +479,7 @@ static void slot_bg(float x, float y, float size) {
 static SDL_Texture *make_tex(int w, int h, const void *px, bool blend) {
   bool prefer_rgb565 = false;
 #ifdef __3DS__
-  prefer_rgb565 = !Platform3DS_IsNew3DS();
+  prefer_rgb565 = Platform3DS_GetHardwareProfile()->rgb565_ui_textures;
 #endif
   return SecondScreenCreateTexture(ss_r, w, h, px, blend, prefer_rgb565);
 }

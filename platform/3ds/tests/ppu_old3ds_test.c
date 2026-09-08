@@ -16,6 +16,7 @@ void ref_ppu_saveload(Ppu *, SaveLoadFunc *, void *);
 void ref_PpuBeginDrawing(Ppu *, uint8_t *, size_t, uint32_t);
 
 enum { PITCH = 512, HEIGHT = 240, GUARD = 32 };
+static unsigned candidate_flags = kPpuRenderFlags_Old3DS;
 static uint32_t rng = 0x714a2bu;
 static uint32_t Random(void) {
   rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
@@ -132,13 +133,15 @@ static void LoadDump(Ppu *p, const char *directory) {
   // randomized suite separately exercises changing windows and math registers.
 }
 int main(int argc, char **argv) {
+  if (getenv("ZELDA_TEST_NEW_PROFILE")) candidate_flags = 0;
   unsigned scenes = argc > 1 ? (unsigned)strtoul(argv[1], NULL, 10) : 2048;
   Ppu *a = ref_ppu_init(), *b = ppu_init();
   const size_t words = PITCH * HEIGHT + 2 * GUARD;
   uint32_t *ra = malloc(words * 4), *rb = malloc(words * 4);
   if (!a || !b || !ra || !rb) return 2;
   uint32_t *oa = ra + GUARD, *ob = rb + GUARD;
-  PaletteUpdateTest(b, ob);
+  if (candidate_flags) PaletteUpdateTest(b, ob);
+  printf("PROFILE %s\n", candidate_flags ? "Old 3DS" : "New 3DS stable");
   uint64_t pixels = 0;
   for (unsigned s = 0; s < scenes; s++) {
     Setup(b, s); CopyState(a, b);
@@ -147,7 +150,7 @@ int main(int argc, char **argv) {
       const unsigned flags = kPpuRenderFlags_NewRenderer |
         (s & 2 ? kPpuRenderFlags_NoSpriteLimits : 0);
       ref_PpuBeginDrawing(a, (uint8_t *)oa, PITCH * 4, flags);
-      PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, flags | kPpuRenderFlags_Old3DS);
+      PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, flags | candidate_flags);
       // Full frames also test destination borders, 224/240 and Mode 7.
       for (int line = 1; line <= HEIGHT; line++) {
         // Register changes exercise cache invalidation and color/window math.
@@ -162,7 +165,7 @@ int main(int argc, char **argv) {
       }
       if (memcmp(ra, rb, words * 4)) {
         for (size_t i = 0; i < words; i++) if (ra[i] != rb[i]) {
-          fprintf(stderr, "FAIL scene=%u frame=%d word=%zu E6=%08x E7=%08x\n",
+          fprintf(stderr, "FAIL scene=%u frame=%d word=%zu E6=%08x E8=%08x\n",
                   s, frame, i, ra[i], rb[i]); break;
         }
         return 1;
@@ -197,7 +200,7 @@ int main(int argc, char **argv) {
     for (int variant = 0; variant < 2; variant++) {
       double begin = Now();
       for (int frame = 0; frame < 1000; frame++) {
-        if (variant) PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, 9 | 16);
+        if (variant) PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, 9 | candidate_flags);
         else ref_PpuBeginDrawing(a, (uint8_t *)oa, PITCH * 4, 9);
         for (int line = 1; line <= 224; line++) {
           if (variant) ppu_runLine(b, line); else ref_ppu_runLine(a, line);
@@ -207,7 +210,7 @@ int main(int argc, char **argv) {
       hashes[variant] = Hash(variant ? ob : oa, PITCH * 224);
     }
     if (hashes[0] != hashes[1]) return 1;
-    printf("HOST %-20s E6 %.3f ms E7 %.3f ms ratio %.3f hash %08x\n",
+    printf("HOST %-20s E6 %.3f ms E8 %.3f ms ratio %.3f hash %08x\n",
            names[scenario], times[0], times[1], times[1]/times[0], hashes[0]);
   }
   for (int dump = 2; dump < argc; dump++) {
@@ -217,7 +220,7 @@ int main(int argc, char **argv) {
     for (int v = 0; v < 2; v++) {
       double start = Now();
       for (int frame = 0; frame < 1000; frame++) {
-        if (v) PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, 9 | 16);
+        if (v) PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, 9 | candidate_flags);
         else ref_PpuBeginDrawing(a, (uint8_t *)oa, PITCH * 4, 9);
         for (int y = 1; y <= 224; y++) {
           if (v) ppu_runLine(b, y); else ref_ppu_runLine(a, y);
@@ -227,7 +230,7 @@ int main(int argc, char **argv) {
       hashes[v] = Hash(v ? ob : oa, PITCH * 224);
     }
     if (memcmp(ra, rb, words * 4)) { fputs("FAIL reconstructed dump parity\n", stderr); return 1; }
-    printf("DUMP %s E6 %.3f ms E7 %.3f ms ratio %.3f hash %08x (static reconstruction)\n",
+    printf("DUMP %s E6 %.3f ms E8 %.3f ms ratio %.3f hash %08x (static reconstruction)\n",
            argv[dump], times[0], times[1], times[1]/times[0], hashes[0]);
   }
   ref_ppu_free(a); ppu_free(b); free(ra); free(rb);

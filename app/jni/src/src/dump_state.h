@@ -18,6 +18,8 @@ typedef enum ZeldaDumpStateResult {
 
 bool DumpState_WriteManifest(const char *directory, bool capture_complete);
 
+bool DumpState_CreateDirectoryAt(const char *root, const char *stamp, char *out, size_t out_size);
+
 bool DumpState_CreateDirectory(const char *root, char *out, size_t out_size);
 
 bool DumpState_WriteFile(const char *path, uint32_t profile_id,
