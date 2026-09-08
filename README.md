@@ -35,11 +35,11 @@ https://discord.gg/SMW49UMkw
   profile and optionally show the current FPS on the top screen.
 - PICA200/Citro2D presentation for both screens with nearest-neighbor sampling
   and RGB565 display output.
-- Separate Old/New 3DS profiles. Local E12 adds a real PICA200 tile/sprite
-  renderer and SNES color compositor on Old 3DS, with startup pixel checks and
+- Separate Old/New 3DS profiles. Local E13 repairs startup validation for the PICA200
+  tile/sprite renderer and SNES color compositor on Old 3DS, with startup pixel checks and
   explicit per-frame CPU fallback. New keeps its established rendering policies;
   both models retain integer bottom-menu geometry. Console 60 FPS is a test target,
-  not a measured E12 result yet.
+  not a measured E13 result yet.
 - Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making
   game speed depend on when a VBlank wait returns.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
