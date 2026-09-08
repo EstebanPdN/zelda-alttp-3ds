@@ -10,13 +10,13 @@ import tempfile
 root = Path(__file__).resolve().parents[3]
 p = argparse.ArgumentParser()
 p.add_argument('--sanitize', action='store_true')
-p.add_argument('--reference', choices=['E6','E8'], default='E6')
+p.add_argument('--reference', choices=['E6','E8','E10'], default='E6')
 p.add_argument('--scenes', type=int, default=2048)
 p.add_argument('--dumps', nargs='*', default=[], type=Path)
 args = p.parse_args()
 with tempfile.TemporaryDirectory(prefix='lttp-e7-parity-') as directory:
     tmp = Path(directory)
-    commit = {'E6':'c166e5f6e89137db4918897afabbd09cae993c1a', 'E8':'bb10bf28c80821df7ee81d4b03588a8bf317e12b'}[args.reference]
+    commit = {'E6':'c166e5f6e89137db4918897afabbd09cae993c1a', 'E8':'bb10bf28c80821df7ee81d4b03588a8bf317e12b', 'E10':'ce53c44c724cfb1f1bfaa6a7a22faebc4fb014b2'}[args.reference]
     reference = subprocess.check_output(
         ['git', 'show', commit + ':app/jni/src/snes/ppu.c'], cwd=root).decode()
     test_source = (root / 'platform/3ds/tests/ppu_old3ds_test.c').read_text().replace('E6', args.reference)

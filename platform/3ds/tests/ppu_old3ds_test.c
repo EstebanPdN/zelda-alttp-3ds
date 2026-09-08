@@ -65,7 +65,10 @@ static void Setup(Ppu *p, unsigned scene) {
 }
 static void CopyState(Ppu *dst, const Ppu *src) {
   PpuTileCache *cache = dst->tileCache;
+  struct PpuRetainedMaps *retained = dst->retained;
+  bool attempted = dst->retainedAttempted;
   *dst = *src; dst->tileCache = cache;
+  dst->retained = retained; dst->retainedAttempted = attempted;
 }
 static double Now(void) {
   struct timespec t; timespec_get(&t, TIME_UTC);
@@ -150,6 +153,7 @@ int main(int argc, char **argv) {
   if (getenv("ZELDA_TEST_NEW_PROFILE")) candidate_flags = 0;
   unsigned scenes = argc > 1 ? (unsigned)strtoul(argv[1], NULL, 10) : 2048;
   Ppu *a = ref_ppu_init(), *b = ppu_init();
+  if (getenv("ZELDA_TEST_NO_RETAIN")) b->retainedAttempted = true;
   const size_t words = PITCH * HEIGHT + 2 * GUARD;
   uint32_t *ra = malloc(words * 4), *rb = malloc(words * 4);
   if (!a || !b || !ra || !rb) return 2;
@@ -167,6 +171,11 @@ int main(int argc, char **argv) {
       PpuBeginDrawing(b, (uint8_t *)ob, PITCH * 4, flags | candidate_flags);
       // Full frames also test destination borders, 224/240 and Mode 7.
       for (int line = 1; line <= HEIGHT; line++) {
+        if (s % 11 == 0 && (line == 99 || line == 199)) {
+          // A frame beginning in Mode 7 has no prepared Mode 1 cache.
+          uint8_t mode = line == 99 ? 0x09 : 0x07;
+          ref_ppu_write(a, 0x05, mode); ppu_write(b, 0x05, mode);
+        }
         // Register changes exercise cache invalidation and color/window math.
         if (line % 31 == 0) {
           const uint8_t regs[] = {0x21, 0x22, 0x22, 0x32, 0x31, 0x2d};
@@ -183,11 +192,28 @@ int main(int argc, char **argv) {
             ref_ppu_write(a, regs[r], v); ppu_write(b, regs[r], v);
           }
         }
+        if ((s & 16) && line == 101) {
+          // Live VRAM DMA-style writes must retire the retained plane for
+          // the rest of the frame, including on the copied worker PPU.
+          const uint8_t regs[] = {0x15, 0x16, 0x17, 0x18, 0x19};
+          for (unsigned r = 0; r < sizeof(regs); r++) {
+            uint8_t v = Random();
+            if (regs[r] == 0x15) v &= ~0x0c; // E10 supports linear VRAM access only.
+            ref_ppu_write(a, regs[r], v); ppu_write(b, regs[r], v);
+          }
+        }
+        if ((s & 32) && line == 131) {
+          const uint8_t regs[] = {0x07, 0x08, 0x09, 0x0b, 0x0c};
+          for (unsigned r = 0; r < sizeof(regs); r++) {
+            uint8_t v = Random();
+            ref_ppu_write(a, regs[r], v); ppu_write(b, regs[r], v);
+          }
+        }
         ref_ppu_runLine(a, line); ppu_runLine(b, line);
       }
       if (memcmp(ra, rb, words * 4)) {
         for (size_t i = 0; i < words; i++) if (ra[i] != rb[i]) {
-          fprintf(stderr, "FAIL scene=%u frame=%d word=%zu E6=%08x E9=%08x\n",
+          fprintf(stderr, "FAIL scene=%u frame=%d word=%zu E6=%08x E11=%08x\n",
                   s, frame, i, ra[i], rb[i]); break;
         }
         return 1;
@@ -232,7 +258,7 @@ int main(int argc, char **argv) {
       hashes[variant] = Hash(variant ? ob : oa, PITCH * 224);
     }
     if (hashes[0] != hashes[1]) return 1;
-    printf("HOST %-20s E6 %.3f ms E9 %.3f ms ratio %.3f hash %08x\n",
+    printf("HOST %-20s E6 %.3f ms E11 %.3f ms ratio %.3f hash %08x\n",
            names[scenario], times[0], times[1], times[1]/times[0], hashes[0]);
   }
   for (int dump = 2; dump < argc; dump++) {
@@ -252,8 +278,11 @@ int main(int argc, char **argv) {
       hashes[v] = Hash(v ? ob : oa, PITCH * 224);
     }
     if (memcmp(ra, rb, words * 4)) { fputs("FAIL reconstructed dump parity\n", stderr); return 1; }
-    printf("DUMP %s E6 %.3f ms E9 %.3f ms ratio %.3f hash %08x (static reconstruction)\n",
+    printf("DUMP %s E6 %.3f ms E11 %.3f ms ratio %.3f hash %08x (static reconstruction)\n",
            argv[dump], times[0], times[1], times[1]/times[0], hashes[0]);
+  }
+  if ((!candidate_flags || getenv("ZELDA_TEST_NO_RETAIN")) && b->retained) {
+    fputs("FAIL unexpected retained cache allocation\n", stderr); return 1;
   }
   ref_ppu_free(a); ppu_free(b); free(ra); free(rb);
   return 0;

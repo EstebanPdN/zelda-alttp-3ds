@@ -734,6 +734,12 @@ bool ZeldaGetPpuWorkerStats(int *split_line,
 }
 #endif
 
+#ifdef __3DS__
+static PpuPhaseProfile g_ppu_phase_main, g_ppu_phase_worker;
+static uint32 g_ppu_phase_scene;
+static int g_ppu_phase_split;
+#endif
+
 void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   SimpleHdma hdma_probe;
 
@@ -832,6 +838,18 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
     irq_flag = 0;
     zelda_snes_dummy_write(NMITIMEN, 0x81);
   }
+#ifdef __3DS__
+  if ((render_flags & kPpuRenderFlags_Old3DS) && g_zenv.ppu->phase.active) {
+    // Workers are joined; these snapshots are read only by the game thread.
+    g_ppu_phase_main = g_zenv.ppu->phase;
+    memset(&g_ppu_phase_worker, 0, sizeof(g_ppu_phase_worker));
+    if (g_ppu_system_worker.thread)
+      g_ppu_phase_worker = g_ppu_system_worker.ppu.phase;
+    g_ppu_phase_split = g_ppu_system_worker.thread ? g_ppu_last_split_line : height;
+    g_ppu_phase_scene = (main_module_index << 24) | (player_is_indoors << 23) |
+      (player_is_indoors ? dungeon_room_index : overworld_area_index);
+  }
+#endif
   EndFixedCameraRender(&fixed_camera_state);
 }
 
@@ -1798,6 +1816,28 @@ void ZeldaWriteSram() {
 #endif
 
 void ZeldaWriteGameDiagnostics(FILE *file) {
+#ifdef __3DS__
+  if (g_zenv.ppu && (g_zenv.ppu->renderFlags & kPpuRenderFlags_Old3DS)) {
+    fprintf(file, "PPU phase schema=1 interval=64 frames sample_frame=%lu age=%lu scene=0x%08lx split=%d\n",
+      (unsigned long)g_ppu_phase_main.frame,
+      (unsigned long)(g_zenv.ppu->phase.frame - g_ppu_phase_main.frame),
+      (unsigned long)g_ppu_phase_scene, g_ppu_phase_split);
+    fputs("Phase times are sampled wall spans, including preemption. Main and worker overlap; do not add them. Prepare runs once on main.\n", file);
+    const PpuPhaseProfile *phases[] = {&g_ppu_phase_main, &g_ppu_phase_worker};
+    for (unsigned i=0; i<2; i++) {
+      const PpuPhaseProfile *p=phases[i];
+      fprintf(file, "PPU %s lines=%lu prepare_us=%llu sprites_us=%llu main_bg_us=%llu sub_bg_us=%llu compose_us=%llu mode7_hq_us=%llu retained_rows=%lu rebuilt_tiles=%lu\n",
+        i ? "worker" : "main", (unsigned long)p->lines,
+        (unsigned long long)(i ? 0 : p->prepare * 1000000ull / SYSCLOCK_ARM11),
+        (unsigned long long)(p->sprites * 1000000ull / SYSCLOCK_ARM11),
+        (unsigned long long)(p->main * 1000000ull / SYSCLOCK_ARM11),
+        (unsigned long long)(p->sub * 1000000ull / SYSCLOCK_ARM11),
+        (unsigned long long)(p->compose * 1000000ull / SYSCLOCK_ARM11),
+        (unsigned long long)(p->mode7 * 1000000ull / SYSCLOCK_ARM11),
+        (unsigned long)p->retainedRows, (unsigned long)(i ? 0 : p->rebuiltTiles));
+    }
+  }
+#endif
   fprintf(file, "Scene: module=%u submodule=%u room=%u area=%u indoors=%u Link=(%u,%u)\nHDMA enable copy=%02x\n",
           main_module_index, submodule_index, dungeon_room_index, overworld_screen_index,
           player_is_indoors, link_x_coord, link_y_coord, HDMAEN_copy);

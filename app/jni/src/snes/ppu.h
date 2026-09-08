@@ -52,6 +52,12 @@ enum {
 };
 
 
+typedef struct PpuPhaseProfile {
+  uint64_t prepare, sprites, main, sub, compose, mode7;
+  uint32_t frame, lines, retainedRows, rebuiltTiles;
+  bool active;
+} PpuPhaseProfile;
+
 struct Ppu {
   bool lineHasSprites;
   uint8_t lastBrightnessMult;
@@ -150,6 +156,9 @@ struct Ppu {
   uint32_t backdropMathRgb[256];
   uint32_t backdropMathKey;
   bool backdropMathValid;
+  struct PpuRetainedMaps *retained;
+  bool retainedAttempted, retainedUsable;
+  PpuPhaseProfile phase;
 
 };
 
