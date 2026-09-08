@@ -1,6 +1,6 @@
 # Changelog
 
-Concise cumulative history from v2.9 through v3.0-E9.
+Concise cumulative history from v2.9 through local v3.0-E11.
 
 ## v2.9
 
@@ -137,3 +137,23 @@ PR #31 is an alternative to #30 and is not included: its 240-line WIDE view
 adds rendering work and requires additional gameplay/HDMA coverage. No console
 FPS claim is made; E9 graphics, scene transitions and performance need hardware
 confirmation. Rain-lightning issue #35 remains unconfirmed.
+
+## v3.0-E10 (local)
+
+- Added ordered SDL/NDSP and worker cleanup on normal/error exits as a mitigation
+  for the observed E9 shutdown lifetime crash. The initiating failure was not proven.
+- Restored integer bottom-UI geometry on New as well as Old 3DS.
+- Corrected the diagnostic version definition; E9 had incorrectly identified as E8.
+
+## v3.0-E11 (local)
+
+- Retain Old 3DS Mode 1 background planes across frames; update changed tiles/map
+  entries, keep palette changes independent and use aligned ARM pair-priority merges.
+- Fall back on allocation failure, live VRAM writes, changed map configuration,
+  unprepared modes and unsupported effects. New keeps its existing profile.
+- Add sampled per-thread PPU phase timings and cache work to numbered dumps.
+- Add E10 differential tests, live VRAM/map/mode transitions, allocation-fallback
+  coverage and ARM machine-code replay of supplied private states.
+- Document the PICA200 renderer design. The GPU backend is not implemented in E11;
+  host/ARM replay improvements are not physical-console FPS measurements.
+- Keep CIA/3DSX, frozen source, symbols and LAN installation QR local only.

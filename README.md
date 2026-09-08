@@ -35,8 +35,9 @@ https://discord.gg/SMW49UMkw
   profile and optionally show the current FPS on the top screen.
 - PICA200/Citro2D presentation for both screens with nearest-neighbor sampling
   and RGB565 display output.
-- Old 3DS keeps E4's verified BGRX PPU path and uses event-driven Developer
-  overlay refreshes to reduce bottom-screen contention.
+- Separate Old/New 3DS profiles. E11 retains decoded Old 3DS backgrounds
+  between frames and samples PPU phase timings; New keeps its established
+  rendering policies and both models retain integer bottom-menu geometry.
 - Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making
   game speed depend on when a VBlank wait returns.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
@@ -126,3 +127,16 @@ by Archaistic. WIDE now shows a centered 400x224 image without vertical
 stretching; its top/bottom margins and ORIGINAL's margins use native black.
 See [the changelog](CHANGELOG.md) for map, ROM-switch and Old-only rendering
 changes. Hardware acceptance, including Old 3DS 60 FPS, remains pending.
+
+## Local v3.0-E11 experiment
+
+E11 retains indexed Mode 1 background planes on Old 3DS, updates changed VRAM
+and map cells, and merges priority pixels with ARMv6 packed instructions. It
+adds sampled preparation/sprite/main/sub/composition timings to numbered dumps.
+Unsupported or unavailable caches use the existing software renderer. WIDE stays
+400x224; no frame skipping, audio-rate or New 3DS profile change is introduced.
+
+This is a software optimization, not a PICA200 PPU backend or a measured 60 FPS
+result. The [GPU feasibility design](docs/old3ds-pica200-design.md) describes that
+separate implementation. E11 and subsequent experiments remain local, with CIA,
+3DSX and a verified LAN installation QR; there is no public E11 download.

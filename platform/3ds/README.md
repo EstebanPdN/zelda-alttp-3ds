@@ -42,11 +42,11 @@ physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
 `load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
 complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E9 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E11 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 8
-Long name:   A Link to the Past 3DS experimental 8
+Short name:  Zelda 3DS EXP 11
+Long name:   A Link to the Past 3DS experimental 11
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
 ```
@@ -164,3 +164,15 @@ filenames and HOME Menu metadata. Existing dump numbering is preserved.
 
 Builds E10 and later remain local until the owner explicitly publishes them.
 Do not push commits/tags or upload release assets during this testing series.
+
+### E11 Old 3DS phase samples
+
+The `ppu.txt` diagnostic includes one sampled frame per 64 frames: preparation,
+sprite evaluation, main-screen layer drawing, sub-screen selection/drawing and
+color composition, separately for the main thread and its joined worker.
+Mode 7 HQ is reported separately. The sample records frame age, scene, split,
+retained row count and changed tile count. These are wall spans with thread
+preemption, not CPU-only measurements; main and worker overlap and must not be
+summed. Preparation occurs once on the main thread. The existing recent-frame
+CSV remains available for steady-state cadence. Dump numbering stays
+`000-dump-YYYYMMDD-HHMMSS`, `001-dump-YYYYMMDD-HHMMSS`, etc.
