@@ -587,6 +587,8 @@ static uint32 ExpandRgb565(uint16 pixel) {
 // supplies RGB565; other targets keep the original 32-bit BGRX buffer.
 // Only copies when a save asked for a thumbnail, so the read-back off the
 // renderer's buffer costs nothing on a normal frame.
+bool SecondScreen_NeedsCaptureFrame(void) { return g_ss_thumb_state == 1; }
+
 void SecondScreen_CaptureFrameHook(const uint8 *px, int pitch,
                                    int width, int height, bool rgb565) {
   if (g_ss_thumb_state != 1 || !px || width <= 0 || height <= 0) return;

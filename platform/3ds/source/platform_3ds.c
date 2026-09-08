@@ -1,4 +1,5 @@
 #include "platform_3ds.h"
+#include "ppu_gpu.h"
 #include "present_image.h"
 
 #include <3ds.h>
@@ -867,6 +868,7 @@ bool Platform3DS_InitTopPresenter(void) {
     Platform3DS_CanUseCore1PpuWorker() ? "" : "unavailable/",
     g_core1_time_limit_percent,
     (unsigned long)g_c2d_flush_size);
+  if (!g_is_new_3ds) PpuGpuInit();
   return gfxGetScreenFormat(GFX_TOP) == GSP_RGB565_OES;
 }
 
@@ -877,6 +879,7 @@ void Platform3DS_ShutdownTopPresenter(void) {
   Platform3DS_EndFrame();
   if (!Platform3DS_IsSystemClosing())
     C3D_FrameSync();
+  PpuGpuShutdown();
   C3D_RenderTargetDelete(g_bottom_target);
   g_bottom_target = NULL;
   C3D_RenderTargetDelete(g_top_target);
@@ -976,6 +979,15 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   bool began = C3D_FrameBegin(0);
   g_last_gpu_begin_us = (uint32_t)((svcGetSystemTick() - begin_start) * 1000000ull / SYSCLOCK_ARM11);
   if (!began) return;
+  bool gpu_image = !g_is_new_3ds && PpuGpuOutputActive();
+  g_gpu_frame_active = true;
+  if (gpu_image) {
+    if (PpuGpuPrepared() && !PpuGpuDraw()) {
+      Platform3DS_LogRuntime("PICA200 submission failed; software resumes next frame");
+      return;
+    }
+    g_last_top_source = NULL;
+  } else {
   g_last_top_source = pixels;
   g_last_top_source_pitch = pitch;
   g_last_top_source_width = width;
@@ -996,6 +1008,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
 
   g_last_top_transfer_us = (uint32_t)((svcGetSystemTick() - transfer_start) * 1000000ull / SYSCLOCK_ARM11);
+  }
   const bool stretch = g_display_mode == kPlatform3DSDisplayStretch;
   const bool wide = g_display_mode == kPlatform3DSDisplayUltraWideMod;
   static const float zoom_values[5] = { 1.0f, 1.2f, 1.5f, 2.0f, 2.5f };
@@ -1035,7 +1048,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     .bottom = 1.0f - (source_top + source_height) / kTopTextureHeight,
   };
   C2D_Image image = {
-    .tex = &g_top_texture,
+    .tex = gpu_image ? (C3D_Tex*)PpuGpuOutput() : &g_top_texture,
     .subtex = &g_top_subtexture,
   };
   C2D_DrawParams params = {
@@ -1052,7 +1065,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
 
   Platform3DS_ClearBlackTarget(g_top_target);
   C2D_SceneBegin(g_top_target);
-  Platform3DS_DrawMappedImage(image, &params, ConfigureArgbTextureEnv);
+  Platform3DS_DrawMappedImage(image, &params, gpu_image ? ConfigureRgb565TextureEnv : ConfigureArgbTextureEnv);
   if (g_show_fps) {
     char label[28];
     snprintf(label, sizeof(label), "FPS %u", g_current_fps);
@@ -3566,6 +3579,7 @@ static bool WriteExtendedDiagnostics(const char *directory) {
     for (unsigned i = 0; i < 8; i++) fprintf(f, " %d", p->m7matrix[i]);
     fputc('\n', f);
     ZeldaWriteGameDiagnostics(f);
+    if (!g_is_new_3ds) PpuGpuWriteDiagnostics(f);
     ok = CloseDiagnosticFile(f) && ok;
     const struct { const char *name; const void *data; size_t size; } blobs[] = {
       {"cgram.bin", p->cgram, sizeof(p->cgram)}, {"oam.bin", p->oam, sizeof(p->oam)},
@@ -3576,6 +3590,19 @@ static bool WriteExtendedDiagnostics(const char *directory) {
       snprintf(path, sizeof(path), "%s/%s", directory, blobs[i].name);
       ok = WriteBlob(path, blobs[i].data, blobs[i].size) && ok;
     }
+  }
+  if (!g_is_new_3ds && PpuGpuOutputActive()) {
+    const uint32_t *gpu_pixels = PpuGpuReadback();
+    if (gpu_pixels) {
+      snprintf(path, sizeof(path), "%s/pica-source.raw", directory);
+      ok = WriteBlob(path, gpu_pixels, 512*256*4) && ok;
+      snprintf(path, sizeof(path), "%s/pica-source.txt", directory);
+      FILE *gpu_info=fopen(path,"wb");
+      if(gpu_info) {
+        fputs("PICA200 resolved image: 512x256, row 0 at top, little-endian u32 00RRGGBB.\nActive width/height and backend history are in ppu.txt.\nCPU priority buffers/top-source.raw do not describe a GPU frame.\n",gpu_info);
+        fclose(gpu_info);
+      } else ok=false;
+    } else ok = false;
   }
   // The frame source remains owned by the presenter until the next BeginDraw.
   // Dumps run on the game thread before that point, with PPU workers joined.
@@ -3595,8 +3622,8 @@ static bool WriteExtendedDiagnostics(const char *directory) {
   }
   ok = SecondScreenSDL_WriteDiagnostics(directory) && ok;
   // Snapshot optional context only when present; no ROM/assets are copied.
-  const char *context[] = {"runtime.log", "zelda3.ini"};
-  for (unsigned i = 0; i < 2; i++) if (IsRegularFile(context[i])) {
+  const char *context[] = {"runtime.log", "zelda3.ini", "pica-color-probe.raw", "pica-geometry-probe.raw"};
+  for (unsigned i = 0; i < countof(context); i++) if ((i < 2 || !g_is_new_3ds) && IsRegularFile(context[i])) {
     snprintf(path, sizeof(path), "%s/%s", directory, context[i]);
     ok = CopyFileReplacing(context[i], path) && ok;
   }

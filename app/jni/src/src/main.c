@@ -34,6 +34,7 @@
 #include "android_logging.h"
 #ifdef __3DS__
 #include "platform_3ds.h"
+#include "ppu_gpu.h"
 #endif
 
 static bool g_run_without_emu = 0;
@@ -219,6 +220,9 @@ static void DrawPpuFrameWithPerf() {
   int pitch = 0;
 #ifdef __3DS__
   uint64 section_start;
+  extern bool SecondScreen_NeedsCaptureFrame(void);
+  if (!Platform3DS_IsNew3DS() && (g_display_perf || SecondScreen_NeedsCaptureFrame()))
+    PpuGpuForceCpuFrame();
   g_3ds_last_ppu_draw_us = 0;
   g_3ds_last_capture_us = 0;
   g_3ds_last_present_us = 0;
