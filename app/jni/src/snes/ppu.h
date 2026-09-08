@@ -138,6 +138,7 @@ struct Ppu {
   PpuPixelPrioBufs objBuffer;
   uint16_t vram[0x8000];
   // Derived colors only; never serialized. Each PPU worker owns its copy.
+  uint32_t colorMapRgb5Spaced[256];
   uint32_t fixedMathRgb[256];
   uint32_t fixedMathBlack;
   uint32_t fixedMathKey;

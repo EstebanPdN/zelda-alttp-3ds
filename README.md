@@ -85,7 +85,7 @@ Detailed development notes are preserved inside the source snapshot.
 
 Latest stable release: [v2.9](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v2.9)
 
-Latest experimental release: [v3.0-E7](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E7)
+Latest experimental release: [v3.0-E8](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E8)
 
 See [CHANGELOG.md](CHANGELOG.md) for the concise history from v2.9 onward.
 
@@ -116,6 +116,6 @@ assets, or `zelda3_assets.dat`.
 
 Users are responsible for providing their own legally obtained compatible ROM.
 
-Quick dumps (`L + R + A`) now use numbered folders such as `dumps/001/`.
+Quick dumps (`L + R + A`) now use numbered folders such as `dumps/000-dump-20260907-152424/`.
 They include recent performance samples and graphics/audio diagnostics.
 See [3DS controls and diagnostics](platform/3ds/README.md).

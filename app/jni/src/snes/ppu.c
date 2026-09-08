@@ -180,6 +180,9 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
     ppu->colorMapDirty = false;
     for (int i = 0; i < 256; i++) {
       uint32 color = ppu->cgram[i];
+      if (render_flags & kPpuRenderFlags_Old3DS)
+        ppu->colorMapRgb5Spaced[i] = (color & 31) << 16 |
+          ((color >> 5) & 31) << 8 | ((color >> 10) & 31);
       ppu->colorMapRgb[i] =
         ppu->brightnessMult[color & 0x1f] << 16 |
         ppu->brightnessMult[(color >> 5) & 0x1f] << 8 |
@@ -1028,9 +1031,37 @@ static void PpuPrepareSubscreenMath(Ppu *ppu) {
   ppu->subscreenMathKey = key;
 }
 
+// Rain uses full-brightness half-add. Store RGB5 in separate bytes, so a
+// single addition handles all three channels without cross-channel carries.
+// Shift/mask performs SNES floor((a+b)/2), then expand 5 bits to 8 exactly.
+static void PpuWriteFullBrightnessHalfAdd(Ppu *ppu, uint32 *dst, uint32 left,
+                                         uint32 right, uint32 mask, bool unclipped) {
+  const uint32 *spaced = ppu->colorMapRgb5Spaced;
+  for (uint i = left; i < right; i++) {
+    uint32 pixel = ppu->bgBuffers[0].data[i];
+    uint32 index = pixel & 255;
+    if (!(mask & (1u << ((pixel >> 8) & 15)))) {
+      *dst++ = unclipped ? ppu->colorMapRgb[index] : 0;
+      continue;
+    }
+    uint32 sub_index = ppu->bgBuffers[1].data[i] & 255;
+    if (sub_index == 0) {
+      *dst++ = unclipped ? ppu->fixedMathRgb[index] : ppu->fixedMathBlack;
+      continue;
+    }
+    uint32 sum = (unclipped ? spaced[index] : 0) + spaced[sub_index];
+    uint32 rgb5 = (sum >> 1) & 0x1f1f1f;
+    *dst++ = (rgb5 << 3) | ((rgb5 >> 2) & 0x070707);
+  }
+}
+
 static void PpuWriteSubscreenMathSpan(Ppu *ppu, uint32 *dst, uint32 left,
                                      uint32 right, uint32 mask, bool unclipped) {
   PpuPrepareFixedMath(ppu);
+  if (ppu->lastBrightnessMult == 15 && ppu->halfColor && !ppu->subtractColor) {
+    PpuWriteFullBrightnessHalfAdd(ppu, dst, left, right, mask, unclipped);
+    return;
+  }
   PpuPrepareSubscreenMath(ppu);
   const uint8 *map = ppu->subscreenMath;
   for (uint i = left; i < right; i++) {

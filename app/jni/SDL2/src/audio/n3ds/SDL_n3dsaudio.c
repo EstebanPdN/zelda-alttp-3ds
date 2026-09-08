@@ -111,14 +111,16 @@ static void AudioFrameFinished(void *device)
         }
     }
 
-    for (i = 0; i < NUM_BUFFERS; i++)
-        queued += this->hidden->waveBuf[i].status == NDSP_WBUF_QUEUED ||
-                  this->hidden->waveBuf[i].status == NDSP_WBUF_PLAYING;
-    if (queued == 0 && this->hidden->refillCount && !ndspChnIsPaused(0)) {
-        if (!this->hidden->queueWasEmpty) this->hidden->emptyQueueEvents++;
-        this->hidden->queueWasEmpty = SDL_TRUE;
-    } else if (queued) {
-        this->hidden->queueWasEmpty = SDL_FALSE;
+    if (this->hidden->diagnosticsEnabled) {
+        for (i = 0; i < NUM_BUFFERS; i++)
+            queued += this->hidden->waveBuf[i].status == NDSP_WBUF_QUEUED ||
+                      this->hidden->waveBuf[i].status == NDSP_WBUF_PLAYING;
+        if (queued == 0 && this->hidden->refillCount && !ndspChnIsPaused(0)) {
+            if (!this->hidden->queueWasEmpty) this->hidden->emptyQueueEvents++;
+            this->hidden->queueWasEmpty = SDL_TRUE;
+        } else if (queued) {
+            this->hidden->queueWasEmpty = SDL_FALSE;
+        }
     }
 
     if (shouldBroadcast) {
@@ -133,11 +135,15 @@ static int N3DSAUDIO_OpenDevice(_THIS, const char *devname)
     Result ndsp_init_res;
     Uint8 *data_vaddr;
     float mix[12];
+    bool is_new_3ds = false;
     this->hidden = (struct SDL_PrivateAudioData *)SDL_calloc(1, sizeof(*this->hidden));
 
     if (this->hidden == NULL) {
         return SDL_OutOfMemory();
     }
+
+    APT_CheckNew3DS(&is_new_3ds);
+    this->hidden->diagnosticsEnabled = !is_new_3ds;
 
     /* Initialise the DSP service */
     ndsp_init_res = ndspInit();
@@ -274,7 +280,8 @@ static void N3DSAUDIO_WaitDevice(_THIS)
 
 static Uint8 *N3DSAUDIO_GetDeviceBuf(_THIS)
 {
-    this->hidden->refillStart = svcGetSystemTick();
+    if (this->hidden->diagnosticsEnabled)
+        this->hidden->refillStart = svcGetSystemTick();
     return this->hidden->mixbuf;
 }
 
