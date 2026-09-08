@@ -302,6 +302,7 @@ static void N3DSAUDIO_CloseDevice(_THIS)
 
     ndspExit();
 
+    audio_device = NULL;
     FreePrivateData(this);
 }
 
