@@ -527,6 +527,45 @@ static void EndFixedCameraRender(const FixedCameraRenderState *state) {
   g_zenv.ppu->renderObjXOffset = state->ppu_obj_x_offset;
 }
 
+// The original camera's lower limit is defined for 224 lines. Near that
+// limit, reveal the missing rows above instead of reading beyond the room.
+// This affects drawing only: collision, camera RAM and saved state stay intact.
+typedef struct VerticalCameraRenderState {
+  int delta;
+  uint16 bg1, bg2;
+  int16 obj;
+} VerticalCameraRenderState;
+
+static VerticalCameraRenderState BeginVerticalCameraRender(void) {
+  VerticalCameraRenderState state = {0};
+#ifdef __3DS__
+  Ppu *p = g_zenv.ppu;
+  uint8 context = GetFixedCameraEffectiveContext();
+  if (!(p->renderFlags & kPpuRenderFlags_Height240) || !context ||
+      WideCamera_IsMapMenu(main_module_index, submodule_index))
+    return state;
+  uint16 bottom = context == 7 ?
+    room_bounds_y.v[(quadrant_fullsize_y >> 1) + 2] : ow_scroll_vars0.yend;
+  int available = (int16)(bottom - BG2VOFS_copy2);
+  state.delta = IntMin(IntMax(16 - available, 0), 16);
+  if (!state.delta) return state;
+  state.bg1 = p->bgLayer[0].vScroll;
+  state.bg2 = p->bgLayer[1].vScroll;
+  state.obj = p->renderObjYOffset;
+  p->bgLayer[0].vScroll = (state.bg1 - state.delta) & 0x3ff;
+  p->bgLayer[1].vScroll = (state.bg2 - state.delta) & 0x3ff;
+  p->renderObjYOffset = state.obj + state.delta;
+#endif
+  return state;
+}
+
+static void EndVerticalCameraRender(const VerticalCameraRenderState *state) {
+  if (!state->delta) return;
+  g_zenv.ppu->bgLayer[0].vScroll = state->bg1;
+  g_zenv.ppu->bgLayer[1].vScroll = state->bg2;
+  g_zenv.ppu->renderObjYOffset = state->obj;
+}
+
 static void ZeldaDrawPpuLines(Ppu *ppu, int height,
                               int first_line, int last_line,
                               uint8 irq_state) {
@@ -780,6 +819,7 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
     g_zenv.ppu->renderPitch = pitch;
     g_zenv.ppu->renderBuffer = pixel_buffer;
     g_zenv.ppu->renderObjXOffset = 0;
+    g_zenv.ppu->renderObjYOffset = 0;
     g_zenv.ppu->phase.active = false;
   } else
 #endif
@@ -801,12 +841,16 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   }
 
   FixedCameraRenderState fixed_camera_state = BeginFixedCameraRender();
+  VerticalCameraRenderState vertical_camera_state = BeginVerticalCameraRender();
 
   if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240) {
     ConfigurePpuSideSpace(fixed_camera_state.visual_x,
                           fixed_camera_state.uses_visual_camera,
                           fixed_camera_state.horizontal_transition);
   }
+
+  if (vertical_camera_state.delta)
+    g_zenv.ppu->extraBottomCur = UintMin(16, g_zenv.ppu->extraBottomCur + vertical_camera_state.delta);
 
   PpuSetWindow1Ext(g_zenv.ppu, g_spotlight_ext_active ? g_spotlight_ext_left : NULL,
                    g_spotlight_ext_active ? g_spotlight_ext_right : NULL);
@@ -821,8 +865,10 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       goto rendering_complete;
     }
     int obj_offset = g_zenv.ppu->renderObjXOffset;
+    int obj_y_offset = g_zenv.ppu->renderObjYOffset;
     PpuBeginDrawing(g_zenv.ppu, pixel_buffer, pitch, render_flags);
     g_zenv.ppu->renderObjXOffset = obj_offset;
+    g_zenv.ppu->renderObjYOffset = obj_y_offset;
   }
   if (render_flags & kPpuRenderFlags_Old3DS) PpuGpuCpuFrame();
   if (ZeldaEnsurePpuWorkers()) {
@@ -903,6 +949,7 @@ rendering_complete:
       (player_is_indoors ? dungeon_room_index : overworld_area_index);
   }
 #endif
+  EndVerticalCameraRender(&vertical_camera_state);
   EndFixedCameraRender(&fixed_camera_state);
 }
 

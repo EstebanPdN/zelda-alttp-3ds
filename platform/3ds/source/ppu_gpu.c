@@ -259,9 +259,11 @@ static bool ColorProbe(void) {
 }
 // Synthetic scene only: no ROM data and no changes to the live game PPU.
 // Compare actual shader/atlas/depth/stencil output with the established core.
-static bool GeometryProbe(void) {
+static bool GeometryProbe(bool shared) {
+  unsigned height=shared?240:224;
+  int16_t left[240],right[240];
   Ppu *p=ppu_init();
-  uint16_t *expected=malloc(400*224*2);
+  uint16_t *expected=malloc(400*height*2);
   if(!p || !expected) {ppu_free(p);free(expected);g.reason="geometry-probe-memory";return false;}
   ppu_reset(p);p->forcedBlank=false;p->mode=1;p->brightness=15;
   p->extraLeftRight=p->extraLeftCur=p->extraRightCur=72;
@@ -287,10 +289,16 @@ static bool GeometryProbe(void) {
       .tilemapAdr=i==0?0x1000:i==1?0:0x6000,.tileAdr=i==2?0x7000:0x2000};
   }
   PpuBeginDrawing(p,(uint8_t*)g.readback,512*4,kPpuRenderFlags_NewRenderer);
-  for(unsigned y=0;y<224;y++) {
-    unsigned flags=y/14;
+  if(shared) {
+    p->extraBottomCur=16;p->windowExtLeft=left;p->windowExtRight=right;
+    p->windowsel=0x330333;p->screenWindowed[0]=p->screenWindowed[1]=0x17;
+    p->fixedColorR=p->fixedColorG=p->fixedColorB=0;p->renderObjYOffset=16;
+    for(int y=0;y<240;y++){int span=200-abs(y-120)*2;left[y]=128-span;right[y]=128+span;}
+  }
+  for(unsigned y=0;y<height;y++) {
+    unsigned flags=y/(shared?15:14);
     p->subtractColor=flags&1;p->halfColor=flags&2;
-    p->clipMode=(flags&4)?2:0;p->preventMathMode=(flags&8)?1:0;
+    p->clipMode=shared?2:((flags&4)?2:0);p->preventMathMode=(flags&8)?1:0;
     p->bgLayer[0].hScroll=(y/7)*3;
     PicaCaptureLine(&g.lines[y],p,y);ppu_runLine(p,y+1);
     for(unsigned x=0;x<400;x++) {
@@ -298,10 +306,10 @@ static bool GeometryProbe(void) {
       expected[y*400+x]=Pack(((c>>19)&31)|(((c>>11)&31)<<5)|(((c>>3)&31)<<10));
     }
   }
-  ResetRanges(400,224);PicaAtlasBegin(g.cache);
+  ResetRanges(400,height);PicaAtlasBegin(g.cache);
   PicaFrame frame={.memory=p,.lines=g.lines,.scratch=g.scratch,.atlas=g.cache,
-    .pixels=g.atlas.data,.width=400,.height=224,.emit=Emit};
-  bool ok=PicaBuildFrame(&frame) && Clean(g.atlas.data,g.atlas.size) && Clean(g.vertices,g.count*sizeof(Vertex));
+    .pixels=g.atlas.data,.width=400,.height=height,.emit=Emit};
+  bool ok=PicaBuildFrame(&frame) && (!shared || frame.sharedWindow) && Clean(g.atlas.data,g.atlas.size) && Clean(g.vertices,g.count*sizeof(Vertex));
   if(ok && C3D_FrameBegin(0)) {
     ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition();
     if(ok) ok=TransferReadback(GX_TRANSFER_FMT_RGB5A1);
@@ -309,7 +317,7 @@ static bool GeometryProbe(void) {
     bool readbackOk=FinishReadback(512*256*2);
     ok=ok && readbackOk;
   } else ok=false;
-  if(ok) for(unsigned y=0;y<224;y++) for(unsigned x=0;x<400;x++) {
+  if(ok) for(unsigned y=0;y<height;y++) for(unsigned x=0;x<400;x++) {
     uint16_t actual=((uint16_t*)g.readback)[y*512+x];g.geometryPixels++;
     if(actual!=expected[y*400+x]) {
       if(!g.geometryErrors) {g.firstBad=y*512+x;g.expected=expected[y*400+x];g.actual=actual;}
@@ -366,7 +374,7 @@ bool PpuGpuInit(void) {
   if(g.scaleLocation<0) {g.reason="shader-uniform";return false;}
   AttrInfo_Init(&g.attributes);
   AttrInfo_AddLoader(&g.attributes,0,GPU_SHORT,4);AttrInfo_AddLoader(&g.attributes,1,GPU_SHORT,2);AttrInfo_AddLoader(&g.attributes,2,GPU_UNSIGNED_BYTE,4);
-  g.ready=ColorProbe() && GeometryProbe();g.output=g.prepared=false;return g.ready;
+  g.ready=ColorProbe() && GeometryProbe(false) && GeometryProbe(true);g.output=g.prepared=false;return g.ready;
 }
 void PpuGpuShutdown(void) {
   if(!g.initialized) return;
@@ -426,7 +434,7 @@ bool PpuGpuFinish(Ppu *p) {
   if(!Clean(g.vertices,g.count*sizeof(Vertex))) ok=false;
   g.prepareUs+=Us(start);
   if(!ok) {g.reason="cache-clean";memcpy(p,g.saved,sizeof(Ppu));return false;}
-  g.prepared=g.output=true;g.reason="PICA200";return true;
+  g.prepared=g.output=true;g.reason=frame.sharedWindow?"PICA200-shared-window":"PICA200";return true;
 }
 static void RecordFrame(bool gpu) {
   FrameRecord *r=&g.history[g.historyNext];

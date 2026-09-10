@@ -89,12 +89,25 @@ static void LoadDump(Ppu *p, const char *directory) {
     ppu_write(p, scroll[i][0], ram[scroll[i][1] + 1]);
   }
   ppu_write(p, 0x0b, 0x22); ppu_write(p, 0x0c, 7);
+  // GPU dumps preserve the live PPU memory explicitly. A serialized checkpoint
+  // also contains legacy emulator state; use these blobs for rendered pixels.
+  snprintf(path,sizeof(path),"%s/vram.bin",directory);f=fopen(path,"rb");if(!f)exit(2);
+  ReadState(f,p->vram,sizeof(p->vram));fclose(f);
+  snprintf(path,sizeof(path),"%s/cgram.bin",directory);f=fopen(path,"rb");if(!f)exit(2);
+  ReadState(f,p->cgram,sizeof(p->cgram));fclose(f);
+  snprintf(path,sizeof(path),"%s/oam.bin",directory);f=fopen(path,"rb");if(!f)exit(2);
+  ReadState(f,p->oam,sizeof(p->oam));fclose(f);
   p->extraLeftRight = p->extraLeftCur = p->extraRightCur = 72;
   snprintf(path, sizeof(path), "%s/ppu.txt", directory);
   f = fopen(path, "rb");
   if (f) {
     char text[256]; unsigned configured, left, right, bottom;
     while (fgets(text, sizeof(text), f)) {
+      unsigned layer,hscroll,vscroll,map,tiles,wider,higher;
+      if(sscanf(text,"BG%u scroll=%u,%u map=%x tiles=%x wider=%u higher=%u",
+                &layer,&hscroll,&vscroll,&map,&tiles,&wider,&higher)==7 && layer>=1 && layer<=4)
+        p->bgLayer[layer-1]=(BgLayer){.hScroll=hscroll,.vScroll=vscroll,.tilemapAdr=map,
+          .tileAdr=tiles,.tilemapWider=wider,.tilemapHigher=higher};
       if (sscanf(text, "side_space configured/left/right/bottom=%u/%u/%u/%u",
                  &configured, &left, &right, &bottom) == 4) {
         if (configured > kPpuExtraLeftRight || left > configured || right > configured || bottom > 16) exit(2);
@@ -160,6 +173,7 @@ static void MathTest(void) {
 }
 int main(int argc,char **argv) {
  MathTest();
+ unsigned shared=0;unsigned long long vertices=0;
  Ppu *p=ppu_init(),*scratch=calloc(1,sizeof(Ppu));
  PicaAtlas *cache=calloc(1,sizeof(PicaAtlas));
  PicaLine lines[240];
@@ -171,14 +185,27 @@ int main(int argc,char **argv) {
    Setup(p,scene);p->mode=1;p->brightness=15;p->mosaicSize=1;p->mosaicEnabled=0;
    p->objSize=scene%8;
   } else LoadDump(p,argv[2+scene-scenes]);
+  static int16_t wl[240],wr[240];
+  p->windowExtLeft=p->windowExtRight=NULL;
+  if(scene<scenes && scene%4==1) {
+    p->forcedBlank=false;p->screenEnabled[0]=0x17;p->screenEnabled[1]=0x13;
+    p->screenWindowed[0]=p->screenWindowed[1]=0x17;
+    p->windowsel=0x330333;p->clipMode=2;p->addSubscreen=true;
+    p->fixedColorR=p->fixedColorG=p->fixedColorB=0;
+    for(int y=0;y<240;y++) {int span=200-abs(y-120)*2;
+      wl[y]=128-span;wr[y]=128+span;
+    }
+    p->windowExtLeft=wl;p->windowExtRight=wr;
+  }
   width=256+p->extraLeftRight*2;
   for(unsigned frame=0;frame<2;frame++) {
    memset(surface,0,sizeof(surface));memset(depth,0,sizeof(depth));memset(stencil,0,sizeof(stencil));
    memset(output,0,sizeof(output));memset(cpu,0,sizeof(cpu));
    p->colorMapDirty=true;
    PpuBeginDrawing(p,(uint8_t*)cpu,512*4,1|(scene&2?kPpuRenderFlags_NoSpriteLimits:0));
+   p->renderObjYOffset=scene<scenes?scene%17:0;
    for(unsigned y=0;y<240;y++) {
-    if(scene<scenes && scene%3==0 && y%31==0) {
+    if(scene<scenes && scene%3==0 && scene%4!=1 && y%31==0) {
      p->bgLayer[0].hScroll=(p->bgLayer[0].hScroll+7)&1023;
      p->window1left+=3;p->fixedColorB=(p->fixedColorB+1)&31;
     }
@@ -187,6 +214,8 @@ int main(int argc,char **argv) {
    PicaAtlasBegin(cache);
    PicaFrame f={.memory=p,.lines=lines,.scratch=scratch,.atlas=cache,.pixels=atlas,.width=width,.height=240,.emit=Raster};
    if(!PicaBuildFrame(&f)){fprintf(stderr,"FAIL rejected scene %u: %s\n",scene,f.failure);return 1;}
+   shared+=f.sharedWindow;
+   for(unsigned group=0;group<PICA_GROUPS;group++)vertices+=f.quads[group]*6;
    for(unsigned y=0;y<240;y++)for(unsigned x=0;x<width;x++) {
     unsigned i=y*512+x;
     if(output[i]!=RefRgb(cpu[i])) {
@@ -199,5 +228,6 @@ int main(int argc,char **argv) {
   if(scene>=scenes) printf("PASS dump %s\n",argv[2+scene-scenes]);
  }
  printf("PASS %u randomized GPU geometry scenes, cold/warm atlas, 224/240 rows, native/wide\n",scenes);
+ printf("Shared-window frames=%u total vertices=%llu\n",shared,vertices);
  ppu_free(p);free(scratch);free(cache);free(atlas);return 0;
 }

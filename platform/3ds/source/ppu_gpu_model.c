@@ -85,8 +85,9 @@ static int Tile(PicaFrame *f,unsigned address,unsigned palette,unsigned bpp) {
 void PicaCaptureLine(PicaLine *out,const Ppu *p,unsigned y) {
   memcpy(out->bytes,p,PICA_LINE_BYTES);
   // Prefix access through a suitably aligned full scratch happens later.
-  int16_t left=p->windowExtLeft?p->windowExtLeft[y]:p->windowExtLeftCur;
-  int16_t right=p->windowExtRight?p->windowExtRight[y]:p->windowExtRightCur;
+  int wy=(int)y-p->renderObjYOffset;
+  int16_t left=p->windowExtLeft?(wy>=0?p->windowExtLeft[wy]:0):p->windowExtLeftCur;
+  int16_t right=p->windowExtRight?(wy>=0?p->windowExtRight[wy]:-1):p->windowExtRightCur;
   memcpy(out->bytes+offsetof(Ppu,windowExtLeftCur),&left,sizeof(left));
   memcpy(out->bytes+offsetof(Ppu,windowExtRightCur),&right,sizeof(right));
 }
@@ -120,10 +121,10 @@ static unsigned Band(PicaFrame *f,unsigned y,unsigned max) {
 // must not split otherwise identical Mode 1 tiles into single scanlines.
 static void SelectBands(PicaFrame *f,unsigned kind,unsigned layer,unsigned sub) {
   (void)sub;
-  if(kind!=1){memcpy(f->bandEnd,f->commonEnd,sizeof(f->bandEnd));return;}
+  if(kind!=1){memcpy(f->bandEnd,kind==3?f->commonEnd:f->layerEnd,sizeof(f->bandEnd));return;}
   for(unsigned y=f->height;y--;) {
     f->bandEnd[y]=y+1;
-    if(f->commonEnd[y]>y+1 && !memcmp(f->lines[y].bytes+offsetof(Ppu,bgLayer)+layer*sizeof(BgLayer),
+    if(f->layerEnd[y]>y+1 && !memcmp(f->lines[y].bytes+offsetof(Ppu,bgLayer)+layer*sizeof(BgLayer),
        f->lines[y+1].bytes+offsetof(Ppu,bgLayer)+layer*sizeof(BgLayer),sizeof(BgLayer)))
       f->bandEnd[y]=f->bandEnd[y+1];
   }
@@ -155,7 +156,7 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
     if(p->forcedBlank || y>=224u+p->extraBottomCur || !(p->screenEnabled[sub]&(1u<<layer)) || (sub && !p->addSubscreen)) {y+=h;continue;}
     if(y+h>224u+p->extraBottomCur) h=224u+p->extraBottomCur-y;
     PpuWindowSpans win;
-    PpuGetWindowSpans(p,layer,(p->screenWindowed[sub]&(1u<<layer))!=0,&win);
+    PpuGetWindowSpans(p,layer,!f->sharedWindow && (p->screenWindowed[sub]&(1u<<layer))!=0,&win);
     for(unsigned i=0;i<win.nr;i++) {
       if(win.bits&(1u<<i)) continue;
       int x=win.edges[i],end=win.edges[i+1];
@@ -201,7 +202,7 @@ static bool Objects(PicaFrame *f,unsigned sub) {
       unsigned index=active[item];
       unsigned yy=f->memory->oam[index]>>8;
       if(yy==0xf0) continue;
-      unsigned row=(y-yy)&255;
+      unsigned row=(y-yy-p->renderObjYOffset)&255;
       unsigned high=f->memory->oam[0x100+(index>>4)]>>(index&15);
       unsigned size=sizes[p->objSize][(high>>1)&1];
       if(row>=size) continue;
@@ -228,7 +229,7 @@ static bool Objects(PicaFrame *f,unsigned sub) {
     unsigned yy=f->memory->oam[index]>>8;
     unsigned high=f->memory->oam[0x100+(index>>4)]>>(index&15);
     unsigned size=sizes[p->objSize][(high>>1)&1];
-    unsigned attr=f->memory->oam[index+1],row=(y-yy)&255;
+    unsigned attr=f->memory->oam[index+1],row=(y-yy-p->renderObjYOffset)&255;
     bool vf=(attr&0x8000)!=0;
     if(vf)row=size-1-row;
     unsigned h=Band(f,y,vf?1+(row&7):8-(row&7));
@@ -238,7 +239,7 @@ static bool Objects(PicaFrame *f,unsigned sub) {
     unsigned base=(attr&0x100)?p->objTileAdr2:p->objTileAdr1;
     unsigned palette=128+((attr>>9)&7)*16;
     unsigned z=((((attr>>12)&3)*4+2)*16+4+((attr&0x800)?0:2))<<8;
-    PpuWindowSpans win;PpuGetWindowSpans(p,4,(p->screenWindowed[sub]&16)!=0,&win);
+    PpuWindowSpans win;PpuGetWindowSpans(p,4,!f->sharedWindow && (p->screenWindowed[sub]&16)!=0,&win);
     while(mask) {
       unsigned col=__builtin_ctz(mask)*8;mask&=mask-1;int left=x+col;
       unsigned usedcol=(attr&0x4000)?size-1-col:col;
@@ -269,7 +270,7 @@ static bool Compose(PicaFrame *f) {
       bool clip=p->clipMode==3 || (p->clipMode==2 && inside) || (p->clipMode==1 && !inside);
       bool prevent=p->preventMathMode==3 || (p->preventMathMode==2&&inside) || (p->preventMathMode==1&&!inside);
       unsigned flags=(p->subtractColor?1:0)|(p->halfColor?2:0)|(clip?4:0)|(prevent?8:0);
-      if(p->forcedBlank || y>=224u+p->extraBottomCur) flags=12;
+      if(p->forcedBlank || y>=224u+p->extraBottomCur || (f->sharedWindow && inside)) flags=12;
       if(flags!=cfg) continue;
       int l=win.edges[i]+p->extraLeftRight,r=win.edges[i+1]+p->extraLeftRight;
       PicaQuad q={l,y,r,y+h,l*8,4096-(int)y*16,r*8,4096-(int)(y+h)*16,1,255,255,255,255};
@@ -279,16 +280,46 @@ static bool Compose(PicaFrame *f) {
   }
   return true;
 }
+// A circular door transition applies the same inverse W1 to every active
+// plane and clips that region to black in color math. Draw full tiles once,
+// then apply the exact scanline mask at composition. Other windows keep the
+// general path, including independent plane windows and non-black backdrops.
+static bool SharedBlackWindow(PicaFrame *f) {
+  bool visible=false;
+  for(unsigned y=0;y<f->height;y++) {
+    Ppu *p=Line(f,y);
+    if(p->forcedBlank)continue;
+    if(!p->windowExtLeft || ((p->windowsel>>20)&15)!=3 || p->clipMode!=2 ||
+       !p->addSubscreen || p->fixedColorR || p->fixedColorG || p->fixedColorB)
+      return false;
+    for(unsigned sub=0;sub<2;sub++) {
+      unsigned active=p->screenEnabled[sub]&0x17;
+      if((p->screenWindowed[sub]&active)!=active)return false;
+      for(unsigned layer=0;layer<5;layer++)if((active&(1u<<layer)) &&
+         ((p->windowsel>>(layer*4))&15)!=3)return false;
+    }
+    visible=true;
+  }
+  return visible;
+}
+
 bool PicaBuildFrame(PicaFrame *f) {
   memset(f->quads,0,sizeof(f->quads)); f->failure=NULL;
   if(f->width>512 || f->height>240 || !f->width || !f->height) { f->failure="dimensions";return false; }
+  f->sharedWindow=SharedBlackWindow(f);
   // Snapshot fields before VRAM access contain common visible state. Ignore
   // access latches, unrelated backgrounds and all Mode 7 registers in Mode 1.
   for(unsigned y=f->height;y--;) {
-    f->commonEnd[y]=y+1;
+    f->commonEnd[y]=f->layerEnd[y]=y+1;
     if(y+1<f->height && !memcmp(f->lines[y].bytes+offsetof(Ppu,extraLeftCur),
        f->lines[y+1].bytes+offsetof(Ppu,extraLeftCur),
        offsetof(Ppu,vramPointer)-offsetof(Ppu,extraLeftCur)))f->commonEnd[y]=f->commonEnd[y+1];
+    f->layerEnd[y]=f->commonEnd[y];
+    if(f->sharedWindow && y+1<f->height &&
+       !memcmp(f->lines[y].bytes+offsetof(Ppu,extraLeftCur),f->lines[y+1].bytes+offsetof(Ppu,extraLeftCur),
+               offsetof(Ppu,window1left)-offsetof(Ppu,extraLeftCur)) &&
+       !memcmp(f->lines[y].bytes+offsetof(Ppu,clipMode),f->lines[y+1].bytes+offsetof(Ppu,clipMode),
+               offsetof(Ppu,vramPointer)-offsetof(Ppu,clipMode)))f->layerEnd[y]=f->layerEnd[y+1];
   }
   for(unsigned y=0;y<f->height;y++) {
     Ppu *p=Line(f,y);

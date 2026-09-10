@@ -42,7 +42,8 @@ typedef struct {
   void *context;
   const char *failure;
   uint32_t quads[PICA_GROUPS];
-  uint16_t bandEnd[PICA_MAX_LINES],commonEnd[PICA_MAX_LINES];
+  uint16_t bandEnd[PICA_MAX_LINES],commonEnd[PICA_MAX_LINES],layerEnd[PICA_MAX_LINES];
+  bool sharedWindow;
 } PicaFrame;
 void PicaAtlasInit(PicaAtlas *cache, uint32_t *pixels);
 void PicaAtlasBegin(PicaAtlas *cache);

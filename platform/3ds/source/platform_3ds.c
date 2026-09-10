@@ -226,11 +226,9 @@ static void Platform3DS_ApplyAutoDisplayDefaults(void) {
     g_wide_edge_mode_auto = true;
   }
   if (g_display_mode_auto)
-    g_display_mode = g_is_new_3ds ? kPlatform3DSDisplayUltraWideMod :
-                                    kPlatform3DSDisplayOriginal;
+    g_display_mode = kPlatform3DSDisplayUltraWideMod;
   if (g_wide_edge_mode_auto)
-    g_wide_edge_mode = g_is_new_3ds ? kPlatform3DSWideEdgeFixedCamera :
-                                      kPlatform3DSWideEdgeStandard;
+    g_wide_edge_mode = kPlatform3DSWideEdgeFixedCamera;
 }
 
 static void LogSetup(const char *format, ...) {
@@ -294,6 +292,21 @@ static bool CStickIsHeld(u32 keys) {
     return abs((int)cstick.dx) > 24 || abs((int)cstick.dy) > 24;
   }
   return false;
+}
+
+// libctru gfxInit unmasks the LCD immediately after allocating uninitialized
+// buffers. Keep it black across selector teardown, SDL format changes and
+// renderer probes; reveal only initialized setup/game frames.
+static bool g_startup_lcd_black = true;
+Result __real_GSPGPU_SetLcdForceBlack(u8 flags);
+Result __wrap_GSPGPU_SetLcdForceBlack(u8 flags) {
+  if (!flags && g_startup_lcd_black) return 0;
+  return __real_GSPGPU_SetLcdForceBlack(flags);
+}
+static void RevealInitializedScreens(void) {
+  gspWaitForVBlank();
+  g_startup_lcd_black = false;
+  GSPGPU_SetLcdForceBlack(0);
 }
 
 uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
@@ -872,6 +885,7 @@ bool Platform3DS_InitTopPresenter(void) {
     g_core1_time_limit_percent,
     (unsigned long)g_c2d_flush_size);
   if (!g_is_new_3ds) PpuGpuInit();
+  Platform3DS_BlankScreens();
   return gfxGetScreenFormat(GFX_TOP) == GSP_RGB565_OES;
 }
 
@@ -1149,6 +1163,7 @@ void Platform3DS_EndFrame(void) {
     return;
   Platform3DS_EndGpuFrame();
   g_gpu_frame_active = false;
+  if (g_startup_lcd_black) RevealInitializedScreens();
 }
 
 uint32_t Platform3DS_WaitForVBlank(void) {
@@ -1543,6 +1558,7 @@ static void PresentSetupConsole(void);
 static void BeginSetupConsole(void) {
   if (g_setup_console_active)
     return;
+  g_startup_lcd_black = true;
   gfxInitDefault();
   gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);
   gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
@@ -1555,6 +1571,7 @@ static void BeginSetupConsole(void) {
   g_setup_console_active = true;
   PresentSetupConsole();
   PresentSetupConsole();
+  RevealInitializedScreens();
 }
 
 static void PresentSetupConsole(void) {
@@ -1592,6 +1609,8 @@ static void EndSetupConsole(void) {
     return;
   PresentSetupConsole();
   SetupAudioStop();
+  g_startup_lcd_black = true;
+  GSPGPU_SetLcdForceBlack(1);
   gfxExit();
   g_setup_console_active = false;
 }
@@ -3106,6 +3125,48 @@ static int SelectRom(RomEntry *roms, int rom_count, const char *status) {
   return -1;
 }
 
+// One migration per ROM profile, including pre-E16 profiles. A separate marker
+// is intentional: a new profile may inherit another profile's INI, but must
+// not inherit its "already migrated" state. Later menu writes leave it alone.
+static bool MigrateWideDefaults(const char *ini) {
+  char marker[640], temporary[640], marker_temporary[660];
+  if (snprintf(marker,sizeof(marker),"%s.wide-defaults-v1",ini)>=(int)sizeof(marker) ||
+      snprintf(temporary,sizeof(temporary),"%s.wide-defaults.tmp",ini)>=(int)sizeof(temporary) ||
+      snprintf(marker_temporary,sizeof(marker_temporary),"%s.tmp",marker)>=(int)sizeof(marker_temporary))
+    return false;
+  if (IsRegularFile(marker)) return true;
+  FILE *input=fopen(ini,"rb");if(!input)return false;
+  FILE *output=fopen(temporary,"wb");if(!output){fclose(input);return false;}
+  char line[1024], parsed[1024];bool general=false,inserted=false,ok=true;
+  while(fgets(line,sizeof(line),input)) {
+    strcpy(parsed,line);char *text=Trim(parsed);
+    if(text[0]=='[') {
+      general=strcasecmp(text,"[General]")==0;
+      if(general && !inserted) {
+        if(fputs("[General]\nDisplayMode = Wide\nWideEdgeMode = FixedCamera\n",output)<0)ok=false;
+        inserted=true;continue;
+      }
+    }
+    char *equals=strchr(text,'=');
+    if(general && equals) {
+      *equals=0;char *key=Trim(text);
+      if(!strcasecmp(key,"DisplayMode") || !strcasecmp(key,"WideEdgeMode"))continue;
+    }
+    if(fputs(line,output)<0)ok=false;
+  }
+  if(!inserted && fputs("\n[General]\nDisplayMode = Wide\nWideEdgeMode = FixedCamera\n",output)<0)ok=false;
+  if(ferror(input))ok=false;
+  if(fclose(input)!=0)ok=false;
+  if(fclose(output)!=0)ok=false;
+  if(!ok || rename(temporary,ini)!=0){remove(temporary);return false;}
+  output=fopen(marker_temporary,"wb");if(!output)return false;
+  ok=fputs("1\n",output)>=0;
+  if(fclose(output)!=0)ok=false;
+  if(!ok || rename(marker_temporary,marker)!=0){remove(marker_temporary);return false;}
+  LogSetup("Applied one-time WIDE/FixedCamera defaults: %s",ini);
+  return true;
+}
+
 static bool EnsureProfileReady(RomEntry *rom, bool force_extract) {
   if (!EnsureDirectory(kProfilesDirectory) || !EnsureDirectory(rom->profile))
     return false;
@@ -3128,7 +3189,8 @@ static bool EnsureProfileReady(RomEntry *rom, bool force_extract) {
     snprintf(profile_assets, sizeof(profile_assets), "%s/%s",
              rom->profile, kAssetsFilename);
     snprintf(profile_ini, sizeof(profile_ini), "%s/zelda3.ini", rom->profile);
-    ready = CopyFileReplacing(profile_assets, kAssetsFilename) &&
+    ready = MigrateWideDefaults(profile_ini) &&
+            CopyFileReplacing(profile_assets, kAssetsFilename) &&
             CopyFileReplacing(profile_ini, "zelda3.ini") &&
             PrepareSaveDirectory(rom, false);
     WriteSelectedRom(rom);
@@ -3157,7 +3219,8 @@ static bool ResolveActiveProfile(char *profile, size_t profile_size) {
              selected_rom.profile, kAssetsFilename);
     snprintf(profile_ini, sizeof(profile_ini), "%s/zelda3.ini",
              selected_rom.profile);
-    if (!CopyFileReplacing(profile_assets, kAssetsFilename) ||
+    if (!MigrateWideDefaults(profile_ini) ||
+        !CopyFileReplacing(profile_assets, kAssetsFilename) ||
         !CopyFileReplacing(profile_ini, "zelda3.ini"))
       return false;
     snprintf(profile, profile_size, "%s", selected_rom.profile);

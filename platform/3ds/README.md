@@ -42,10 +42,10 @@ physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
 `load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
 complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E15 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E16 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 15
+Short name:  Zelda 3DS EXP 16
 Long name:   A Link to the Past 3DS experimental 11
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
@@ -207,3 +207,35 @@ scans HID first and the subsequent native scan can clear `hidKeysUp()`.
 Release before one second sends game X; holding at least one second enables
 turbo without sending X on release. With turbo disabled, X is immediate.
 New X remains immediate, with its existing separate turbo controls.
+
+
+### E16 camera edges, circular transitions and startup
+
+In 240-line gameplay near a lower camera bound, the renderer moves its view
+up by the missing0–16 lines, shifts BG1/BG2 and sprites together, and restores
+the PPU registers after drawing. It does not move Link or the logical camera.
+Map views and224-line rendering are excluded. Extended spotlight windows
+follow the sprite offset. The extra rows stay within the existing scene.
+
+Old PICA recognizes a shared inverse window on every enabled plane, with
+black color clipping. It draws whole tiles and masks once at composition;
+independent windows retain the general renderer. Startup probes cover both
+paths and the240-line sprite/window offset. Dumps identify the fast path as
+`PICA200-shared-window`.
+
+The LCD remains black across selector teardown, SDL framebuffer allocation,
+format changes and renderer probes. Initialized targets are cleared before
+the first game presentation. The LCD gate wraps libctru's automatic unmask;
+there is one startup VBlank wait and no additional steady-state frame wait.
+
+On first E16 use, every ROM profile is migrated to WIDE/FixedCamera, on both
+Old and New. The atomic INI rewrite changes only those two options. Marker
+`zelda3.ini.wide-defaults-v1` sits beside the profile INI; later changes and
+restarts preserve user choices. New profiles get their own migration marker.
+Auto also now resolves to WIDE/FixedCamera on both models. This supersedes
+the historical Old Original/Standard first-run default.
+
+Old automatic map updates are deferred during iris modules15/16 and resume
+at the destination using the main thread's priority. Only actual touch
+requests use the preemptive UI priority. This avoids promoting a full map
+redraw above gameplay during a door transition; New scheduling is retained.
