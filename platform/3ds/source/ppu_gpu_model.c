@@ -116,8 +116,27 @@ static unsigned Band(PicaFrame *f,unsigned y,unsigned max) {
   unsigned count=f->bandEnd[y]-y;
   return count<max?count:max;
 }
+// Build bands from this pass's actual inputs. Unrelated Mode 7/HDMA state
+// must not split otherwise identical Mode 1 tiles into single scanlines.
+static void SelectBands(PicaFrame *f,unsigned kind,unsigned layer,unsigned sub) {
+  (void)sub;
+  if(kind!=1){memcpy(f->bandEnd,f->commonEnd,sizeof(f->bandEnd));return;}
+  for(unsigned y=f->height;y--;) {
+    f->bandEnd[y]=y+1;
+    if(f->commonEnd[y]>y+1 && !memcmp(f->lines[y].bytes+offsetof(Ppu,bgLayer)+layer*sizeof(BgLayer),
+       f->lines[y+1].bytes+offsetof(Ppu,bgLayer)+layer*sizeof(BgLayer),sizeof(BgLayer)))
+      f->bandEnd[y]=f->bandEnd[y+1];
+  }
+}
+static bool HasLayer(const PicaFrame *f,unsigned sub,unsigned mask) {
+  for(unsigned y=0;y<f->height;y++)
+    if((f->lines[y].bytes[offsetof(Ppu,screenEnabled)+sub]&mask) &&
+       (!sub || f->lines[y].bytes[offsetof(Ppu,addSubscreen)]))return true;
+  return false;
+}
 static bool Backgrounds(PicaFrame *f,unsigned sub) {
   unsigned group=sub*2;
+  SelectBands(f,0,0,sub);
   for(unsigned y=0;y<f->height;) {
     Ppu *p=Line(f,y); unsigned n=Band(f,y,f->height-y);
     unsigned alpha=sub?(!p->addSubscreen?255:127):((p->mathEnabled&32)?255:127);
@@ -126,7 +145,10 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
     if(!Emit(f,group,Solid(0,y,f->width,y+n,rgb,alpha))) return false;
     y+=n;
   }
-  for(unsigned layer=0;layer<3;layer++) for(unsigned y=0;y<f->height;) {
+  for(unsigned layer=0;layer<3;layer++) {
+   if(!HasLayer(f,sub,1u<<layer))continue;
+   SelectBands(f,1,layer,sub);
+   for(unsigned y=0;y<f->height;) {
     Ppu *p=Line(f,y); BgLayer *bg=&p->bgLayer[layer];
     unsigned wy=(y+1+bg->vScroll)&(bg->tilemapHigher?511:255);
     unsigned h=Band(f,y,8-(wy&7));
@@ -154,21 +176,29 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
       }
     }
     y+=h;
+   }
   }
   return true;
 }
 static bool Objects(PicaFrame *f,unsigned sub) {
-  // Row fragments preserve the exact SNES per-line OBJ/tile budgets. PICA's
-  // stencil claims opaque OBJ pixels even when their depth fails behind a BG,
-  // so a later, higher-priority sprite cannot leak through an earlier sprite.
+  // First select accepted slivers using the original per-line SNES limits.
+  // Then draw in OAM order, merging equal rows up to tile/window boundaries.
+  if(!HasLayer(f,sub,16))return true;
+  uint16_t active[128],first[128],last[128];unsigned activeCount=0;
+  for(unsigned index=0;index<256;index+=2)if((f->memory->oam[index]>>8)!=0xf0) {
+    active[activeCount++]=index;first[index/2]=f->height;last[index/2]=0;
+  }
+  uint8_t (*columns)[PICA_MAX_LINES]=f->atlas->objectColumns;
+  memset(columns,0,sizeof(f->atlas->objectColumns));
+  SelectBands(f,2,0,sub);
   for(unsigned y=0;y<f->height;y++) {
     Ppu *p=Line(f,y);
     if(p->forcedBlank || y>=224u+p->extraBottomCur || !(p->screenEnabled[sub]&16) || (sub&&!p->addSubscreen)) continue;
-    PpuWindowSpans win; PpuGetWindowSpans(p,4,(p->screenWindowed[sub]&16)!=0,&win);
     int sprites=33,tiles=35;
     if(p->renderFlags&kPpuRenderFlags_NoSpriteLimits) sprites=tiles=1024;
     bool stop=false;
-    for(unsigned index=0;index<256 && !stop;index+=2) {
+    for(unsigned item=0;item<activeCount && !stop;item++) {
+      unsigned index=active[item];
       unsigned yy=f->memory->oam[index]>>8;
       if(yy==0xf0) continue;
       unsigned row=(y-yy)&255;
@@ -179,33 +209,58 @@ static bool Objects(PicaFrame *f,unsigned sub) {
       x-=(x>=256+p->extraLeftRight)*512; x+=p->renderObjXOffset;
       if(x<=-(int)(size+p->extraLeftRight)) continue;
       if(--sprites==0) break;
-      unsigned attr=f->memory->oam[index+1];
-      if(attr&0x8000) row=size-1-row;
-      unsigned base=(attr&0x100)?p->objTileAdr2:p->objTileAdr1;
-      unsigned palette=128+((attr>>9)&7)*16;
-      unsigned z=((((attr>>12)&3)*4+2)*16+4+((attr&0x800)?0:2))<<8;
       for(unsigned col=0;col<size;col+=8) {
         int left=x+col;
         if(left<=-8-p->extraLeftRight || left>=256+p->extraLeftRight) continue;
         if(--tiles==0) {stop=true;break;}
-        unsigned usedcol=(attr&0x4000)?size-1-col:col;
-        unsigned usedtile=((((attr&255)>>4)+(row>>3))<<4)|(((attr&15)+(usedcol>>3))&15);
-        int slot=Tile(f,(base+usedtile*16)&0x7fff,palette,4);
-        if(slot==-1) return false;
-        if(slot==-2) continue;
-        for(unsigned i=0;i<win.nr;i++) {
-          if(win.bits&(1u<<i)) continue;
-          int l=IntMax(left,win.edges[i]),r=IntMin(left+8,win.edges[i+1]);
-          if(l>=r) continue;
-          if(!TileQuad(f,sub*2+1,slot,l+p->extraLeftRight,y,r-l,1,l-left,row&7,
-              attr&0x4000,false,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127))) return false;
-        }
+        columns[index/2][y]|=1u<<(col/8);
+        if(first[index/2]>y)first[index/2]=y;
+        last[index/2]=y+1;
       }
     }
+  }
+  for(unsigned item=0;item<activeCount;item++) {
+   unsigned index=active[item];
+   for(unsigned y=first[index/2];y<last[index/2];) {
+    unsigned mask=columns[index/2][y];
+    if(!mask){y++;continue;}
+    Ppu *p=Line(f,y);
+    unsigned yy=f->memory->oam[index]>>8;
+    unsigned high=f->memory->oam[0x100+(index>>4)]>>(index&15);
+    unsigned size=sizes[p->objSize][(high>>1)&1];
+    unsigned attr=f->memory->oam[index+1],row=(y-yy)&255;
+    bool vf=(attr&0x8000)!=0;
+    if(vf)row=size-1-row;
+    unsigned h=Band(f,y,vf?1+(row&7):8-(row&7));
+    for(unsigned dy=1;dy<h;dy++)if(columns[index/2][y+dy]!=mask){h=dy;break;}
+    int x=(f->memory->oam[index]&255)+(high&1)*256;
+    x-=(x>=256+p->extraLeftRight)*512;x+=p->renderObjXOffset;
+    unsigned base=(attr&0x100)?p->objTileAdr2:p->objTileAdr1;
+    unsigned palette=128+((attr>>9)&7)*16;
+    unsigned z=((((attr>>12)&3)*4+2)*16+4+((attr&0x800)?0:2))<<8;
+    PpuWindowSpans win;PpuGetWindowSpans(p,4,(p->screenWindowed[sub]&16)!=0,&win);
+    while(mask) {
+      unsigned col=__builtin_ctz(mask)*8;mask&=mask-1;int left=x+col;
+      unsigned usedcol=(attr&0x4000)?size-1-col:col;
+      unsigned usedtile=((((attr&255)>>4)+(row>>3))<<4)|(((attr&15)+(usedcol>>3))&15);
+      int slot=Tile(f,(base+usedtile*16)&0x7fff,palette,4);
+      if(slot==-1)return false;
+      if(slot==-2)continue;
+      for(unsigned i=0;i<win.nr;i++) {
+        if(win.bits&(1u<<i))continue;
+        int l=IntMax(left,win.edges[i]),r=IntMin(left+8,win.edges[i+1]);
+        if(l>=r)continue;
+        if(!TileQuad(f,sub*2+1,slot,l+p->extraLeftRight,y,r-l,h,l-left,vf?7-(row&7):row&7,
+          attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127)))return false;
+      }
+    }
+    y+=h;
+   }
   }
   return true;
 }
 static bool Compose(PicaFrame *f) {
+  SelectBands(f,3,0,0);
   for(unsigned cfg=0;cfg<16;cfg++) for(unsigned y=0;y<f->height;) {
     Ppu *p=Line(f,y);unsigned h=Band(f,y,f->height-y);
     PpuWindowSpans win;PpuGetWindowSpans(p,5,true,&win);
@@ -227,12 +282,13 @@ static bool Compose(PicaFrame *f) {
 bool PicaBuildFrame(PicaFrame *f) {
   memset(f->quads,0,sizeof(f->quads)); f->failure=NULL;
   if(f->width>512 || f->height>240 || !f->width || !f->height) { f->failure="dimensions";return false; }
-  // Compare adjacent states once, not again for every BG/compose pass.
-  // On ARM11 repeated long-prefix memcmp was most of geometry preparation.
+  // Snapshot fields before VRAM access contain common visible state. Ignore
+  // access latches, unrelated backgrounds and all Mode 7 registers in Mode 1.
   for(unsigned y=f->height;y--;) {
-    f->bandEnd[y]=y+1;
-    if(y+1<f->height && !memcmp(&f->lines[y],&f->lines[y+1],sizeof(PicaLine)))
-      f->bandEnd[y]=f->bandEnd[y+1];
+    f->commonEnd[y]=y+1;
+    if(y+1<f->height && !memcmp(f->lines[y].bytes+offsetof(Ppu,extraLeftCur),
+       f->lines[y+1].bytes+offsetof(Ppu,extraLeftCur),
+       offsetof(Ppu,vramPointer)-offsetof(Ppu,extraLeftCur)))f->commonEnd[y]=f->commonEnd[y+1];
   }
   for(unsigned y=0;y<f->height;y++) {
     Ppu *p=Line(f,y);
