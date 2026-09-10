@@ -299,25 +299,28 @@ static bool CStickIsHeld(u32 keys) {
 uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   hidScanInput();
   u32 keys = hidKeysHeld();
-  u32 keys_up = hidKeysUp();
   static uint64_t old_3ds_x_hold_start_ms;
+  static bool old_3ds_x_was_held;
   static bool old_3ds_x_turbo_was_active;
   bool old_3ds_x_turbo = false;
   bool old_3ds_x_tap = false;
-  if (!g_is_new_3ds && (keys & KEY_X)) {
+  bool delayed_x = !g_is_new_3ds && g_turbo_multiplier > 0;
+  if (delayed_x && (keys & KEY_X)) {
     uint64_t now_ms = osGetTime();
-    if (old_3ds_x_hold_start_ms == 0)
+    if (!old_3ds_x_was_held)
       old_3ds_x_hold_start_ms = now_ms;
+    old_3ds_x_was_held = true;
     old_3ds_x_turbo = now_ms - old_3ds_x_hold_start_ms >= 1000;
     if (old_3ds_x_turbo)
       old_3ds_x_turbo_was_active = true;
   } else {
-    if (!g_is_new_3ds && (keys_up & KEY_X) &&
-        old_3ds_x_hold_start_ms != 0 &&
+    // SDL pumps HID before us, so a second scan can erase hidKeysUp().
+    // Track our own held transition; ReadInput runs only before logic steps.
+    if (delayed_x && old_3ds_x_was_held &&
         !old_3ds_x_turbo_was_active &&
         osGetTime() - old_3ds_x_hold_start_ms < 1000)
       old_3ds_x_tap = true;
-    old_3ds_x_hold_start_ms = 0;
+    old_3ds_x_was_held = false;
     old_3ds_x_turbo_was_active = false;
   }
   static bool quick_dump_combo_was_held;
@@ -346,7 +349,7 @@ uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier) {
   if (keys & KEY_START) input |= 1u << 3;
   if ((keys & KEY_A) && !quick_dump_combo) input |= 1u << 8;
   if ((keys & KEY_B) && !version_combo) input |= 1u << 0;
-  if (g_is_new_3ds ? (keys & KEY_X) : old_3ds_x_tap)
+  if (delayed_x ? old_3ds_x_tap : (keys & KEY_X))
     input |= 1u << 9;
   if (keys & KEY_Y) input |= 1u << 1;
   if ((keys & KEY_L) && !version_combo) input |= 1u << 10;
@@ -3254,7 +3257,8 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->enhanced_mode7 = false;
   config->new_renderer = true;
   config->no_sprite_limits = false;
-  config->extend_y = false;
+  // PR #31: render 16 extra lines in WIDE instead of stretching 224 lines.
+  config->extend_y = g_display_mode == kPlatform3DSDisplayUltraWideMod;
   config->extended_aspect_ratio =
     g_display_mode == kPlatform3DSDisplayUltraWideMod ? 72 : 0;
   config->features0 &= ~(kFeatures0_ExtendScreen64 |
