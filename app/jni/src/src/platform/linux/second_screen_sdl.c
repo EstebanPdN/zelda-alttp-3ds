@@ -1478,6 +1478,7 @@ static LightEvent ss_worker_done;
 static int ss_worker_logic_frames;
 static s32 ss_worker_idle_priority;
 static s32 ss_worker_interactive_priority;
+static s32 ss_worker_scene_priority;
 static bool ss_worker_interactive;
 static uint64_t ss_full_redraw_count;
 static uint64_t ss_full_redraw_total_ticks;
@@ -1518,6 +1519,13 @@ enum {
 
 static void request_bottom_redraw(uint32_t request) {
   __atomic_fetch_or(&ss_redraw_requests, request, __ATOMIC_RELEASE);
+}
+
+// Automatic scene work shares the main thread's priority. Only real touch
+// requests may preempt gameplay; a full map redraw can otherwise block an iris.
+static void prioritize_bottom_scene(void) {
+  if (!ss_is_new_3ds && ss_worker_thread)
+    svcSetThreadPriority(threadGetHandle(ss_worker_thread), ss_worker_scene_priority);
 }
 
 static void prioritize_bottom_touch(void) {
@@ -1725,6 +1733,10 @@ static void request_bottom_redraw_on_state_change(void) {
   memset(&current, 0, sizeof(current));
   SS_ReadSram(local_sram, sizeof(local_sram));
   current.module = SS_GetModule() & 0xff;
+  // Keep the last map during door open/close; compare against that stable
+  // state after the iris, instead of rebuilding for each temporary module.
+  if (!ss_is_new_3ds && (current.module == 15 || current.module == 16))
+    return;
   current.area = SS_GetArea();
   current.dungeon = SS_GetDungeon();
   current.indoors = SS_IsIndoors() ? 1 : 0;
@@ -1764,11 +1776,11 @@ static void request_bottom_redraw_on_state_change(void) {
   if (!ss_is_new_3ds && initialized && tab == TAB_MAP &&
       (current.module != previous.module || current.area != previous.area ||
        current.dungeon != previous.dungeon || current.indoors != previous.indoors)) {
-    // Finish a stale map promptly at room/scene boundaries instead of leaving
-    // an idle-priority redraw starved behind a continuously busy top renderer.
+    // Refresh the destination map without preempting the top renderer.
     ss_scene_redraw_pending = true;
     ss_worker_interactive = true;
-    prioritize_bottom_touch();
+    if (!ss_touch_redraw_pending && !ss_worker_touch_request_ticks)
+      prioritize_bottom_scene();
   }
   bool hud_changed = initialized &&
     (current.health_cap != previous.health_cap ||
@@ -2309,6 +2321,7 @@ static bool ensure_second_screen_worker(void) {
   LightEvent_Init(&ss_worker_done, RESET_ONESHOT);
   s32 main_priority = 0x30;
   svcGetThreadPriority(&main_priority, CUR_THREAD_HANDLE);
+  ss_worker_scene_priority = main_priority;
   ss_worker_idle_priority = main_priority < 0x3f ? main_priority + 1 :
                                                    main_priority;
   ss_worker_interactive_priority = main_priority > 0 ? main_priority - 1 :
@@ -2383,9 +2396,10 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
     if (!ss_worker_sidebar_patch && !ss_is_new_3ds &&
         (ss_touch_redraw_pending || ss_scene_redraw_pending)) {
       ss_worker_touch_request_ticks = ss_touch_redraw_pending ? ss_touch_request_ticks : 0;
-      ss_touch_redraw_pending = ss_scene_redraw_pending = false;
       ss_worker_interactive = true;
-      prioritize_bottom_touch();
+      if (ss_touch_redraw_pending) prioritize_bottom_touch();
+      else prioritize_bottom_scene();
+      ss_touch_redraw_pending = ss_scene_redraw_pending = false;
     }
     ss_worker_logic_frames = logic_frames;
     ss_worker_busy = true;

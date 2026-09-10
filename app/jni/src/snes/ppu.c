@@ -84,6 +84,7 @@ void ppu_reset(Ppu* ppu) {
   ppu->extraRightCur = 0;
   ppu->extraBottomCur = 0;
   ppu->renderObjXOffset = 0;
+  ppu->renderObjYOffset = 0;
   ppu->spriteLinesValid = false;
   ppu->windowExtLeft = ppu->windowExtRight = NULL;
   ppu->vramPointer = 0;
@@ -191,6 +192,7 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   ppu->renderPitch = (uint)pitch;
   ppu->renderBuffer = pixels;
   ppu->renderObjXOffset = 0;
+  ppu->renderObjYOffset = 0;
   uint64_t prepare_start = 0;
   if (render_flags & kPpuRenderFlags_Old3DS) {
     uint32_t frame = ppu->phase.frame + 1;
@@ -1210,8 +1212,9 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
   }
 
   if (ppu->windowExtLeft) {
-    ppu->windowExtLeftCur = ppu->windowExtLeft[y - 1];
-    ppu->windowExtRightCur = ppu->windowExtRight[y - 1];
+    int wy = y - 1 - ppu->renderObjYOffset;
+    ppu->windowExtLeftCur = wy >= 0 ? ppu->windowExtLeft[wy] : 0;
+    ppu->windowExtRightCur = wy >= 0 ? ppu->windowExtRight[wy] : -1;
   }
 
   if (ppu->mode == 7 && (ppu->renderFlags & kPpuRenderFlags_4x4Mode7)) {
@@ -1646,6 +1649,7 @@ static bool ppu_getWindowState(Ppu* ppu, int layer, int x) {
 }
 
 static bool ppu_evaluateSprites(Ppu* ppu, int line) {
+  line -= ppu->renderObjYOffset;
   // TODO: iterate over oam normally to determine in-range sprites,
   //   then iterate those in-range sprites in reverse for tile-fetching
   // TODO: rectangular sprites, wierdness with sprites at -256
@@ -1718,6 +1722,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
 }
 
 static bool PpuEvaluateVisibleSprites(Ppu *ppu, int line) {
+  line -= ppu->renderObjYOffset;
   // Old-only candidate iteration; all fetch/priority rules match the base path.
   int spritesLeft = 32 + 1, tilesLeft = 34 + 1;
   uint8 spriteSizes[2] = { kSpriteSizes[ppu->objSize][0], kSpriteSizes[ppu->objSize][1] };

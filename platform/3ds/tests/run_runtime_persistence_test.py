@@ -18,10 +18,12 @@ code=r'''
 #include <string.h>
 #include <strings.h>
 #include <assert.h>
+#include <sys/stat.h>
 #define __3DS__ 1
 #define SDL_strcasecmp strcasecmp
 #define SDL_strncasecmp strncasecmp
 #define Platform3DS_LogRuntime(...) ((void)0)
+#define LogSetup(...) ((void)0)
 enum {kPlatform3DSDisplayOriginal,kPlatform3DSDisplayUltraWideMod,kPlatform3DSDisplayStretch};
 enum {kPlatform3DSWideEdgeStandard,kPlatform3DSWideEdgeFixedCamera};
 enum {kPlatform3DSCStickDisabled,kPlatform3DSCStickTurbo};
@@ -33,21 +35,24 @@ static bool ParseBool(const char *v,bool *b){*b=atoi(v)!=0;return true;}
 '''
 for signature in ['static bool CopyFileReplacing(const char *source, const char *destination) {','void Platform3DS_PersistRuntimeSettings(void)', 'static void Platform3DS_ApplyAutoDisplayDefaults(void)', 'static char *Trim(char *text)', 'static void LoadRuntimeSetting(const char *key, const char *value)', 'void Platform3DS_LoadRuntimeSettings(void)']:
  code+=function(s,signature)
+code+=function(s,'static bool IsRegularFile(const char *path) {')
+code+=function(s,'static bool MigrateWideDefaults(')
 code+=function(u,'static void update_ini(')
 code+=r'''
 int main(int argc,char **argv) {
  assert(argc==3);g_is_new_3ds=atoi(argv[1]);
+ assert(MigrateWideDefaults("profiles/test-rom/zelda3.ini"));
  // Exact boot restore operation used by ResolveActiveProfile.
  assert(CopyFileReplacing("profiles/test-rom/zelda3.ini","zelda3.ini"));
  Platform3DS_LoadRuntimeSettings();
  if(!strcmp(argv[2],"change")) {
-  assert(g_display_mode==(g_is_new_3ds?1:0));assert(g_wide_edge_mode==(g_is_new_3ds?1:0));
-  update_ini("[General]","DisplayMode",g_is_new_3ds?"Original":"Wide");
-  update_ini("[General]","WideEdgeMode",g_is_new_3ds?"Standard":"FixedCamera");
+  assert(g_display_mode==1);assert(g_wide_edge_mode==1);
+  update_ini("[General]","DisplayMode","Original");
+  update_ini("[General]","WideEdgeMode","Standard");
   update_ini("[General]","WideZoom","1.5");
   update_ini("[General]","CStickTurboMultiplier","2");
  } else {
-  assert(g_display_mode==(g_is_new_3ds?0:1));assert(g_wide_edge_mode==(g_is_new_3ds?0:1));
+  assert(g_display_mode==0);assert(g_wide_edge_mode==0);
   assert(g_wide_zoom_index==2);assert(g_turbo_multiplier==2);
  }
  return 0;
@@ -56,10 +61,11 @@ int main(int argc,char **argv) {
 with tempfile.TemporaryDirectory(prefix='alttp-settings-') as t:
  p=Path(t);(p/'test.c').write_text(code)
  subprocess.run(['cc','-O1','-fsanitize=address,undefined',str(p/'test.c'),'-o',str(p/'test')],check=True)
- for model in range(2):
+ for model in range(4):
   cwd=p/str(model);profile=cwd/'profiles/test-rom';profile.mkdir(parents=True)
-  (profile/'zelda3.ini').write_text('[General]\nDisplayMode = Auto\nWideEdgeMode = Auto\n[Sound]\nEnableAudio = 1\n')
+  (profile/'zelda3.ini').write_text('[General]\nDisplayMode = '+('Auto' if model<2 else 'Original')+'\nWideEdgeMode = '+('Auto' if model<2 else 'Standard')+'\nWideZoom = 1.2\n[Sound]\nEnableAudio = 1\n')
   for action in ['change','reopen','reopen']:
-   subprocess.run([str(p/'test'),str(model),action],cwd=cwd,check=True)
+   subprocess.run([str(p/'test'),str(model%2),action],cwd=cwd,check=True)
+  assert (profile/'zelda3.ini.wide-defaults-v1').read_text()=='1\n'
   assert 'EnableAudio = 1' in (profile/'zelda3.ini').read_text()
- print('PASS actual menu INI writes survive two process restarts; Old and New defaults, display, edge, zoom, turbo; unrelated keys retained')
+ print('PASS one-time migration for fresh and existing Old/New profiles; subsequent Original/Standard/zoom/turbo menu writes survive two fresh process restarts; marker and unrelated keys retained')
