@@ -161,3 +161,10 @@ black backdrop. Pending automatic bottom redraws wait through door modules;
 an already running automatic worker drops below gameplay until the iris ends.
 Retained hearts and explicit touch handling are preserved. This is a local
 hardware-test candidate; the owner will test performance on their 3DS.
+
+E21 also creates libctru's APT notification handler at priority 0x19 instead
+of 0x31, so HOME/sleep requests can preempt continuously busy game/UI work.
+The wrapper is scoped to aptInit's 4KiB detached default-core event thread;
+all other threads pass through. If creation is rejected, original priority is
+retried. Runtime diagnostics record the selected priority. Hardware HOME delay
+and resume behavior remain for the owner to verify; no Azahar acceptance.

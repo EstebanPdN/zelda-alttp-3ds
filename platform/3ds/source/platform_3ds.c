@@ -700,6 +700,8 @@ uint32_t Platform3DS_GetActiveProfileId(void) {
 bool Platform3DS_InitTopPresenter(void) {
   Platform3DS_RegisterAptHook();
   Platform3DS_DetectModel();
+  extern int Platform3DS_GetAptEventPriority(void);
+  Platform3DS_LogRuntime("APT notification thread priority: 0x%x", Platform3DS_GetAptEventPriority());
   g_c2d_flush_base = NULL;
   g_c2d_flush_size = 0;
   g_cache_clean_mode = 0;
