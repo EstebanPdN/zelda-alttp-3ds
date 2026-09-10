@@ -168,6 +168,15 @@ static float         u = 1.0f;
 static SDL_Texture *tex_map[2], *tex_icons, *tex_glyphs, *tex_letters, *tex_face;
 static SDL_Texture *tex_floor, *tex_mapicons;
 static SDL_Texture *tex_bg_menu, *tex_bg_parch, *tex_bg_stone;
+#ifdef __3DS__
+#include "bottom_hearts.h"
+static BottomHearts ss_worker_hearts[2], ss_display_hearts;
+static uint8_t *ss_old_display_pixels;
+static bool ss_old_display_valid;
+static void capture_bottom_hearts(int count, int size, int columns, int step,
+                                 int x, int y);
+#endif
+
 static SDL_Texture *tex_triforce;
 static bool ss_is_new_3ds;  // Model is set before drawing the cinema card.
 static bool art_ready;
@@ -518,6 +527,12 @@ static bool try_load_art(void) {
   SS_RenderIconSheet(buf);
   tex_icons = make_tex(SS_ICON_COLS * 16, ((kIconCount + kIconCols - 1) / kIconCols) * 16, buf, true);
   SS_RenderGlyphSheet(buf);
+#ifdef __3DS__
+  if (!ss_is_new_3ds) {
+    const int cells[] = {SS_GLYPH_HEART_EMPTY, SS_GLYPH_HEART_HALF, SS_GLYPH_HEART_FULL};
+    BottomHearts_LoadGlyphs(buf, SS_GLYPH_COLS * 8, cells, SS_GLYPH_COLS);
+  }
+#endif
   tex_glyphs = make_tex(SS_GLYPH_COLS * 8, ((kGlyphCount + kGlyphCols - 1) / kGlyphCols) * 8, buf, true);
   SS_RenderLetterSheet(buf);
   tex_letters = make_tex(16 * 8, 2 * 8, buf, true);
@@ -954,6 +969,9 @@ static void draw_sidebar(float x, float y, float w, float h, bool dungeon_mode) 
 
   // hearts (live health)
   float hx0 = floorf(x + (w - (heart_cols - 1) * hs - heart_px) / 2 + 0.5f);
+#if defined(__3DS__) || defined(ZELDA3_TEST_BOTTOM_HEARTS)
+  capture_bottom_hearts(cap, (int)heart_px, heart_cols, (int)hs, (int)hx0, (int)hy);
+#endif
   for (int i = 0; i < cap; i++) {
     int g = i < (cur >> 3) ? SS_GLYPH_HEART_FULL
           : (i == (cur >> 3) && (cur & 7) >= 4 ? SS_GLYPH_HEART_HALF : SS_GLYPH_HEART_EMPTY);
@@ -1507,6 +1525,13 @@ static int bottom_buffer_pitch(void) {
   return k3DSBottomTextureWidth * bottom_bytes_per_pixel();
 }
 
+static void capture_bottom_hearts(int count, int size, int columns, int step,
+                                 int x, int y) {
+  if (!ss_is_new_3ds && ss_old_display_pixels)
+    BottomHearts_Capture(&ss_worker_hearts[ss_worker_buffer], ss_r,
+      count, size, columns, step, x, y, sram8(0x6d), sram8(0x6c), sram8(0x7b) >= 1);
+}
+
 static uint32_t bottom_sdl_pixel_format(void) {
   return ss_is_new_3ds ? SDL_PIXELFORMAT_ARGB8888 : SDL_PIXELFORMAT_RGB565;
 }
@@ -1533,14 +1558,12 @@ static void prioritize_bottom_touch(void) {
     svcSetThreadPriority(threadGetHandle(ss_worker_thread),
                          ss_worker_interactive_priority);
 }
-// Short HUD patches may preempt gameplay briefly. A full/map render already
-// in progress only gets the game's priority, so damage cannot promote a long
-// map rebuild above the game thread.
+// Automatic HUD work must not outrank gameplay. Only touch may preempt it.
+// Old health-only updates bypass the worker through the retained heart layer.
 static s32 bottom_worker_priority(void) {
-  if (ss_worker_touch_request_ticks ||
-      (ss_worker_sidebar_patch && !ss_worker_map_patch))
+  if (ss_worker_touch_request_ticks)
     return ss_worker_interactive_priority;
-  if (ss_worker_interactive ||
+  if (ss_worker_interactive || ss_worker_sidebar_patch ||
       (__atomic_load_n(&ss_redraw_requests, __ATOMIC_ACQUIRE) & kBottomRedrawHud))
     return ss_worker_scene_priority;
   return ss_worker_idle_priority;
@@ -1704,6 +1727,13 @@ static bool ensure_window(void) {
     return false;
   }
 #endif
+#ifdef __3DS__
+  if (!ss_is_new_3ds) {
+    ss_old_display_pixels = linearMemAlign(k3DSBottomTextureWidth * k3DSBottomTextureHeight * 2, 64);
+    if (!ss_old_display_pixels)
+      Platform3DS_LogRuntime("Bottom hearts: retained buffer unavailable; using worker fallback");
+  }
+#endif
   u = unit_for_size(W, H);
   printf("second screen: display %d of %d, %dx%d (u=%.2f)\n", target, n, W, H, u);
 #ifdef __3DS__
@@ -1803,7 +1833,8 @@ static void request_bottom_redraw_on_state_change(void) {
   }
   bool hud_changed = initialized &&
     (current.health_cap != previous.health_cap ||
-     current.health_cur != previous.health_cur ||
+     ((ss_is_new_3ds || !ss_old_display_pixels) &&
+      current.health_cur != previous.health_cur) ||
      current.magic != previous.magic ||
      current.keys != previous.keys ||
      current.bombs != previous.bombs ||
@@ -2180,6 +2211,10 @@ void SecondScreenSDL_Handle3DSTouch(void) {
 
 static void draw_second_screen(int logic_frames) {
   if (!ss_enabled) return;
+#ifdef __3DS__
+  // A cinema/settings/gear frame must never inherit a previous heart layout.
+  if (!ss_is_new_3ds) ss_worker_hearts[ss_worker_buffer].valid = false;
+#endif
 #ifndef __3DS__
   static uint32_t frame_no;
   frame_no++;
@@ -2439,11 +2474,32 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
 
 void SecondScreenSDL_Update(int logic_frames) {
   (void)logic_frames;
-  if (!ss_frame_ready || ss_front_buffer < 0)
-    return;
-  Platform3DS_PresentBottomFrame(
-    ss_present_pixels[ss_front_buffer],
-    bottom_buffer_pitch(), W, H);
+  if (ss_front_buffer < 0) return;
+  if (!ss_is_new_3ds && ss_old_display_pixels) {
+    bool changed = ss_frame_ready;
+    if (ss_frame_ready) {
+      // BeginFrame has consumed worker_done; no new Old job may start until
+      // this frame is presented. Copy into main-owned storage once per UI job.
+      memcpy(ss_old_display_pixels, ss_present_pixels[ss_front_buffer],
+             k3DSBottomTextureWidth * k3DSBottomTextureHeight * 2);
+      ss_display_hearts = ss_worker_hearts[ss_front_buffer];
+      ss_old_display_valid = true;
+    }
+    uint8_t live[0x80];
+    SS_ReadSram(live, sizeof(live));
+    if (ss_old_display_valid && ss_display_hearts.valid &&
+        (tab == TAB_MAP || tab == TAB_ITEMS) &&
+        mode_for_module(SS_GetModule() & 0xff) == MODE_GAME &&
+        ss_display_hearts.capacity == live[0x6c] &&
+        ss_display_hearts.half_magic == (live[0x7b] >= 1))
+      changed |= BottomHearts_Apply(&ss_display_hearts, ss_old_display_pixels,
+                                   bottom_buffer_pitch(), live[0x6d]) != 0;
+    if (changed)
+      Platform3DS_PresentBottomFrame(ss_old_display_pixels, bottom_buffer_pitch(), W, H);
+  } else if (ss_frame_ready) {
+    Platform3DS_PresentBottomFrame(ss_present_pixels[ss_front_buffer],
+                                  bottom_buffer_pitch(), W, H);
+  }
   ss_frame_ready = false;
 }
 
@@ -2468,7 +2524,11 @@ bool SecondScreenSDL_WriteDiagnostics(const char *directory) {
   fprintf(f, "worker_priority idle/interactive=0x%lx/0x%lx interactive=%d\n",
           (unsigned long)ss_worker_idle_priority, (unsigned long)ss_worker_interactive_priority,
           ss_worker_interactive);
-  bool capture = !ss_worker_busy && ss_front_buffer >= 0 && ss_present_pixels[ss_front_buffer];
+  const uint8_t *capture_pixels = !ss_is_new_3ds && ss_old_display_valid ?
+    ss_old_display_pixels : (!ss_worker_busy && ss_front_buffer >= 0 ? ss_present_pixels[ss_front_buffer] : NULL);
+  bool capture = capture_pixels != NULL;
+  fprintf(f, "retained_hearts=%d heart_layer_valid=%d displayed_health=%d\n",
+          ss_old_display_valid, ss_display_hearts.valid, ss_display_hearts.health);
   fprintf(f, "Source pixel capture: %s\n", capture ? "bottom-ui.raw; linear little-endian, 512x256 including padding" : "omitted (no stable front buffer)");
   if (!ss_worker_busy) {
     fprintf(f, "grid_x/y/cell=%.6f,%.6f,%.6f room=%d floor=%d palace=%d\n",
@@ -2485,7 +2545,7 @@ bool SecondScreenSDL_WriteDiagnostics(const char *directory) {
     f = fopen(path, "wb");
     if (!f) return false;
     size_t size = (size_t)bottom_buffer_pitch() * k3DSBottomTextureHeight;
-    ok = fwrite(ss_present_pixels[ss_front_buffer], 1, size, f) == size && ok;
+    ok = fwrite(capture_pixels, 1, size, f) == size && ok;
     ok = fclose(f) == 0 && ok;
   }
   return ok;
@@ -2576,6 +2636,13 @@ void SecondScreenSDL_Shutdown(void) {
     linearFree(ss_present_pixels[i]);
     ss_present_pixels[i] = NULL;
   }
+#endif
+#ifdef __3DS__
+  linearFree(ss_old_display_pixels);
+  ss_old_display_pixels = NULL;
+  ss_old_display_valid = false;
+  memset(ss_worker_hearts, 0, sizeof(ss_worker_hearts));
+  memset(&ss_display_hearts, 0, sizeof(ss_display_hearts));
 #endif
   // A ROM restart reuses these statics. No job or completed frame from the
   // old renderer may survive after its events/buffers have been destroyed.
