@@ -34,6 +34,9 @@
 #include "android_logging.h"
 #ifdef __3DS__
 #include "platform_3ds.h"
+#include "updater.h"
+extern bool SecondScreenSDL_UpdateIsOpen(void);
+extern bool SecondScreenSDL_UpdateNotesPage(unsigned *page);
 #include "ppu_gpu.h"
 #endif
 
@@ -122,6 +125,7 @@ static uint32 TicksToMicroseconds(uint64 ticks) {
 // Error returns and Die() must stop workers before libctru unmaps their heap
 // stacks. The normal ROM-switch path still performs its existing cleanup.
 static void Shutdown3DSRuntimeAtExit(void) {
+  Updater_Shutdown();
   SDL_QuitSubSystem(SDL_INIT_AUDIO);
   ZeldaShutdownPpuWorker();
   SecondScreenSDL_Shutdown();
@@ -618,6 +622,10 @@ int main(int argc, char** argv) {
   if (atexit(Shutdown3DSRuntimeAtExit) != 0)
     return 1;
 #endif
+#ifdef __3DS__
+  const char *update_launch_path = argc > 0 ? argv[0] : NULL;
+  bool restart_fresh = false;
+#endif
   argc--, argv++;
   const char *config_file = NULL;
   if (argc >= 2 && strcmp(argv[0], "--config") == 0) {
@@ -819,12 +827,17 @@ restart_3ds_runtime:
   bool system_exit_requested = false;
 #endif
 
+#ifdef __3DS__
+  Updater_Init(update_launch_path);
+  if (g_config.autosave && !restart_fresh)
+#else
   if (g_config.autosave)
+#endif
     HandleCommand(kKeys_Load + 0, true);
 
   while(running) {
 #ifdef __3DS__
-    if (Platform3DS_ShouldExit()) {
+    if (Platform3DS_ShouldExit() || Updater_ShouldClose()) {
       system_exit_requested = true;
       running = false;
       break;
@@ -879,6 +892,23 @@ restart_3ds_runtime:
     if (!running)
       break;
 
+#ifdef __3DS__
+    if (SecondScreenSDL_UpdateIsOpen()) {
+      if (!audiopaused && device) SDL_PauseAudioDevice(device, 1);
+      audiopaused = true;
+      SecondScreenSDL_BeginFrame(1);
+      unsigned update_page;
+      bool show_notes = SecondScreenSDL_UpdateNotesPage(&update_page);
+      Platform3DS_PresentUpdatePage(show_notes, update_page);
+      SecondScreenSDL_Update(1);
+      Platform3DS_EndFrame();
+      SDL_Delay(16);
+      logic_last_counter = SDL_GetPerformanceCounter();
+      logic_accumulator = 0;
+      last_render_counter = 0;
+      continue;
+    }
+#endif
     if (g_paused != audiopaused) {
       audiopaused = g_paused;
       if (device)
@@ -1092,8 +1122,10 @@ restart_3ds_runtime:
   SDL_DestroyWindow(window);
   SDL_Quit();
 #ifdef __3DS__
-  if (Platform3DS_TakeRomSelectionRequest())
+  if (Platform3DS_TakeRomSelectionRequest()) {
+    restart_fresh = true;
     goto restart_3ds_runtime;
+  }
 #endif
   //SaveConfigFile();
   return 0;

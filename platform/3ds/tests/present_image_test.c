@@ -74,7 +74,7 @@ int main(void) {
   assert(correct==4 && wrong==4);
   for(unsigned model=0;model<2;model++) {
     const Platform3DSHardwareProfile *p=Platform3DS_ProfileForModel(model);
-    assert(p->old_ppu==!model && p->live_palette_upload==!model);
+    assert(p->old_ppu==!model && p->live_palette_upload);
     assert(p->rgb565_ui_textures==!model && p->integer_ui_rounding);
     for(unsigned frame=0;frame<4096;frame++) {
       expected[0]=frame*97;expected[1]=frame*11;expected[2]=frame*31;

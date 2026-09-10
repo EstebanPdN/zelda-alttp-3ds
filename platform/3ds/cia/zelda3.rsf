@@ -107,6 +107,9 @@ AccessControlInfo:
 
   ServiceAccessControl:
     - APT:U
+    - ac:u
+    - soc:U
+    - am:net
     - cfg:u
     - dsp::DSP
     - fs:USER
@@ -120,6 +123,9 @@ SystemControlInfo:
   StackSize: 0x40000
 
   Dependency:
+    am: 0x0004013000001502
+    ac: 0x0004013000002402
+    socket: 0x0004013000002e02
     cfg: 0x0004013000001702
     dsp: 0x0004013000001a02
     gsp: 0x0004013000001c02

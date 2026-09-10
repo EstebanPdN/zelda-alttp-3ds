@@ -20,6 +20,7 @@
 #ifdef __3DS__
 #include <3ds.h>
 #include "platform_3ds.h"
+#include "updater.h"
 #else
 enum Platform3DSDisplayMode {
   kPlatform3DSDisplayOriginal,
@@ -207,7 +208,11 @@ static bool ss_needs_rebuild;
 
 // touch rects recomputed every draw, used by the tap handler
 static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_ring_r;
-static RectFS settings_row_r[6], remap_row_r[6], remap_back_r;
+static bool update_mode, update_confirm, update_show_notes;
+static unsigned update_page;
+static RectFS update_release_r, update_prev_r, update_next_r;
+static RectFS update_back_r, update_channel_r, update_action_r;
+static RectFS settings_row_r[5], remap_row_r[6], remap_back_r;
 static RectFS remap_page_r;
 static RectFS screen_row_r[4], screen_back_r;
 static RectFS cinema_back_r;
@@ -374,9 +379,12 @@ static void draw_text(const char *s, float x, float y, float sc) {
   float cx = x;
   for (; *s; s++) {
     char ch = *s;
+    if (ch >= 'a' && ch <= 'z') ch -= 'a' - 'A';
     if (ch == ' ') { cx += 5 * sc; continue; }
     if (ch >= '0' && ch <= '9') draw_glyph(kDigitGlyph[ch - '0'], cx, y, sc);
     else if (ch >= 'A' && ch <= 'Z') draw_cell(tex_letters, kSS_LetterCell[ch - 'A'], 8, SS_LETTER_COLS, cx, y, sc);
+    else if (ch == '.') fill_rect(cx + 3 * sc, y + 6 * sc, 2 * sc, 2 * sc, COL(255, 255, 255));
+    else if (ch == '-') fill_rect(cx + sc, y + 3 * sc, 6 * sc, sc, COL(255, 255, 255));
     cx += 8 * sc;
   }
 }
@@ -1090,6 +1098,8 @@ static void leave_remap(void) {
 
 static void leave_settings_submenu(void) {
   leave_remap();
+  update_mode = update_confirm = update_show_notes = false;
+  update_page = 0;
   screen_mode = false;
   developer_mode = false;
   developer_overlay_mode = false;
@@ -1379,8 +1389,64 @@ static void draw_developer_overlay_panel(RectFS r) {
   }
 }
 
+static void draw_update_panel(RectFS r) {
+  draw_text("UPDATE", r.x + r.w / 2 - text_width("UPDATE", 3 * u) / 2,
+            r.y + 18 * u, 3 * u);
+  update_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
+  draw_settings_row(&update_back_r, false);
+  draw_text("BACK", update_back_r.x + 16 * u, update_back_r.y + 10 * u, 2 * u);
+#ifdef __3DS__
+  UpdateStatus st; Updater_GetStatus(&st);
+  update_channel_r = (RectFS){r.x + 28 * u, r.y + 62 * u, r.w - 56 * u, 44 * u};
+  draw_settings_row(&update_channel_r, false);
+  const char *channel = st.prerelease ? "PRE-RELEASE" : "STABLE";
+  draw_text("CHANNEL", update_channel_r.x + 16 * u, update_channel_r.y + 16 * u, 2 * u);
+  draw_text(channel, update_channel_r.x + update_channel_r.w - 16 * u - text_width(channel, 2 * u),
+            update_channel_r.y + 16 * u, 2 * u);
+  update_release_r = (RectFS){r.x + 28 * u, r.y + 119 * u, r.w - 56 * u, 44 * u};
+  draw_settings_row(&update_release_r, update_show_notes);
+  const char *release_name = st.version[0] ? st.version : "NO RELEASE SELECTED";
+  draw_text(release_name, r.x + r.w / 2 - text_width(release_name, 2 * u) / 2,
+            update_release_r.y + 14 * u, 2 * u);
+  const char *message = update_confirm ? "DOWNLOAD AND INSTALL" : st.message;
+  if (!message[0]) message = "CHECK FOR UPDATE";
+  draw_text(message, r.x + r.w / 2 - text_width(message, 2 * u) / 2,
+            r.y + 184 * u, 2 * u);
+  const char *hint = update_confirm ? "UNSAVED PROGRESS IS LOST" :
+    update_show_notes ? "CHANGELOG ON TOP SCREEN" : "TAP THE RELEASE FOR CHANGELOG";
+  draw_text(hint, r.x + r.w / 2 - text_width(hint, 1.7f * u) / 2,
+            r.y + 216 * u, 1.7f * u);
+  update_prev_r = (RectFS){r.x + 28 * u, r.y + 246 * u, 100 * u, 34 * u};
+  update_next_r = (RectFS){r.x + r.w - 128 * u, r.y + 246 * u, 100 * u, 34 * u};
+  if (update_show_notes && !update_confirm) {
+    draw_settings_row(&update_prev_r, false); draw_settings_row(&update_next_r, false);
+    draw_text("PREV", update_prev_r.x + 22 * u, update_prev_r.y + 10 * u, 1.8f * u);
+    draw_text("NEXT", update_next_r.x + 22 * u, update_next_r.y + 10 * u, 1.8f * u);
+  }
+  const char *action = update_confirm ? "INSTALL UPDATE" :
+    st.state == UPDATE_AVAILABLE ? "DOWNLOAD UPDATE" :
+    (st.state == UPDATE_CHECKING || st.state == UPDATE_DOWNLOADING || st.state == UPDATE_VERIFYING) ? "CANCEL" :
+    st.state == UPDATE_INSTALLING ? "PLEASE WAIT" : st.state == UPDATE_DONE ? "UPDATE INSTALLED" : "CHECK FOR UPDATE";
+  update_action_r = (RectFS){r.x + 28 * u, r.y + r.h - 68 * u, r.w - 56 * u, 48 * u};
+  if (st.state == UPDATE_DOWNLOADING || st.state == UPDATE_INSTALLING) {
+    float by = update_action_r.y - 36 * u;
+    fill_round(r.x + 28 * u, by, r.w - 56 * u, 12 * u, 4 * u, COL_GOLD_DARK);
+    fill_rect(r.x + 30 * u, by + 2 * u, (r.w - 60 * u) * st.progress / 100.0f, 8 * u, COL_GOLD);
+  }
+  draw_settings_row(&update_action_r, update_confirm);
+  draw_text(action, r.x + r.w / 2 - text_width(action, 2 * u) / 2,
+            update_action_r.y + 16 * u, 2 * u);
+#else
+  draw_text("3DS UPDATES", r.x + 28 * u, r.y + 90 * u, 2 * u);
+#endif
+}
+
+bool SecondScreenSDL_UpdateIsOpen(void) { return update_mode; }
+bool SecondScreenSDL_UpdateNotesPage(unsigned *page) { *page = update_page; return update_show_notes; }
+
 static void draw_settings(RectFS r) {
   menu_box(r, COL_BOX_BORDER);
+  if (update_mode) { draw_update_panel(r); return; }
   if (load_confirm_mode) {
     draw_load_confirmation(r);
     return;
@@ -1412,18 +1478,15 @@ static void draw_settings(RectFS r) {
 #else
   snprintf(turbo_value, sizeof(turbo_value), "X5");
 #endif
-  static const char *const labels[6] = {
-    "SCREEN", "TURBO SPEED", "REMAP BUTTONS",
-    "DEVELOPER", "RESTART", "SELECT ROM",
+  static const char *const labels[5] = {
+    "SCREEN", "TURBO SPEED", "DEVELOPER", "RESTART", "UPDATE",
   };
-  const char *values[6] = {
-    "", turbo_value, "", "", NULL, NULL,
-  };
+  const char *values[5] = {"", turbo_value, "", NULL, ""};
   float row_h = 44 * u, gap = 8 * u;
   float y0 = r.y + 55 * u;
-  for (int i = 0; i < 6; i++) {
+  for (int i = 0; i < 5; i++) {
     RectFS *row = &settings_row_r[i];
-    *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
+    *row = (RectFS){r.x + 28 * u, y0 + (i == 4 ? 5 : i) * (row_h + gap), r.w - 56 * u, row_h};
     draw_settings_row(row, false);
     float ty = row->y + row->h / 2 - 8 * u;
     draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
@@ -1446,7 +1509,7 @@ static void draw_settings(RectFS r) {
 static void draw_cinema_settings_overlay(void) {
   RectFS r = {10 * u, 10 * u, W - 20 * u, H - 20 * u};
   draw_settings(r);
-  if (!screen_mode && !remap_mode && !developer_mode) {
+  if (!screen_mode && !remap_mode && !developer_mode && !update_mode) {
     cinema_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
     draw_settings_row(&cinema_back_r, false);
     draw_text("BACK",
@@ -1649,6 +1712,8 @@ void SecondScreenSDL_SetDiagnostics(int current_fps, int average_fps) {
 void SecondScreenSDL_OpenDeveloperOverlay(void) {
   tab = TAB_SETTINGS;
   leave_remap();
+  update_mode = update_confirm = update_show_notes = false;
+  update_page = 0;
   screen_mode = false;
   developer_mode = true;
   developer_overlay_mode = true;
@@ -1972,13 +2037,16 @@ static void handle_tap(float x, float y) {
   }
   request_bottom_redraw(kBottomRedrawFull);
 #endif
+#ifdef __3DS__
+  if (update_mode && Updater_Busy()) goto settings_tap;
+#endif
   if (ui_mode != MODE_GAME) {
     if (tab != TAB_SETTINGS) {
       tab = TAB_SETTINGS;
       leave_settings_submenu();
       return;
     }
-    if (!screen_mode && !remap_mode && !developer_mode &&
+    if (!screen_mode && !remap_mode && !developer_mode && !update_mode &&
         in_rect(&cinema_back_r, x, y)) {
       tab = TAB_MAP;
       leave_settings_submenu();
@@ -1995,6 +2063,33 @@ static void handle_tap(float x, float y) {
 
 settings_tap:
   if (tab == TAB_SETTINGS) {
+    if (update_mode) {
+#ifdef __3DS__
+      UpdateStatus st; Updater_GetStatus(&st);
+      if (st.state == UPDATE_INSTALLING || st.state == UPDATE_DONE) return;
+      if (in_rect(&update_back_r, x, y)) {
+        if (update_confirm) update_confirm = false;
+        else { Updater_Cancel(); update_mode = false; }
+      } else if (in_rect(&update_channel_r, x, y) && !Updater_Busy()) {
+        update_confirm = update_show_notes = false; update_page = 0;
+        Updater_SetChannel(!st.prerelease);
+      } else if (in_rect(&update_release_r, x, y) && st.version[0] && !Updater_Busy()) {
+        update_show_notes = true; update_page = 0;
+      } else if (update_show_notes && !update_confirm && in_rect(&update_prev_r, x, y)) {
+        if (update_page) update_page--;
+      } else if (update_show_notes && !update_confirm && in_rect(&update_next_r, x, y)) {
+        if (update_page + 1 < Platform3DS_UpdateNotesPages()) update_page++;
+      } else if (in_rect(&update_action_r, x, y)) {
+        if (update_confirm) { update_confirm = false; Updater_Download(); }
+        else if (Updater_Busy()) Updater_Cancel();
+        else if (st.state == UPDATE_AVAILABLE) update_confirm = true;
+        else Updater_Check();
+      }
+#else
+      if (in_rect(&update_back_r, x, y)) update_mode = false;
+#endif
+      return;
+    }
     if (load_confirm_mode) {
       if (in_rect(&load_cancel_r, x, y)) {
         load_confirm_mode = false;
@@ -2124,15 +2219,20 @@ settings_tap:
           snprintf(value, sizeof(value), "%d", multiplier);
         update_ini("[General]", "CStickTurboMultiplier", value);
       } else if (in_rect(&settings_row_r[2], x, y)) {
-        SS_GetGamepadControls(pad_controls);
-        remap_mode = true;
-      } else if (in_rect(&settings_row_r[3], x, y)) {
         developer_mode = true;
-      } else if (in_rect(&settings_row_r[4], x, y)) {
-        SS_RequestRestart();
-      } else if (in_rect(&settings_row_r[5], x, y)) {
+      } else if (in_rect(&settings_row_r[3], x, y)) {
 #ifdef __3DS__
         Platform3DS_RequestRomSelection();
+#else
+        SS_RequestRestart();
+#endif
+      } else if (in_rect(&settings_row_r[4], x, y)) {
+        update_mode = true;
+        update_confirm = update_show_notes = false;
+        update_page = 0;
+#ifdef __3DS__
+        UpdateStatus st; Updater_GetStatus(&st);
+        if (st.state != UPDATE_AVAILABLE) Updater_Check();
 #endif
       }
     }
@@ -2295,6 +2395,14 @@ static void draw_second_screen(int logic_frames) {
   if ((in_house || special) && !has_last_outdoor && !have_exit) ui_mode = MODE_CINEMA;
   if (ui_mode != MODE_GAME) {
     draw_cinema();
+#ifdef __3DS__
+    UpdateStatus update_status; Updater_GetStatus(&update_status);
+    if (update_status.state == UPDATE_AVAILABLE && tab != TAB_SETTINGS) {
+      fill_round(18 * u, H - 52 * u, W - 36 * u, 36 * u, 6 * u, COL_BOX);
+      const char *notice = "UPDATE AVAILABLE - OPEN SETTINGS";
+      draw_text(notice, W / 2 - text_width(notice, 1.6f * u) / 2, H - 40 * u, 1.6f * u);
+    }
+#endif
     if (tab == TAB_SETTINGS)
       draw_cinema_settings_overlay();
     present_second_screen();
@@ -2415,6 +2523,15 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
     return;
   static uint32_t frame_no;
   frame_no++;
+  static unsigned update_revision;
+  static uint32_t update_last_redraw;
+  UpdateStatus update_status; Updater_GetStatus(&update_status);
+  if (update_revision != update_status.revision && SDL_GetTicks() - update_last_redraw >= 150) {
+    update_revision = update_status.revision;
+    update_last_redraw = SDL_GetTicks();
+    if (update_mode || mode_for_module(SS_GetModule() & 0xff) != MODE_GAME)
+      request_bottom_redraw(kBottomRedrawFull);
+  }
   int completed_load = SS_TakeLoadDumpStateResult();
   if (completed_load >= 0) {
     load_result = completed_load;
@@ -2645,6 +2762,8 @@ static void rebuild_renderer(int w2, int h2) {
 
 void SecondScreenSDL_Shutdown(void) {
   ss_enabled = false;
+  leave_settings_submenu();
+  tab = TAB_MAP;
 #ifdef __3DS__
   if (ss_worker_thread) {
     ss_worker_running = false;

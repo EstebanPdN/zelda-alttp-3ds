@@ -1,0 +1,52 @@
+diff --git a/lib/cf-socket.c b/lib/cf-socket.c
+index ce3f9e943..62d1ed4a3 100644
+--- a/lib/cf-socket.c
++++ b/lib/cf-socket.c
+@@ -161,6 +161,7 @@ static void
+ tcpkeepalive(struct Curl_easy *data,
+              curl_socket_t sockfd)
+ {
++#ifndef __3DS__
+   int optval = data->set.tcp_keepalive?1:0;
+ 
+   /* only set IDLE and INTVL if setting KEEPALIVE is successful */
+@@ -211,6 +212,7 @@ tcpkeepalive(struct Curl_easy *data,
+ #endif
+ #endif
+   }
++#endif
+ }
+ 
+ /**
+@@ -658,6 +660,7 @@ static CURLcode bindlocal(struct Curl_easy *data, struct connectdata *conn,
+ static bool verifyconnect(curl_socket_t sockfd, int *error)
+ {
+   bool rc = TRUE;
++#ifndef __3DS__
+ #ifdef SO_ERROR
+   int err = 0;
+   curl_socklen_t errSize = sizeof(err);
+@@ -715,6 +718,7 @@ static bool verifyconnect(curl_socket_t sockfd, int *error)
+   (void)sockfd;
+   if(error)
+     *error = SOCKERRNO;
++#endif
+ #endif
+   return rc;
+ }
+diff --git a/lib/curl_addrinfo.c b/lib/curl_addrinfo.c
+index f9211d3f5..4d9054257 100644
+--- a/lib/curl_addrinfo.c
++++ b/lib/curl_addrinfo.c
+@@ -141,9 +141,11 @@ Curl_getaddrinfo_ex(const char *nodename,
+     if(!ai->ai_addr || !(ai->ai_addrlen > 0))
+       continue;
+ 
++#if 0 // 3DS socu returns ai_addrlen = 8
+     /* ignore elements with bogus address size */
+     if((size_t)ai->ai_addrlen < ss_size)
+       continue;
++#endif
+ 
+     ca = malloc(sizeof(struct Curl_addrinfo) + ss_size + namelen);
+     if(!ca) {
