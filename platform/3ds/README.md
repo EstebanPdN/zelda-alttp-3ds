@@ -1,302 +1,83 @@
 # Zelda 3DS platform
 
-This target builds the dual-screen native frontend for Nintendo 3DS.
+Native dual-screen Nintendo 3DS frontend, public v3.0.
 
 ## Console installation
 
-Install the CIA, then create this directory on the SD card:
+Install the CIA or launch the 3DSX. Place a legally obtained compatible `.sfc`
+or `.smc` ROM in `sdmc:/3ds/Zelda 3DS/`. The preferred baseline is USA,
+unheadered. Audio requires `sdmc:/3ds/dspfirm.cdc`; Rosalina can dump the
+console's DSP firmware. Assets are extracted on the console.
 
-```text
-sdmc:/3ds/Zelda 3DS/
-```
-
-Place a legally obtained USA, unheadered ROM there. The preferred filename is
-`zelda3.sfc`, but the setup also accepts `.sfc` and `.smc` files with other
-names. On first launch, press A to validate the ROM and extract
-`zelda3_assets.dat`. The ROM is read locally and is never copied into the CIA.
-
-Audio requires `sdmc:/3ds/dspfirm.cdc`. Luma3DS can create it from the
-console's own firmware through Rosalina's `Dump DSP firmware` command.
+ROM profiles retain their own saves and settings. Keep ROM filenames unchanged
+when updating. The public CIA retains v2.9's title ID `0004000005a13e00`.
 
 ## Display and controls
 
-- Top screen: 400x240 gameplay at 5:3 through a native RGB565 presenter.
-- Bottom screen: 320x240 live map, gear, touch inventory and settings.
-- D-Pad or Circle Pad: movement.
-- A/B/X/Y, L/R, Start and Select: corresponding game buttons.
-- ZL or C-stick on New 3DS: hold for turbo when `TURBO SPEED` is not `OFF`.
-- L + R + A: create a quick dump under `sdmc:/3ds/Zelda 3DS/dumps/`.
-- Settings > Developer > Load State: load the validated checkpoint from the
-  newest dump after confirmation. Checkpoints from another ROM profile are
-  rejected.
-- Settings > Developer > Show FPS: toggle the top-screen FPS counter.
+- WIDE: native 400x240 gameplay. ORIGINAL: 256x224. STRETCH fills the display.
+- WIDE camera: STANDARD or FIXED. WIDE/FIXED is applied once per profile;
+  later saved display choices are honored.
+- Bottom screen: 320x240 map, gear, touch inventory and settings.
+- D-Pad/Circle Pad: movement. A/B/X/Y, L/R, Start/Select: game controls.
+- Old 3DS X: tap for normal X; hold one second for configured turbo.
+- New 3DS ZL/C-stick: hold for turbo when enabled. X remains immediate.
+- L + R + A: create a diagnostic dump.
+- Settings > Developer > Load State: confirm loading the newest dump's
+  validated checkpoint. Another ROM profile's checkpoint is rejected.
+- Settings > Developer > Show FPS: optional top-screen counter.
+- Title-screen Triforce: display and turbo settings.
 
-The CIA metadata uses the Legacy memory mode for Old 3DS compatibility and
-requests the New 3DS 804 MHz/L2 configuration when that hardware is available.
-The 3DSX also requests New 3DS speedup at runtime. Normal gameplay advances
-once per VBlank. The New 3DS bottom UI redraws at 30 FPS; the Old 3DS profile
-redraws it when its visible state changes, with a low-frequency safety refresh.
-Quick-dump `info.txt` files include average/max frame work time and the number
-of frames that exceed the 16.67 ms budget. Each completed dump also includes
-physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
-`load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
-complete synchronous capture and resumes at the same playback position.
+Both display paths use nearest-neighbor sampling. Old 3DS uses the PICA200
+renderer for supported frames and the CPU path for unsupported effects;
+New 3DS retains its CPU renderer. Logic runs on a fixed 60 Hz accumulator,
+with bounded catch-up. Rendering performance is scene-dependent.
 
-The HOME Menu metadata is versioned for every release. v3.0-E19 uses:
+Old UI drawing is asynchronous. Damage/healing patches retained heart cells
+without rebuilding the map. Automatic map jobs defer through door transitions;
+explicit touch keeps priority. The APT notification thread uses priority0x19
+so HOME/sleep requests can be received while gameplay is busy. Runtime logs
+report the selected priority; other thread priorities are retained.
+
+## Diagnostics
+
+Press `L + R + A` while the issue is visible and attach the dump from:
+
+`sdmc:/3ds/Zelda 3DS/dumps/`
+
+Folders use `000-dump-YYYYMMDD-HHMMSS`, `001-dump-...`, etc. Numbering continues
+across restarts; an empty collection starts at zero. Legacy dumps remain
+loadable. `DUMP SAVED` confirms a completed capture. Audio pauses during
+capture and resumes afterward.
+
+Dumps include physical top/bottom BMP and raw captures, RAM/VRAM/CGRAM/OAM,
+scene/register context, a validated `load-state.bin`, and a checksum manifest.
+Old recent timing history and audio/UI diagnostics help locate stalls. GPU
+submissions and fallback reasons appear in `ppu.txt`; captured GPU output is
+read through CPU-visible VRAM without submitting a separate GPU frame.
+Timing spans include preemption and may overlap; they are not CPU-cycle counts.
+
+## Building
+
+Requirements: devkitARM, libctru, 3ds-cmake, makerom and bannertool. SDL2 is
+vendored in `app/jni/SDL2`.
+
+```sh
+bash platform/3ds/build.sh
+```
+
+Output: `build-3ds/game/zelda3-3ds-v3.0.cia` and `.3dsx`. Packages contain
+configuration and the extraction patch, never ROMs or extracted game assets.
+
+HOME Menu metadata:
 
 ```text
-Short name:  Zelda 3DS EXP 19
-Long name:   A Link to the Past 3DS experimental 11
+Short name:  The Legend of Zelda
+Long name:   A Link to the Past 3DS port
+Author:      EstebanPdN
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
 ```
 
-The CIA banner uses `assets/banner.cgfx`, generated from the supplied 2.0
-Blender logo model and kept below the HOME Menu CGFX size limit.
-
-v3.0-E6 restores E4's verified BGRX top software buffer and RGBA8 texture
-upload on both models. It fixes the E5 output-origin error, restores the full
-address-indexed PPU tile caches and adds conservative full-resolution PPU fast
-paths without reducing lines, pixels or color accuracy. The event-driven Old
-3DS Developer overlay and the corrected Citro2D texture-state ordering remain.
-New 3DS keeps its existing 4x Mode 7 eligibility.
-
-## Requirements
-
-- devkitARM, libctru and 3ds-cmake under `DEVKITPRO`
-- `makerom` and `bannertool` for the optional CIA step
-- the SDL 2.28.1 source already vendored at `app/jni/SDL2`
-
-Run:
-
-```sh
-chmod +x platform/3ds/build.sh
-platform/3ds/build.sh
-```
-
-The script first builds the vendored SDL port, then creates the 3DSX and CIA.
-No ROM or extracted asset file is included in either package.
-
-Release checksums are published in `SHA256SUMS.txt` beside each CIA and 3DSX.
-
-## E8 hardware profiles and diagnostics
-
-E8 selects an explicit device policy automatically. Old 3DS uses its own
-full-resolution PPU optimizations, including packed half-add for rain, and
-preconverted opaque UI textures. New 3DS restores E6 palette-upload and UI
-behavior and excludes the Old PPU and audio probes. Its existing renderer,
-scheduler and cache strategy remain in place. Both screens use corrected
-texture-state submission.
-Hardware validation, including the Old 3DS 60 FPS target, remains pending.
-
-New dumps use `dumps/000-dump-YYYYMMDD-HHMMSS/`, `001-dump-...`, etc.
-The sequence continues across restarts and clock changes. A counter plus
-folder scanning prevents reuse; an empty dump collection starts again at zero.
-The counter file is `dumps/dump-sequence.txt`. Existing E7 numeric-only folders
-and legacy `dump-YYYYMMDD-HHMMSS` folders remain loadable and are preserved.
-`LOAD STATE` prefers the highest numbered directory and fails visibly if its
-checkpoint is missing, corrupt or belongs to another ROM profile.
-
-Each dump retains the physical BMP/raw screenshots, RAM, SRAM, VRAM and
-validated checkpoint, and adds:
-
-- `frame-times.csv`: up to 120 recent Old 3DS samples, oldest first. Microsecond
-  columns separate logic, PPU, presentation, bottom submission, total work,
-  presentation interval, main/worker rendering, worker join, frame begin,
-  top cache clean/transfer and frame end. Scheduled/executed logic and split
-  line are counts. Timings overlap; do not sum every column. These are wall
-  spans including preemption, not per-thread CPU cycle counts.
-- `audio.txt`: buffer format, queue state, refill wall spans, empty-queue
-  transitions, worker priority and cache maintenance mode. Queue observations
-  are not a count of audible glitches; audio is paused during capture.
-- `ppu.txt`, `cgram.bin`, `oam.bin`, `ppu-main-priority.bin`,
-  `ppu-sub-priority.bin`: current scene, PPU/DMA registers and raw buffers.
-  Registers are post-render snapshots, not a full HDMA trace; priority buffers
-  contain the last main-thread scanline and may include unused/stale spans.
-- `top-source.raw` and `top-source.txt`, when a frame has been submitted:
-  the CPU top-frame source in BGRX8888 with width/height/pitch metadata. It may
-  differ from the physical capture by one presentation; it is not a GPU screenshot.
-- `bottom-ui.txt`: UI scale, format, worker state and stable geometry.
-  `bottom-ui.raw` is included only when its source front buffer is stable;
-  its dimensions/pitch/format are recorded in the text file. A busy worker
-  is reported rather than read concurrently.
-- `runtime.log` and `zelda3.ini`, when present; `info.txt` adds model/profile,
-  heap space, cache modes, recent averages and Citro3D timing information.
-- `manifest.txt`: file sizes, FNV-1a checksums and capture completion status.
-  Checksums detect accidental file damage; they are not authentication.
-
-Diagnostic SD writes remain outside normal frame metrics. Bottom redraw work
-runs asynchronously: `bottom_submit_us` is not its full rendering duration;
-use the full/patch/touch worker statistics in `info.txt` for that cost.
-`gpu_end_us` covers `C3D_FrameEnd`, excluding the preceding C2D flush/clean.
-The recent ring is Old 3DS only; it can be empty immediately after startup.
-
-### E9 display and map repairs
-
-WIDE keeps 400x224 source pixels centered vertically (8-pixel margins).
-ORIGINAL stays 256x224 and STRETCH still fills the display. RGB565 margins are
-cleared with native black. Old map movement requests coalesce at most ten
-updates/second and use map-only patches where possible; actual refresh depends
-on hardware load. Scene changes get priority. Mirror portals are displayed
-from the engine's live return coordinates.
-
-PR #30 (arth78) and #32 (Archaistic) are included. New retains its renderer,
-clock and worker scheduling policy; shared map/display/ROM-switch bug fixes
-also apply to New. Old-only sprite and color caches are excluded from New's
-worker copy. No hardware FPS or graphical acceptance is claimed by host tests.
-
-## Local E10 regression candidate
-
-E10 restores integer rounded controls on both hardware profiles. New retains
-its E6 renderer policy, texture format, frame cadence and clock settings. The
-Old PPU implementation is unchanged from E9. A runtime exit handler stops
-audio/render workers before libctru frees their heap stacks; fatal errors are
-logged before cleanup and shown through the existing error screen.
-
-The supplied E9 crash matches all 96 captured instruction bytes. It faults in
-ndspiReadChnState while pushing to an unmapped stack. Heap teardown with a
-live audio worker is a supported hypothesis, not a confirmed explanation of
-why the application was exiting. E10 is a mitigation and diagnostic candidate;
-Old startup recovery and 60 FPS still require hardware confirmation.
-
-E9 mistakenly kept the E8 diagnostics version macro. E10 corrects that macro,
-filenames and HOME Menu metadata. Existing dump numbering is preserved.
-
-Builds E10 and later remain local until the owner explicitly publishes them.
-Do not push commits/tags or upload release assets during this testing series.
-
-### E11 Old 3DS phase samples
-
-The `ppu.txt` diagnostic includes one sampled frame per 64 frames: preparation,
-sprite evaluation, main-screen layer drawing, sub-screen selection/drawing and
-color composition, separately for the main thread and its joined worker.
-Mode 7 HQ is reported separately. The sample records frame age, scene, split,
-retained row count and changed tile count. These are wall spans with thread
-preemption, not CPU-only measurements; main and worker overlap and must not be
-summed. Preparation occurs once on the main thread. The existing recent-frame
-CSV remains available for steady-state cadence. Dump numbering stays
-`000-dump-YYYYMMDD-HHMMSS`, `001-dump-YYYYMMDD-HHMMSS`, etc.
-
-### E12 PICA200 backend (Old 3DS only)
-
-See `PICA200-E12.md` for the implemented rendering path, fallback conditions,
-startup probes, dump formats, dependency compatibility and hardware test limits.
-The New 3DS renderer/profile and bottom-interface scaling are preserved.
-
-### E13 physical probe and settings repairs
-
-See `PICA200-E13.md` for the hardware evidence, GX completion fence,
-subtractive color precision correction, and persistent menu settings.
-
-### E14 dump capture and overlapped preparation
-
-See `PICA200-E14.md` for physical evidence, CPU readback, independent resource
-sets, sprite/background grouping, regression coverage and hardware limits.
-
-### E15 WIDE height and Old X input
-
-WIDE now renders native 400x240, adapting Archaistic's PR #31 at
-`6f1a25d38f38760fd62796e8240e2c5d5375f6f0`. The extra 16 lines are below the
-original viewport. Boot and live switches update height together; ORIGINAL
-remains 256x224. The existing presenter naturally fills the screen at 240
-lines. Rendering 16 additional lines has a cost; this is not a 60 FPS claim.
-New keeps its CPU renderer and Old keeps E14's PICA resource/dump paths.
-
-Old X tracks its own held-to-released transition because SDL's event pump
-scans HID first and the subsequent native scan can clear `hidKeysUp()`.
-Release before one second sends game X; holding at least one second enables
-turbo without sending X on release. With turbo disabled, X is immediate.
-New X remains immediate, with its existing separate turbo controls.
-
-
-### E16 camera edges, circular transitions and startup
-
-In 240-line gameplay near a lower camera bound, the renderer moves its view
-up by the missing0–16 lines, shifts BG1/BG2 and sprites together, and restores
-the PPU registers after drawing. It does not move Link or the logical camera.
-Map views and224-line rendering are excluded. Extended spotlight windows
-follow the sprite offset. The extra rows stay within the existing scene.
-
-Old PICA recognizes a shared inverse window on every enabled plane, with
-black color clipping. It draws whole tiles and masks once at composition;
-independent windows retain the general renderer. Startup probes cover both
-paths and the240-line sprite/window offset. Dumps identify the fast path as
-`PICA200-shared-window`.
-
-The LCD remains black across selector teardown, SDL framebuffer allocation,
-format changes and renderer probes. Initialized targets are cleared before
-the first game presentation. The LCD gate wraps libctru's automatic unmask;
-there is one startup VBlank wait and no additional steady-state frame wait.
-
-On first E16 use, every ROM profile is migrated to WIDE/FixedCamera, on both
-Old and New. The INI migration changes only those two options. Marker
-`zelda3.ini.wide-defaults-v1` sits beside the profile INI; later changes and
-restarts preserve user choices. New profiles get their own migration marker.
-Auto also now resolves to WIDE/FixedCamera on both models. This supersedes
-the historical Old Original/Standard first-run default.
-
-Old automatic map updates are deferred during iris modules15/16 and resume
-at the destination using the main thread's priority. Only actual touch
-requests use the preemptive UI priority. This avoids promoting a full map
-redraw above gameplay during a door transition; New scheduling is retained.
-
-### E17 profile preparation repair
-
-E16 renamed the temporary migration INI onto an existing file. That relies on
-overwrite semantics which SD archive rename can reject even though host and
-emulator filesystems accept it. E17 moves the old INI to a sibling backup,
-promotes the closed temporary file into the vacant name and rolls back on
-failure. A later boot restores a stranded backup before creating defaults.
-The marker name remains wide-defaults-v1: completed migrations are respected.
-
-Automatic, selector and legacy routes use the same profile preparation.
-Storage errors identify the failed stage instead of saying Incompatible ROM.
-Settings errors log the path and errno in setup-progress.txt. Validated cached
-assets remain usable without extraction; ROM decoding rules are unchanged.
-`run_profile_boot_test.py` covers rejection of overwrite, failed rename stages,
-recovery, multiple profiles, cached assets and error classification. The
-persistence harness also models non-overwriting SD rename.
-
-### E18 visible overworld columns
-
-The fixed WIDE camera can still show a column after the original overworld
-streamer reuses its VRAM slot. Before preparing GPU/CPU rendering,
-BeginWideOverworldColumns supplies the visible fringe from current dung_bg2
-and map16-to-map8 definitions. It considers the full logical camera range
-behind a clamped view, so reversing direction cannot expose a recycled column.
-
-Only fringe words that differ are saved and replaced; up to512 fixed-size
-address/value slots, with no allocations. EndWideOverworldColumns restores
-VRAM after CPU workers join or GPU scene/atlas preparation completes. New
-retains CPU rendering. Map logic, saves, streaming state and background3 HUD
-are unaffected. Animated graphics/palettes stay on their existing path.
-
-The helper excludes Original/non-fixed mode, interiors, map menus, overworld
-transition submodules, horizontal transitions, unsupported PPU mode/map sizes
-and mismatched BG2 scroll. It handles224/240 output and E16's vertical offset.
-Dumps expose wide_visible_column_words; raw VRAM intentionally records the
-original streamer, while the submitted image includes the correction.
-
-run_wide_columns_test.py exercises both ends and directions at3,076 camera
-positions, canonical map edits, restoration/exclusions and private dump replay.
-The four reported dumps match between Old/New CPU and GPU geometry. 000/002
-remain unchanged;001/003 differ only in the first16 pixels horizontally.
-
-### E19 prompt bottom HUD updates
-
-Health is read from live RAM F36D; the Old sidebar update used to run at the
-background worker priority and could be starved by gameplay. HUD changes now
-request a dedicated existing sidebar patch even if a full/map redraw is also
-pending. That small patch uses touch-level priority; deferred map/full work
-is kept queued. Explicit touch navigation retains precedence.
-
-If a map/full redraw is already running when health changes, it receives main
-thread priority to finish fairly, never the higher HUD priority solely because
-of damage. Worker entry uses the same distinction, retaining scene priority
-for automatic full redraws and resetting to idle on completion. New retains
-its prior redraw cadence and priority policy. No pixel geometry changes.
-
-run_hud_latency_test.py uses actual invalidation/dispatch/worker functions with
-a controlled scheduler: damage/healing, busy map, newest health, deferred full
-work, simultaneous scene changes, touch, New and priority restoration. The same
-test fails against E18. This validates policy, not physical latency in ms.
+The custom logo banner is prebuilt in `assets/banner.cgfx`. Technical GPU
+implementation records are preserved in `PICA200-E12.md`, `PICA200-E13.md` and
+`PICA200-E14.md`. Focused source-level regressions live in `tests/`.

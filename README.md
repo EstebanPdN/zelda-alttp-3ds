@@ -35,11 +35,11 @@ https://discord.gg/SMW49UMkw
   profile and optionally show the current FPS on the top screen.
 - PICA200/Citro2D presentation for both screens with nearest-neighbor sampling
   and RGB565 display output.
-- Separate Old/New 3DS profiles. Local E14 repairs GPU dump capture and
-  overlaps Old GPU rendering with CPU preparation using two resource sets.
-  It groups compatible background/sprite rows and preserves strict startup
-  pixel validation, New rendering policies and integer bottom-menu geometry.
-  Physical Old 60 FPS is still a test target, not a measured E14 result.
+- PICA200 GPU rendering on Old 3DS, with automatic software fallback for
+  unsupported effects. New 3DS uses its existing CPU renderer.
+- Native 400x240 WIDE mode, fixed-camera edge corrections and persistent
+  per-ROM display, zoom, turbo and control settings.
+- Responsive map controls and independent heart updates on Old 3DS.
 - Fixed-step 60 Hz gameplay timing with bounded catch-up instead of making
   game speed depend on when a VBlank wait returns.
 - Parallel PPU scanline rendering on Core 0 and Core 1, plus Core 2 on New 3DS,
@@ -83,14 +83,18 @@ Every GitHub release includes:
 - QR code for scanning the CIA URL from FBI on a 3DS
 
 GitHub supplies automatic source-code archives for each tag.
-The release page itself shows the QR code, legal notice and a short changelog.
+The release page shows the QR code, a short changelog and bug-report instructions.
 Detailed development notes are preserved inside the source snapshot.
 
-Latest stable release: [v2.9](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v2.9)
+Latest release: [v3.0](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0)
 
-Latest experimental release: [v3.0-E9](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0-E9)
+See [CHANGELOG.md](CHANGELOG.md) for the changes since v2.8.
 
-See [CHANGELOG.md](CHANGELOG.md) for the concise history from v2.9 onward.
+## Bug reports
+
+Press `L + R + A` while the issue is visible and attach the resulting dump from:
+
+`sdmc:/3ds/Zelda 3DS/dumps/`
 
 ## Building
 
@@ -119,52 +123,14 @@ assets, or `zelda3_assets.dat`.
 
 Users are responsible for providing their own legally obtained compatible ROM.
 
-Quick dumps (`L + R + A`) now use numbered folders such as `dumps/000-dump-20260907-152424/`.
-They include recent performance samples and graphics/audio diagnostics.
+## Credits
+
+Thanks to [@999sian](https://github.com/999sian) for her Old 3DS optimization
+work, [arth78](https://github.com/arth78) for the WIDE display contribution,
+and [Archaistic](https://github.com/Archaistic) for the WIDE height and
+Triforce improvements.
+
+Logo work by [Phibonacci](https://github.com/Phibonacci), based on the original
+3D model by [TiraArt](https://sketchfab.com/TiraArt).
+
 See [3DS controls and diagnostics](platform/3ds/README.md).
-
-E9 includes PR [#30](https://github.com/EstebanPdN/zelda-alttp-3ds/pull/30)
-by arth78 and [#32](https://github.com/EstebanPdN/zelda-alttp-3ds/pull/32)
-by Archaistic. WIDE now shows a centered 400x224 image without vertical
-stretching; its top/bottom margins and ORIGINAL's margins use native black.
-See [the changelog](CHANGELOG.md) for map, ROM-switch and Old-only rendering
-changes. Hardware acceptance, including Old 3DS 60 FPS, remains pending.
-
-## Local v3.0-E11 experiment
-
-E11 retains indexed Mode 1 background planes on Old 3DS, updates changed VRAM
-and map cells, and merges priority pixels with ARMv6 packed instructions. It
-adds sampled preparation/sprite/main/sub/composition timings to numbered dumps.
-Unsupported or unavailable caches use the existing software renderer. WIDE stays
-400x224; no frame skipping, audio-rate or New 3DS profile change is introduced.
-
-This is a software optimization, not a PICA200 PPU backend or a measured 60 FPS
-result. The [GPU feasibility design](docs/old3ds-pica200-design.md) describes that
-separate implementation. E11 and subsequent experiments remain local, with CIA,
-3DSX and a verified LAN installation QR; there is no public E11 download.
-
-## Local E20: retained Old hearts
-
-E20 replaces E19's high-priority sidebar redraw on damage with a bounded update
-of changed heart cells in a main-owned RGB565 display copy. Heart underlays and
-glyphs are retained from normal UI drawing, so damage does not wake/promote the
-map worker or rebuild the equipment ring and counters. The normal bottom GPU
-transfer remains; no new physical frame-time guarantee is claimed. New retains
-its redraw/presentation policy. See platform/3ds/tests/run_bottom_hearts_test.py
-and run_hud_latency_test.py for pixel and scheduling regressions.
-
-## Local E21
-
-E21 centers the bottom-map zoom symbols on an integer pixel grid on Old/New.
-On Old, the shared black iris path also covers castle entry with an unclipped
-black backdrop. Pending automatic bottom redraws wait through door modules;
-an already running automatic worker drops below gameplay until the iris ends.
-Retained hearts and explicit touch handling are preserved. This is a local
-hardware-test candidate; the owner will test performance on their 3DS.
-
-E21 also creates libctru's APT notification handler at priority 0x19 instead
-of 0x31, so HOME/sleep requests can preempt continuously busy game/UI work.
-The wrapper is scoped to aptInit's 4KiB detached default-core event thread;
-all other threads pass through. If creation is rejected, original priority is
-retried. Runtime diagnostics record the selected priority. Hardware HOME delay
-and resume behavior remain for the owner to verify; no Azahar acceptance.
