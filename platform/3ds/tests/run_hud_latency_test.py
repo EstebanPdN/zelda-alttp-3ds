@@ -18,6 +18,7 @@ code=r'''
 typedef int s32;
 static void *ss_old_display_pixels;
 static bool ss_is_new_3ds,ss_scene_redraw_pending,ss_worker_interactive,ss_touch_redraw_pending;
+static bool ss_worker_door_transition;
 static bool ss_worker_busy,ss_worker_sidebar_patch,ss_worker_map_patch,ss_worker_running;
 static bool ss_enabled=true,ss_frame_ready,done_ready;
 static int ss_worker_thread=1,ss_worker_interactive_priority=0x2f,ss_worker_scene_priority=0x30,ss_worker_idle_priority=0x31;
@@ -106,6 +107,21 @@ int main(void) {
  ss_worker_busy=false;ss_worker_touch_request_ticks=0;ss_touch_redraw_pending=true;ss_touch_request_ticks=25;
  ss_redraw_requests|=kBottomRedrawFull;SecondScreenSDL_BeginFrame(1);
  assert(!ss_worker_sidebar_patch && ss_worker_touch_request_ticks==25);RunWorker();Present();
+ // A queued automatic map may not start during either door module. A job
+ // already running is demoted, while real touch and completed frames survive.
+ ss_redraw_requests=kBottomRedrawMap;ss_worker_busy=false;ss_frame_ready=false;
+ ss_touch_redraw_pending=false;ss_worker_touch_request_ticks=0;int before=signals;
+ module=15;SecondScreenSDL_BeginFrame(1);assert(signals==before&&ss_redraw_requests==kBottomRedrawMap);
+ module=16;SecondScreenSDL_BeginFrame(1);assert(signals==before);
+ module=9;ss_worker_busy=true;ss_worker_interactive=true;SecondScreenSDL_BeginFrame(1);assert(priority==0x30);
+ module=15;SecondScreenSDL_BeginFrame(1);assert(priority==0x31);
+ assert(bottom_worker_priority()==0x31); // Worker entry respects the same gate.
+ ss_worker_touch_request_ticks=25;assert(bottom_worker_priority()==0x2f);
+ ss_worker_touch_request_ticks=0;done_ready=true;SecondScreenSDL_BeginFrame(1);
+ assert(ss_frame_ready&&!ss_worker_busy&&signals==before);ss_frame_ready=false;
+ ss_touch_redraw_pending=true;ss_touch_request_ticks=25;ss_redraw_requests=kBottomRedrawFull;
+ SecondScreenSDL_BeginFrame(1);assert(signals==before+1&&ss_worker_touch_request_ticks==25);RunWorker();Present();
+ module=9;SecondScreenSDL_BeginFrame(1);if(ss_worker_busy){RunWorker();Present();}
  // New keeps its existing full redraw route and ignores Old priority changes.
  ss_is_new_3ds=true;ss_redraw_requests=0;live[0x6d]=8;priority=0x31;
  SecondScreenSDL_BeginFrame(1);assert(!ss_worker_sidebar_patch&&!ss_worker_map_patch&&priority==0x31);

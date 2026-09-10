@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     SDL_Surface *s=SDL_CreateRGBSurfaceWithFormat(0,320,240,model?32:16,
       model?SDL_PIXELFORMAT_ARGB8888:SDL_PIXELFORMAT_RGB565);
     assert(s); ss_r=SDL_CreateSoftwareRenderer(s); assert(ss_r);
-    W=320;H=240;u=unit_for_size(W,H);
+    W=320;H=240;u=fmaxf(0.5f,unit_for_size(W,H));
     for(int fx=0;fx<8;fx++) for(int fy=0;fy<8;fy++) for(int radius=0;radius<12;radius++) {
       float x=10+fx/8.f,y=10+fy/8.f;
       set_color(COL_BOX);SDL_RenderClear(ss_r);

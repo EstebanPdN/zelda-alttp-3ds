@@ -57,7 +57,7 @@ target_include_directories(zelda3-3ds PRIVATE
 
 target_compile_definitions(zelda3-3ds PRIVATE
   SYSTEM_VOLUME_MIXER_AVAILABLE=0
-  ZELDA3_3DS_VERSION=\"3.0-E20\"
+  ZELDA3_3DS_VERSION=\"3.0-E21\"
   NDEBUG=1
 )
 
@@ -102,15 +102,15 @@ configure_file(
 set(ZELDA3_SMDH "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds.smdh")
 ctr_generate_smdh(
   OUTPUT "${ZELDA3_SMDH}"
-  NAME "Zelda 3DS EXP 20"
-  DESCRIPTION "A Link to the Past 3DS experimental 20"
+  NAME "Zelda 3DS EXP 21"
+  DESCRIPTION "A Link to the Past 3DS experimental 21"
   AUTHOR "EstebanPdN"
   ICON "${CMAKE_CURRENT_LIST_DIR}/assets/icon.png"
 )
 
 ctr_create_3dsx(zelda3-3ds-3dsx
   TARGET zelda3-3ds
-  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v3.0-E20.3dsx"
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/zelda3-3ds-v3.0-E21.3dsx"
   SMDH "${ZELDA3_SMDH}"
   ROMFS "${ZELDA3_ROMFS}"
 )

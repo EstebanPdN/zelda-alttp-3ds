@@ -17,6 +17,7 @@ code=r'''
 static void *ss_old_display_pixels;
 static bool ss_is_new_3ds,ss_scene_redraw_pending,ss_worker_interactive,ss_touch_redraw_pending;
 static uint64_t ss_worker_touch_request_ticks;
+static bool ss_worker_door_transition;
 static bool ss_worker_busy,ss_worker_sidebar_patch,ss_worker_map_patch;
 static int ss_worker_idle_priority=0x31;
 #define ss_redraw_requests requests
