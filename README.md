@@ -135,9 +135,9 @@ Logo work by [Phibonacci](https://github.com/Phibonacci), based on the original
 
 See [3DS controls and diagnostics](platform/3ds/README.md).
 
-## Local v3.1-E1 updater
+## Local v3.1-E2 updater
 
-Settings contains Screen, Turbo Speed, Developer, Restart and Update.
+Settings contains Screen, Turbo Speed, Developer, Update and Restart.
 Restart always opens the ROM selector and starts the selected ROM fresh;
 SRAM and per-ROM saves remain intact. Automatic state restoration is skipped
 for that restart.
@@ -160,3 +160,11 @@ up to 12 KiB as wrapped ASCII text with Markdown links/images simplified.
 
 This is a local hardware-test build. The current public v3.0 and older
 pre-releases do not supersede v3.1-E1. No release was published for this build.
+
+The E2 touch repair dispatches SDL touch edges before game pause/timing exits,
+including inside Update on both models. Navigation is committed before waking
+the redraw worker. Old 3DS prepares its initial bottom image synchronously;
+failed GPU submissions retain pending UI images for retry. Settings now has
+five evenly sized rows. Changelogs use the same game letter/glyph sheets,
+menu colors and full-screen border as the bottom UI; small hints use integer
+pixel scaling. These changes still require the owner's console verification.

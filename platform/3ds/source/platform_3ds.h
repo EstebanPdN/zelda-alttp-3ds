@@ -75,7 +75,7 @@ void Platform3DS_ShutdownTopPresenter(void);
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
                                  int width, int height,
                                  int focus_x, int focus_y);
-void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
+bool Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
                                     int width, int height);
 void Platform3DS_EndFrame(void);
 uint32_t Platform3DS_WaitForVBlank(void);
