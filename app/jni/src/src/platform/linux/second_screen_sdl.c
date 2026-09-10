@@ -599,6 +599,25 @@ static void draw_cinema(void) {
   SDL_RenderCopyF(ss_r, tex_triforce, NULL, &br_r);
 }
 
+// Snap the button and both strokes to one pixel grid. Matching size parity
+// keeps the glyph exactly centered, including on the 28px-wide 3DS button.
+static void draw_map_zoom_button(RectFS r) {
+  int size = (int)lroundf(56 * u);
+  int bx = (int)lroundf(r.x + 14 * u), by = (int)lroundf(r.y + 14 * u);
+  fill_round(bx, by, size, size, 8 * u, COL_BOX);
+  fill_round(bx + 3 * u, by + 3 * u, size - 6 * u, size - 6 * u, 6 * u, COL_BOX_BORDER2);
+  fill_round(bx + 6 * u, by + 6 * u, size - 12 * u, size - 12 * u, 5 * u, COL_BOX);
+  int length = (int)lroundf(28 * u), thickness = (int)lroundf(5 * u);
+  if ((size - length) & 1) length--;
+  if ((size - thickness) & 1) thickness--;
+  if (thickness < 1) thickness = (size & 1) ? 1 : 2;
+  SDL_Rect horizontal = {bx + (size - length) / 2, by + (size - thickness) / 2, length, thickness};
+  SDL_Rect vertical = {bx + (size - thickness) / 2, by + (size - length) / 2, thickness, length};
+  set_color(COL(255, 255, 255));
+  SDL_RenderFillRect(ss_r, &horizontal);
+  if (whole_map) SDL_RenderFillRect(ss_r, &vertical);
+}
+
 static void draw_overworld(RectFS r, int link_x, int link_y, int area) {
   // parchment sheet with gold frame
   draw_tiled(tex_bg_parch, kSSTexParch_W, kSSTexParch_H, r, COL_BG_PARCH);
@@ -661,14 +680,7 @@ static void draw_overworld(RectFS r, int link_x, int link_y, int area) {
   SDL_RenderCopyF(ss_r, tex_face, NULL, &fdst);
   SDL_RenderSetClipRect(ss_r, NULL);
 
-  // zoom toggle button
-  float bs2 = 56 * u, bx = r.x + 14 * u, by = r.y + 14 * u;
-  fill_round(bx, by, bs2, bs2, 8 * u, COL_BOX);
-  fill_round(bx + 3 * u, by + 3 * u, bs2 - 6 * u, bs2 - 6 * u, 6 * u, COL_BOX_BORDER2);
-  fill_round(bx + 6 * u, by + 6 * u, bs2 - 12 * u, bs2 - 12 * u, 5 * u, COL_BOX);
-  float cxb = bx + bs2 / 2, cyb = by + bs2 / 2, arm = 14 * u, th = 5 * u;
-  fill_rect(cxb - arm, cyb - th / 2, arm * 2, th, COL(255, 255, 255));
-  if (whole_map) fill_rect(cxb - th / 2, cyb - arm, th, arm * 2, COL(255, 255, 255));
+  draw_map_zoom_button(r);
 }
 
 static void draw_dungeon(RectFS r, int link_x, int link_y, int room, int dungeon_info) {
@@ -1497,6 +1509,7 @@ static int ss_worker_logic_frames;
 static s32 ss_worker_idle_priority;
 static s32 ss_worker_interactive_priority;
 static s32 ss_worker_scene_priority;
+static bool ss_worker_door_transition;
 static bool ss_worker_interactive;
 static uint64_t ss_full_redraw_count;
 static uint64_t ss_full_redraw_total_ticks;
@@ -1563,6 +1576,8 @@ static void prioritize_bottom_touch(void) {
 static s32 bottom_worker_priority(void) {
   if (ss_worker_touch_request_ticks)
     return ss_worker_interactive_priority;
+  if (__atomic_load_n(&ss_worker_door_transition, __ATOMIC_ACQUIRE))
+    return ss_worker_idle_priority;
   if (ss_worker_interactive || ss_worker_sidebar_patch ||
       (__atomic_load_n(&ss_redraw_requests, __ATOMIC_ACQUIRE) & kBottomRedrawHud))
     return ss_worker_scene_priority;
@@ -2411,6 +2426,14 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
       return;
   }
 
+  // A queued map request, or a job already drawing, can outlive the scene
+  // invalidation guard. Keep automatic work below the iris until it completes.
+  int module = SS_GetModule() & 0xff;
+  bool door_transition = !ss_is_new_3ds && (module == 15 || module == 16);
+  bool was_door = __atomic_exchange_n(&ss_worker_door_transition, door_transition, __ATOMIC_ACQ_REL);
+  if (door_transition != was_door && !ss_is_new_3ds && ss_worker_busy &&
+      !ss_touch_redraw_pending && !ss_worker_touch_request_ticks)
+    svcSetThreadPriority(threadGetHandle(ss_worker_thread), bottom_worker_priority());
   request_bottom_redraw_on_state_change();
 
   if (!ensure_second_screen_worker()) {
@@ -2433,7 +2456,8 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
     __atomic_load_n(&ss_redraw_requests, __ATOMIC_ACQUIRE);
   bool periodic_redraw = ss_front_buffer < 0 ||
     (bottom_needs_periodic_redraw() && frame_no % divisor == 0);
-  bool can_start_worker = ss_is_new_3ds || !ss_frame_ready;
+  bool can_start_worker = (ss_is_new_3ds || !ss_frame_ready) &&
+    (!door_transition || ss_touch_redraw_pending || ss_front_buffer < 0);
   if (!ss_worker_busy && can_start_worker &&
       (requests != 0 || periodic_redraw)) {
     requests = __atomic_exchange_n(&ss_redraw_requests, 0,

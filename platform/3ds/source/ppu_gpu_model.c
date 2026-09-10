@@ -281,7 +281,8 @@ static bool Compose(PicaFrame *f) {
   return true;
 }
 // A circular door transition applies the same inverse W1 to every active
-// plane and clips that region to black in color math. Draw full tiles once,
+// plane. The masked region is black either through color clipping or a black
+// backdrop (castle entry uses clipMode=0). Draw full tiles once,
 // then apply the exact scanline mask at composition. Other windows keep the
 // general path, including independent plane windows and non-black backdrops.
 static bool SharedBlackWindow(PicaFrame *f) {
@@ -289,7 +290,8 @@ static bool SharedBlackWindow(PicaFrame *f) {
   for(unsigned y=0;y<f->height;y++) {
     Ppu *p=Line(f,y);
     if(p->forcedBlank)continue;
-    if(!p->windowExtLeft || ((p->windowsel>>20)&15)!=3 || p->clipMode!=2 ||
+    if(!p->windowExtLeft || ((p->windowsel>>20)&15)!=3 ||
+       (p->clipMode!=2 && p->clipMode!=3 && (f->memory->cgram[0]&0x7fff)!=0) ||
        !p->addSubscreen || p->fixedColorR || p->fixedColorG || p->fixedColorB)
       return false;
     for(unsigned sub=0;sub<2;sub++) {

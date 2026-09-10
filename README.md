@@ -152,3 +152,12 @@ map worker or rebuild the equipment ring and counters. The normal bottom GPU
 transfer remains; no new physical frame-time guarantee is claimed. New retains
 its redraw/presentation policy. See platform/3ds/tests/run_bottom_hearts_test.py
 and run_hud_latency_test.py for pixel and scheduling regressions.
+
+## Local E21
+
+E21 centers the bottom-map zoom symbols on an integer pixel grid on Old/New.
+On Old, the shared black iris path also covers castle entry with an unclipped
+black backdrop. Pending automatic bottom redraws wait through door modules;
+an already running automatic worker drops below gameplay until the iris ends.
+Retained hearts and explicit touch handling are preserved. This is a local
+hardware-test candidate; the owner will test performance on their 3DS.
