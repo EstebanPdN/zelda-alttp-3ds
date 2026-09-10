@@ -110,4 +110,7 @@ enum {
   kJoypadH_AnyDir = 0xf,
 };
 
+// Number of background tile words corrected for the last displayed WIDE frame.
+uint32 ZeldaGetWideColumnRepairCount(void);
+
 #endif  // ZELDA3_ZELDA_RTL_H_

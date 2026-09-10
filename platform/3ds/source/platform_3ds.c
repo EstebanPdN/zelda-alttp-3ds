@@ -3657,6 +3657,8 @@ static bool WriteExtendedDiagnostics(const char *directory) {
             p->mode, p->brightness, p->forcedBlank, p->renderFlags, (unsigned long)p->renderPitch);
     fprintf(f, "side_space configured/left/right/bottom=%u/%u/%u/%u obj_x_offset=%d\n",
             p->extraLeftRight, p->extraLeftCur, p->extraRightCur, p->extraBottomCur, p->renderObjXOffset);
+    fprintf(f, "wide_visible_column_words=%lu (render-only; raw VRAM retains original streamer data)\n",
+            (unsigned long)ZeldaGetWideColumnRepairCount());
     fprintf(f, "TM=%02x TS=%02x TMW=%02x TSW=%02x mosaic_size=%u mosaic_enabled=%02x\n",
             p->screenEnabled[0], p->screenEnabled[1], p->screenWindowed[0], p->screenWindowed[1],
             p->mosaicSize, p->mosaicEnabled);
