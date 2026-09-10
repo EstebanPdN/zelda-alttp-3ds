@@ -30,6 +30,7 @@ set(ZELDA3_3DS_SOURCES
   "${ZELDA3_NATIVE}/src/platform/linux/second_screen_sdl.c"
   "${ZELDA3_NATIVE}/third_party/opus-1.3.1-stripped/opus_decoder_amalgam.c"
   "${CMAKE_CURRENT_LIST_DIR}/source/platform_3ds.c"
+  "${CMAKE_CURRENT_LIST_DIR}/source/apt_responsiveness.c"
   "${CMAKE_CURRENT_LIST_DIR}/source/ppu_gpu.c"
   "${CMAKE_CURRENT_LIST_DIR}/source/ppu_gpu_model.c"
 )
@@ -74,7 +75,7 @@ target_compile_options(zelda3-3ds PRIVATE
   -Wno-unused-parameter
   -Wno-missing-field-initializers
 )
-target_link_options(zelda3-3ds PRIVATE -O3 -flto -Wl,--gc-sections -Wl,--wrap=GSPGPU_SetLcdForceBlack)
+target_link_options(zelda3-3ds PRIVATE -O3 -flto -Wl,--gc-sections -Wl,--wrap=GSPGPU_SetLcdForceBlack -Wl,--wrap=aptInit -Wl,--wrap=threadCreate)
 
 target_link_libraries(zelda3-3ds PRIVATE
   SDL2::SDL2main
