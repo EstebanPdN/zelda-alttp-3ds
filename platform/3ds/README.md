@@ -42,10 +42,10 @@ physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
 `load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
 complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E17 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E18 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 17
+Short name:  Zelda 3DS EXP 18
 Long name:   A Link to the Past 3DS experimental 11
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
@@ -256,3 +256,28 @@ assets remain usable without extraction; ROM decoding rules are unchanged.
 `run_profile_boot_test.py` covers rejection of overwrite, failed rename stages,
 recovery, multiple profiles, cached assets and error classification. The
 persistence harness also models non-overwriting SD rename.
+
+### E18 visible overworld columns
+
+The fixed WIDE camera can still show a column after the original overworld
+streamer reuses its VRAM slot. Before preparing GPU/CPU rendering,
+BeginWideOverworldColumns supplies the visible fringe from current dung_bg2
+and map16-to-map8 definitions. It considers the full logical camera range
+behind a clamped view, so reversing direction cannot expose a recycled column.
+
+Only fringe words that differ are saved and replaced; up to512 fixed-size
+address/value slots, with no allocations. EndWideOverworldColumns restores
+VRAM after CPU workers join or GPU scene/atlas preparation completes. New
+retains CPU rendering. Map logic, saves, streaming state and background3 HUD
+are unaffected. Animated graphics/palettes stay on their existing path.
+
+The helper excludes Original/non-fixed mode, interiors, map menus, overworld
+transition submodules, horizontal transitions, unsupported PPU mode/map sizes
+and mismatched BG2 scroll. It handles224/240 output and E16's vertical offset.
+Dumps expose wide_visible_column_words; raw VRAM intentionally records the
+original streamer, while the submitted image includes the correction.
+
+run_wide_columns_test.py exercises both ends and directions at3,076 camera
+positions, canonical map edits, restoration/exclusions and private dump replay.
+The four reported dumps match between Old/New CPU and GPU geometry. 000/002
+remain unchanged;001/003 differ only in the first16 pixels horizontally.

@@ -527,6 +527,95 @@ static void EndFixedCameraRender(const FixedCameraRenderState *state) {
   g_zenv.ppu->renderObjXOffset = state->ppu_obj_x_offset;
 }
 
+// The SNES streamer may recycle columns still visible behind the fixed WIDE
+// camera. Supply only that narrow visible fringe from the current world map.
+// Restore VRAM after joined CPU rendering / synchronous GPU scene preparation,
+// so prefetch state, game logic and subsequent area transitions remain intact.
+#ifdef __3DS__
+static struct {
+  uint16 address[512], value[512];
+  unsigned count, last_count;
+} g_wide_column_repair;
+
+static void BeginWideOverworldColumns(uint32 render_flags) {
+  g_wide_column_repair.count = g_wide_column_repair.last_count = 0;
+  Ppu *p = g_zenv.ppu;
+  int margin = p->extraLeftRight;
+  if (!margin || g_widescreen_edge_mode != 1 ||
+      !(enhanced_features0 & kFeatures0_WidescreenVisualFixes) ||
+      GetFixedCameraEffectiveContext() != 9 || player_is_indoors ||
+      WideCamera_IsMapMenu(main_module_index, submodule_index) ||
+      (main_module_index == 9 && submodule_index != 0) ||
+      GetFixedCameraTransitionDirection(9) != 0 || p->mode != 1 ||
+      !p->bgLayer[1].tilemapWider || !p->bgLayer[1].tilemapHigher ||
+      (p->bgLayer[1].hScroll & 511) != (BG2HOFS_copy2 & 511) ||
+      (p->bgLayer[1].vScroll & 511) != (BG2VOFS_copy2 & 511))
+    return;
+  int logical = BG2HOFS_copy2, left, right;
+  GetFixedCameraBounds(9, logical, &left, &right);
+  int visual = WideCamera_ClampToBounds(logical, left, right, margin);
+  int x0 = IntMax(visual - margin, left);
+  int x1 = IntMin(visual + 256 + margin, right + 256);
+  // While the visual camera is clamped, the logical camera can move in either
+  // direction without moving the picture. Cover its entire possible range,
+  // including a column recycled before the player reversed direction.
+  int logical_min = logical, logical_max = logical;
+  if (right - left >= margin * 2) {
+    if (visual == left + margin) logical_min = left;
+    if (visual == right - margin) logical_max = right;
+  }
+  int safe_left = (logical_max & ~15) - 128;
+  int safe_right = (logical_min & ~15) + 384;
+  if (x0 >= safe_left && x1 <= safe_right) return;
+  int height = (render_flags & kPpuRenderFlags_Height240) ? 240 : 224;
+  int delta_y = height == 240 ? IntMin(IntMax(16 - (int16)(ow_scroll_vars0.yend - BG2VOFS_copy2), 0), 16) : 0;
+  int y0 = BG2VOFS_copy2 - delta_y + 1;
+  int base_x = WideCamera_Unwrap16(overworld_offset_base_x << 3, visual);
+  int base_y = WideCamera_Unwrap16(overworld_offset_base_y, y0);
+  const uint16 *map8 = kMap16ToMap8;
+  if (!map8) return;
+  for (int x = x0 & ~7; x < x1; x += 8) {
+    if (x >= safe_left && x + 8 <= safe_right) continue;
+    int mx = x - base_x;
+    if ((unsigned)mx >= 1024) continue;
+    for (int y = y0 & ~7; y < y0 + height; y += 8) {
+      int my = y - base_y;
+      if ((unsigned)my >= 1024) continue;
+      unsigned tile = dung_bg2[(my >> 4) * 64 + (mx >> 4)];
+      if (tile >= kMap16ToMap8_SIZE / 8) continue;
+      unsigned part = ((my & 8) >> 2) | ((mx & 8) >> 3);
+      uint16 value = map8[tile * 4 + part];
+      unsigned wx = x & 511, wy = y & 511;
+      unsigned address = (p->bgLayer[1].tilemapAdr + (wy >> 3 & 31) * 32 +
+        (wx >> 3 & 31) + (wx >= 256 ? 0x400 : 0) + (wy >= 256 ? 0x800 : 0)) & 0x7fff;
+      if (p->vram[address] == value) continue;
+      unsigned n = g_wide_column_repair.count;
+      if (n == countof(g_wide_column_repair.address)) return;
+      g_wide_column_repair.address[n] = address;
+      g_wide_column_repair.value[n] = p->vram[address];
+      g_wide_column_repair.count = n + 1;
+      p->vram[address] = value;
+    }
+  }
+}
+
+static void EndWideOverworldColumns(void) {
+  g_wide_column_repair.last_count = g_wide_column_repair.count;
+  while (g_wide_column_repair.count) {
+    unsigned n = --g_wide_column_repair.count;
+    g_zenv.ppu->vram[g_wide_column_repair.address[n]] = g_wide_column_repair.value[n];
+  }
+}
+#endif
+
+uint32 ZeldaGetWideColumnRepairCount(void) {
+#ifdef __3DS__
+  return g_wide_column_repair.last_count;
+#else
+  return 0;
+#endif
+}
+
 // The original camera's lower limit is defined for 224 lines. Near that
 // limit, reveal the missing rows above instead of reading beyond the room.
 // This affects drawing only: collision, camera RAM and saved state stay intact.
@@ -811,6 +900,7 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   SimpleHdma hdma_probe;
 
 #ifdef __3DS__
+  BeginWideOverworldColumns(render_flags);
   bool gpu_candidate = (render_flags & kPpuRenderFlags_Old3DS) && PpuGpuCanAttempt();
   if (gpu_candidate) {
     // The GPU consumes register/tile/OAM state; do not rasterize or rebuild
@@ -948,6 +1038,9 @@ rendering_complete:
     g_ppu_phase_scene = (main_module_index << 24) | (player_is_indoors << 23) |
       (player_is_indoors ? dungeon_room_index : overworld_area_index);
   }
+#endif
+#ifdef __3DS__
+  EndWideOverworldColumns();
 #endif
   EndVerticalCameraRender(&vertical_camera_state);
   EndFixedCameraRender(&fixed_camera_state);
