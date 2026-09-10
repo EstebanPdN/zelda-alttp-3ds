@@ -42,10 +42,10 @@ physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
 `load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
 complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E14 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E15 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 14
+Short name:  Zelda 3DS EXP 15
 Long name:   A Link to the Past 3DS experimental 11
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
@@ -192,3 +192,18 @@ subtractive color precision correction, and persistent menu settings.
 
 See `PICA200-E14.md` for physical evidence, CPU readback, independent resource
 sets, sprite/background grouping, regression coverage and hardware limits.
+
+### E15 WIDE height and Old X input
+
+WIDE now renders native 400x240, adapting Archaistic's PR #31 at
+`6f1a25d38f38760fd62796e8240e2c5d5375f6f0`. The extra 16 lines are below the
+original viewport. Boot and live switches update height together; ORIGINAL
+remains 256x224. The existing presenter naturally fills the screen at 240
+lines. Rendering 16 additional lines has a cost; this is not a 60 FPS claim.
+New keeps its CPU renderer and Old keeps E14's PICA resource/dump paths.
+
+Old X tracks its own held-to-released transition because SDL's event pump
+scans HID first and the subsequent native scan can clear `hidKeysUp()`.
+Release before one second sends game X; holding at least one second enables
+turbo without sending X on release. With turbo disabled, X is immediate.
+New X remains immediate, with its existing separate turbo controls.

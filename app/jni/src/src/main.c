@@ -591,6 +591,13 @@ void ZeldaSet3DSDisplayMode(int mode) {
   if (!wide)
     PpuSetExtraSideSpace(g_zenv.ppu, 0, 0, 0);
   g_snes_width = extra * 2 + 256;
+  // PR #31 (Archaistic): native 400x240 in WIDE; ORIGINAL stays 256x224.
+  g_config.extend_y = wide;
+  g_snes_height = wide ? 240 : 224;
+  if (wide)
+    g_ppu_render_flags |= kPpuRenderFlags_Height240;
+  else
+    g_ppu_render_flags &= ~kPpuRenderFlags_Height240;
   ZeldaApplyRendererSize();
   Platform3DS_SetDisplayMode(display_mode);
 }
