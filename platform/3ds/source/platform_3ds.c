@@ -1,5 +1,9 @@
 #include "platform_3ds.h"
 #include "updater.h"
+#include "update_view.h"
+extern bool SS_RenderLetterSheet(uint32_t *pixels);
+extern bool SS_RenderGlyphSheet(uint32_t *pixels);
+static bool g_update_fonts_ready, g_update_view_valid;
 static uint32_t *g_update_pixels;
 #include "ppu_gpu.h"
 #include "present_image.h"
@@ -22,6 +26,7 @@ static uint32_t *g_update_pixels;
 #include "features.h"
 #include "setup_selector_assets.h"
 #include "types.h"
+#include "second_screen_tables.h"
 #include "util.h"
 #include "zelda_rtl.h"
 #include "snes/ppu.h"
@@ -895,6 +900,7 @@ bool Platform3DS_InitTopPresenter(void) {
 
 void Platform3DS_ShutdownTopPresenter(void) {
   linearFree(g_update_pixels); g_update_pixels = NULL;
+  g_update_fonts_ready = g_update_view_valid = false;
   g_last_top_source = NULL;
   if (!g_gpu_presenter_initialized)
     return;
@@ -987,46 +993,39 @@ static float StatusTextWidth(const char *text, float scale) {
   return length ? ((float)length * 6.0f - 1.0f) * scale : 0.0f;
 }
 
-static uint8_t SetupGlyph(char c, int row);
 static unsigned g_update_note_pages = 1;
 unsigned Platform3DS_UpdateNotesPages(void) { return g_update_note_pages; }
-static void UpdateText(int x, int y, const char *s, int numerator, int denominator, uint32_t color) {
-  for (; *s; s++, x += 6 * numerator / denominator) {
-    for (int row = 0; row < 7; row++) {
-      uint8_t bits = SetupGlyph(*s, row);
-      for (int col = 0; col < 5; col++) if (bits & (1u << (4-col))) {
-        for (int yy = y + row*numerator/denominator; yy < y + (row+1)*numerator/denominator && yy < 240; yy++)
-          for (int xx = x + col*numerator/denominator; xx < x + (col+1)*numerator/denominator && xx < 400; xx++)
-            if (xx >= 0 && yy >= 0) g_update_pixels[yy*512+xx] = color;
-      }
-    }
-  }
-}
 void Platform3DS_PresentUpdatePage(bool show_notes, unsigned page) {
   if (!g_gpu_presenter_initialized) return;
   if (!g_update_pixels) g_update_pixels = linearMemAlign(512*256*4, 64);
   if (!g_update_pixels) return;
+  static uint32_t letters[128*16], glyphs[kGlyphCols*8*((kGlyphCount+kGlyphCols-1)/kGlyphCols)*8];
+  if (!g_update_fonts_ready) {
+    if (!SS_RenderLetterSheet(letters) || !SS_RenderGlyphSheet(glyphs)) return;
+    g_update_fonts_ready = true;
+  }
   static char notes[12289], lines[384][43];
   UpdateStatus state; Updater_GetStatus(&state);
-  unsigned count;
-  if (show_notes && state.version[0]) {
-    Updater_GetNotes(notes, sizeof(notes));
-    count = Update_FormatNotes(notes, lines, 384);
-  } else {
-    strcpy(lines[0], "Select a release on the touch screen");
-    strcpy(lines[1], "to read its changelog here.");
-    count = 2;
+  static unsigned last_revision, last_page;
+  static bool last_show_notes;
+  if (!g_update_view_valid || last_revision != state.revision ||
+      last_page != page || last_show_notes != show_notes) {
+    unsigned count;
+    if (show_notes && state.version[0]) {
+      Updater_GetNotes(notes, sizeof(notes));
+      count = Update_FormatNotes(notes, lines, 384);
+    } else {
+      strcpy(lines[0], "Select a release on the touch screen");
+      strcpy(lines[1], "to read its changelog here.");
+      count = 2;
+    }
+    g_update_note_pages = (count + 13) / 14;
+    if (page >= g_update_note_pages) page = g_update_note_pages - 1;
+    UpdateView_Draw(g_update_pixels, letters, glyphs,
+                    show_notes ? state.version : "", lines, count, page);
+    last_revision = state.revision; last_page = page; last_show_notes = show_notes;
+    g_update_view_valid = true;
   }
-  g_update_note_pages = (count + 13) / 14;
-  if (page >= g_update_note_pages) page = g_update_note_pages - 1;
-  for (unsigned i = 0; i < 512*256; i++) g_update_pixels[i] = 0x171b1a;
-  for (int x = 10; x < 390; x++) { g_update_pixels[30*512+x] = 0xe8c260; g_update_pixels[221*512+x] = 0xe8c260; }
-  char title[64]; snprintf(title, sizeof(title), "CHANGELOG %s", show_notes ? state.version : "");
-  UpdateText(12, 9, title, 2, 1, 0xe8c260);
-  for (unsigned i = page*14; i < count && i < (page+1)*14; i++)
-    UpdateText(12, 36 + (i-page*14)*13, lines[i], 3, 2, 0xffffff);
-  char footer[64]; snprintf(footer, sizeof(footer), "PAGE %u / %u", page+1, g_update_note_pages);
-  UpdateText(12, 228, footer, 1, 1, 0xe8c260);
   if (!C3D_FrameBegin(0)) return;
   g_gpu_frame_active = true;
   Platform3DS_CleanDataCache(g_update_pixels, 512*256*4);
@@ -1163,14 +1162,14 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   }
 }
 
-void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
+bool Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
                                     int width, int height) {
   int bytes_per_pixel = g_is_new_3ds ? 4 : 2;
   if (!g_gpu_frame_active || !pixels ||
       pitch != kTopTextureWidth * bytes_per_pixel ||
       width <= 0 || width > kTopTextureWidth ||
       height <= 0 || height > kTopTextureHeight)
-    return;
+    return false;
 
   Platform3DS_CleanDataCache(
     pixels, kTopTextureWidth * kTopTextureHeight * bytes_per_pixel);
@@ -1214,6 +1213,7 @@ void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
   C2D_SceneBegin(g_bottom_target);
   Platform3DS_DrawMappedImage(image, &params,
     g_is_new_3ds ? ConfigureArgbTextureEnv : ConfigureRgb565TextureEnv);
+  return true;
 }
 
 void Platform3DS_EndFrame(void) {

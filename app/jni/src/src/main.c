@@ -45,7 +45,6 @@ static bool g_run_without_emu = 0;
 // Dual-screen UI (second_screen_sdl.c); stubbed on Android
 bool SecondScreenSDL_Init(SDL_Window *main_window);
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e);
-void SecondScreenSDL_Handle3DSTouch(void);
 void SecondScreenSDL_Update(int logic_frames);
 void SecondScreenSDL_SetDiagnostics(int current_fps, int average_fps);
 #ifdef __3DS__
@@ -843,6 +842,7 @@ restart_3ds_runtime:
       break;
     }
 #endif
+    // Touch is dispatched from SDL edges here, before paused/update/timing exits.
     while(SDL_PollEvent(&event)) {
       if (SecondScreenSDL_HandleEvent(&event))
         continue;
@@ -991,7 +991,6 @@ restart_3ds_runtime:
     int turbo_multiplier;
     inputs = Platform3DS_ReadInput(&turbo_held, &turbo_multiplier);
     SecondScreenSDL_SetDiagnostics(g_3ds_current_fps, g_3ds_average_fps);
-    SecondScreenSDL_Handle3DSTouch();
     if (Platform3DS_TakeQuickDumpRequest())
       SecondScreenSDL_RequestDump();
     g_turbo = turbo_held;

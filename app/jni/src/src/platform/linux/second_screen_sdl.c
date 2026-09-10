@@ -1414,14 +1414,14 @@ static void draw_update_panel(RectFS r) {
             r.y + 184 * u, 2 * u);
   const char *hint = update_confirm ? "UNSAVED PROGRESS IS LOST" :
     update_show_notes ? "CHANGELOG ON TOP SCREEN" : "TAP THE RELEASE FOR CHANGELOG";
-  draw_text(hint, r.x + r.w / 2 - text_width(hint, 1.7f * u) / 2,
-            r.y + 216 * u, 1.7f * u);
+  draw_text(hint, r.x + r.w / 2 - text_width(hint, 2 * u) / 2,
+            r.y + 216 * u, 2 * u);
   update_prev_r = (RectFS){r.x + 28 * u, r.y + 246 * u, 100 * u, 34 * u};
   update_next_r = (RectFS){r.x + r.w - 128 * u, r.y + 246 * u, 100 * u, 34 * u};
   if (update_show_notes && !update_confirm) {
     draw_settings_row(&update_prev_r, false); draw_settings_row(&update_next_r, false);
-    draw_text("PREV", update_prev_r.x + 22 * u, update_prev_r.y + 10 * u, 1.8f * u);
-    draw_text("NEXT", update_next_r.x + 22 * u, update_next_r.y + 10 * u, 1.8f * u);
+    draw_text("PREV", update_prev_r.x + 22 * u, update_prev_r.y + 10 * u, 2 * u);
+    draw_text("NEXT", update_next_r.x + 22 * u, update_next_r.y + 10 * u, 2 * u);
   }
   const char *action = update_confirm ? "INSTALL UPDATE" :
     st.state == UPDATE_AVAILABLE ? "DOWNLOAD UPDATE" :
@@ -1479,14 +1479,15 @@ static void draw_settings(RectFS r) {
   snprintf(turbo_value, sizeof(turbo_value), "X5");
 #endif
   static const char *const labels[5] = {
-    "SCREEN", "TURBO SPEED", "DEVELOPER", "RESTART", "UPDATE",
+    "SCREEN", "TURBO SPEED", "DEVELOPER", "UPDATE", "RESTART",
   };
-  const char *values[5] = {"", turbo_value, "", NULL, ""};
-  float row_h = 44 * u, gap = 8 * u;
+  const char *values[5] = {"", turbo_value, "", "", NULL};
+  float gap = 8 * u;
   float y0 = r.y + 55 * u;
+  float row_h = (r.h - 55 * u - 20 * u - 4 * gap) / 5;
   for (int i = 0; i < 5; i++) {
     RectFS *row = &settings_row_r[i];
-    *row = (RectFS){r.x + 28 * u, y0 + (i == 4 ? 5 : i) * (row_h + gap), r.w - 56 * u, row_h};
+    *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
     draw_settings_row(row, false);
     float ty = row->y + row->h / 2 - 8 * u;
     draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
@@ -1561,6 +1562,7 @@ static int ss_front_buffer = -1;
 static int ss_worker_buffer;
 static bool ss_worker_busy;
 static bool ss_frame_ready;
+static bool ss_present_retry;
 static uint32_t ss_redraw_requests;
 static bool ss_worker_sidebar_patch;
 static bool ss_worker_map_patch;
@@ -2025,18 +2027,9 @@ static void draw_bottom_sidebar_patch(void) {
 }
 #endif
 
-static void handle_tap(float x, float y) {
+static void apply_tap(float x, float y) {
   int module = SS_GetModule() & 0xFF;
   int ui_mode = mode_for_module(module);
-#ifdef __3DS__
-  if (!ss_is_new_3ds) {
-    ss_touch_request_ticks = svcGetSystemTick();
-    ss_touch_redraw_pending = true;
-    ss_worker_interactive = true;
-    prioritize_bottom_touch();
-  }
-  request_bottom_redraw(kBottomRedrawFull);
-#endif
 #ifdef __3DS__
   if (update_mode && Updater_Busy()) goto settings_tap;
 #endif
@@ -2220,13 +2213,13 @@ settings_tap:
         update_ini("[General]", "CStickTurboMultiplier", value);
       } else if (in_rect(&settings_row_r[2], x, y)) {
         developer_mode = true;
-      } else if (in_rect(&settings_row_r[3], x, y)) {
+      } else if (in_rect(&settings_row_r[4], x, y)) {
 #ifdef __3DS__
         Platform3DS_RequestRomSelection();
 #else
         SS_RequestRestart();
 #endif
-      } else if (in_rect(&settings_row_r[4], x, y)) {
+      } else if (in_rect(&settings_row_r[3], x, y)) {
         update_mode = true;
         update_confirm = update_show_notes = false;
         update_page = 0;
@@ -2273,18 +2266,41 @@ settings_tap:
   }
 }
 
+static void handle_tap(float x, float y) {
+  // Commit navigation before waking a worker that can preempt this thread.
+  // Publishing first could draw the old tab and consume the only redraw.
+  apply_tap(x, y);
+#ifdef __3DS__
+  if (!ss_is_new_3ds) {
+    ss_touch_request_ticks = svcGetSystemTick();
+    ss_touch_redraw_pending = true;
+    ss_worker_interactive = true;
+  }
+  request_bottom_redraw(kBottomRedrawFull);
+  prioritize_bottom_touch();
+#endif
+}
+
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
   if (!ss_win) return false;
   switch (e->type) {
   case SDL_FINGERDOWN:
 #ifdef __3DS__
-    return e->tfinger.windowID == ss_winid;
+    // SDL's N3DS backend sends physical touch with a NULL window. Consume
+    // its queued edge regardless of focus, including while gameplay pauses.
+    handle_tap(e->tfinger.x * 320.0f - (320.0f - W) * 0.5f,
+               e->tfinger.y * 240.0f - (240.0f - H) * 0.5f);
+    return true;
 #else
     if (e->tfinger.windowID == ss_winid) { handle_tap(e->tfinger.x * W, e->tfinger.y * H); return true; }
     return false;
 #endif
   case SDL_FINGERUP: case SDL_FINGERMOTION:
+#ifdef __3DS__
+    return true;
+#else
     return e->tfinger.windowID == ss_winid;
+#endif
   case SDL_MOUSEBUTTONDOWN:
     if (e->button.windowID == ss_winid) {
       if (e->button.which != SDL_TOUCH_MOUSEID)  // real mouse (dev); touch already handled
@@ -2302,26 +2318,6 @@ bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
   default:
     return false;
   }
-}
-
-void SecondScreenSDL_Handle3DSTouch(void) {
-#ifdef __3DS__
-  if (!ss_win)
-    return;
-  static bool was_touching;
-  u32 keys = hidKeysHeld();
-  bool touching = (keys & KEY_TOUCH) != 0;
-  if (touching && !was_touching) {
-    touchPosition pos;
-    hidTouchRead(&pos);
-    float draw_x = (320.0f - W) * 0.5f;
-    float draw_y = (240.0f - H) * 0.5f;
-    float x = (float)pos.px - draw_x;
-    float y = (float)pos.py - draw_y;
-    handle_tap(x, y);
-  }
-  was_touching = touching;
-#endif
 }
 
 static void draw_second_screen(int logic_frames) {
@@ -2543,6 +2539,19 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
       return;
   }
 
+  // Produce the initial Old frame before relying on the low-priority worker.
+  // Retry synchronously if game art was not available yet. No gameplay-frame
+  // wait is introduced after this first usable bottom image.
+  if (!ss_is_new_3ds && !ss_worker_thread &&
+      (ss_front_buffer < 0 || !art_ready)) {
+    __atomic_exchange_n(&ss_redraw_requests, 0, __ATOMIC_ACQ_REL);
+    ss_worker_buffer = 0;
+    draw_second_screen(logic_frames);
+    ss_front_buffer = ss_worker_buffer;
+    ss_frame_ready = true;
+    return;
+  }
+
   // A queued map request, or a job already drawing, can outlive the scene
   // invalidation guard. Keep automatic work below the iris until it completes.
   int module = SS_GetModule() & 0xff;
@@ -2617,7 +2626,7 @@ void SecondScreenSDL_Update(int logic_frames) {
   (void)logic_frames;
   if (ss_front_buffer < 0) return;
   if (!ss_is_new_3ds && ss_old_display_pixels) {
-    bool changed = ss_frame_ready;
+    bool changed = ss_frame_ready || ss_present_retry;
     if (ss_frame_ready) {
       // BeginFrame has consumed worker_done; no new Old job may start until
       // this frame is presented. Copy into main-owned storage once per UI job.
@@ -2635,13 +2644,19 @@ void SecondScreenSDL_Update(int logic_frames) {
         ss_display_hearts.half_magic == (live[0x7b] >= 1))
       changed |= BottomHearts_Apply(&ss_display_hearts, ss_old_display_pixels,
                                    bottom_buffer_pitch(), live[0x6d]) != 0;
-    if (changed)
-      Platform3DS_PresentBottomFrame(ss_old_display_pixels, bottom_buffer_pitch(), W, H);
+    if (changed && !Platform3DS_PresentBottomFrame(ss_old_display_pixels, bottom_buffer_pitch(), W, H)) {
+      // A skipped top GPU frame must not consume a bottom redraw. Preserve
+      // the main-owned image, including live hearts, for the next submission.
+      ss_present_retry = true;
+      ss_frame_ready = false;
+      return;
+    }
   } else if (ss_frame_ready) {
-    Platform3DS_PresentBottomFrame(ss_present_pixels[ss_front_buffer],
-                                  bottom_buffer_pitch(), W, H);
+    if (!Platform3DS_PresentBottomFrame(ss_present_pixels[ss_front_buffer],
+                                       bottom_buffer_pitch(), W, H))
+      return;
   }
-  ss_frame_ready = false;
+  ss_frame_ready = ss_present_retry = false;
 }
 
 // Called on the main thread during the paused dump transaction. Do not read
@@ -2792,6 +2807,7 @@ void SecondScreenSDL_Shutdown(void) {
 #ifdef __3DS__
   ss_worker_busy = ss_frame_ready = false;
   ss_front_buffer = -1;
+  ss_present_retry = false;
   ss_worker_buffer = 0;
   ss_redraw_requests = kBottomRedrawFull;
   ss_worker_sidebar_patch = ss_worker_map_patch = ss_worker_interactive = false;

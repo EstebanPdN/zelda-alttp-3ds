@@ -20,7 +20,10 @@ static void *ss_old_display_pixels;
 static bool ss_is_new_3ds,ss_scene_redraw_pending,ss_worker_interactive,ss_touch_redraw_pending;
 static bool ss_worker_door_transition;
 static bool ss_worker_busy,ss_worker_sidebar_patch,ss_worker_map_patch,ss_worker_running;
-static bool ss_enabled=true,ss_frame_ready,done_ready;
+static bool ss_enabled=true,ss_frame_ready,ss_present_retry,done_ready,art_ready=true;
+static bool update_mode;
+typedef struct {unsigned revision;} UpdateStatus;
+static void Updater_GetStatus(UpdateStatus *s){s->revision=0;}
 static int ss_worker_thread=1,ss_worker_interactive_priority=0x2f,ss_worker_scene_priority=0x30,ss_worker_idle_priority=0x31;
 static int ss_front_buffer=0,ss_worker_buffer,ss_win=1,ss_worker_start,ss_worker_done,ss_worker_logic_frames;
 static int priority=0x31,tab,module=9,area,drawn_health,signals,waits,load_result,load_flash_until;
@@ -78,7 +81,8 @@ static bool ss_old_display_valid;
 enum {k3DSBottomTextureWidth=512,k3DSBottomTextureHeight=256,W=320,H=240};
 static int presents;
 static int bottom_buffer_pitch(void){return ss_is_new_3ds?2048:1024;}
-static void Platform3DS_PresentBottomFrame(const uint8_t *p,int pitch,int w,int h){presents++;}
+static bool gpu_active=true;
+static bool Platform3DS_PresentBottomFrame(const uint8_t *p,int pitch,int w,int h){if(!gpu_active)return false;presents++;return true;}
 '''+fn('void SecondScreenSDL_Update(')
 code+=r'''
 static void RunWorker(void){waits=0;ss_worker_running=true;second_screen_worker_main(NULL);assert(done_ready);}
@@ -154,7 +158,18 @@ int main(void) {
  live[0x6c]=24;live[0x7b]=1;SecondScreenSDL_Update(1);assert(presents==old_presents);
  live[0x7b]=0;tab=TAB_SETTINGS;SecondScreenSDL_Update(1);assert(presents==old_presents);
  tab=TAB_MAP;SecondScreenSDL_Update(1);assert(presents==old_presents+1);
- puts("PASS retained hearts while worker busy: no job/priority changes, immediate latest health, no unchanged-glyph upload, worker buffers untouched, completed-map reconciliation, capacity/half-magic/hidden-tab guards; fallback damage/healing invalidation, queued latest health, HUD-before-map dispatch, busy-map fairness, scene/touch priority, New unchanged and idle restoration");
+ // A dropped GPU frame retains the image even when no further UI changes.
+ gpu_active=false;ss_frame_ready=true;old_presents=presents;
+ SecondScreenSDL_Update(1);assert(ss_present_retry && presents==old_presents);
+ gpu_active=true;SecondScreenSDL_Update(1);assert(!ss_present_retry && presents==old_presents+1);
+ ss_is_new_3ds=true;gpu_active=false;ss_frame_ready=true;
+ SecondScreenSDL_Update(1);assert(ss_frame_ready);
+ gpu_active=true;SecondScreenSDL_Update(1);assert(!ss_frame_ready);
+ // The first Old bottom frame is ready before a worker can starve at idle.
+ ss_is_new_3ds=false;ss_worker_thread=0;ss_worker_busy=false;ss_front_buffer=-1;
+ ss_frame_ready=false;art_ready=true;priority=0x30;SecondScreenSDL_BeginFrame(1);
+ assert(ss_front_buffer==0 && ss_frame_ready && ss_worker_thread==0);
+ puts("PASS startup and dropped-frame retry on both models; retained hearts while worker busy: no job/priority changes, immediate latest health, no unchanged-glyph upload, worker buffers untouched, completed-map reconciliation, capacity/half-magic/hidden-tab guards; fallback damage/healing invalidation, queued latest health, HUD-before-map dispatch, busy-map fairness, scene/touch priority, New unchanged and idle restoration");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='alttp-hud-latency-') as t:

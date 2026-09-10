@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.1-E2 (local experimental)
+
+- Fixed unresponsive Update controls on Old and New 3DS.
+- Fixed missed touch navigation and blank bottom-screen startup on Old 3DS.
+- Moved Update above Restart and enlarged the settings buttons evenly.
+- Fixed unreadable update hints and matched top-screen changelogs to the menu style.
+
 ## v3.1-E1 (local experimental)
 
 - Added GitHub updates with Stable and Pre-release channels.
