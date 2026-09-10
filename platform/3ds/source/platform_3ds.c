@@ -2725,6 +2725,15 @@ static bool TryBuildBaseAssetsFromInstalledUsRom(const uint8 *patch,
   return success;
 }
 
+static const char *g_profile_prepare_status = "ROM preparation failed";
+
+static bool ProfileSetupFailure(const char *status, const char *path) {
+  int error = errno;
+  g_profile_prepare_status = status;
+  LogSetup("%s: %s (errno=%d)", status, path, error);
+  return false;
+}
+
 static bool ExtractAssetsFromRom(const char *rom_path) {
   LogSetup("Extraction requested");
   LogSetup("ROM found: %s", rom_path);
@@ -2747,6 +2756,7 @@ static bool ExtractAssetsFromRom(const char *rom_path) {
       patch ? "OK" : "FAILED", (unsigned long)patch_size);
     free(rom);
     free(patch);
+    ProfileSetupFailure("SD read error", rom_path);
     ShowFatalSetupError(error);
     return false;
   }
@@ -2789,6 +2799,7 @@ static bool ExtractAssetsFromRom(const char *rom_path) {
   free(rom);
   free(patch);
   if (!assets) {
+    g_profile_prepare_status = "Incompatible ROM";
     LogSetup("ROM not compatible with available extraction paths");
     return false;
   }
@@ -2797,6 +2808,7 @@ static bool ExtractAssetsFromRom(const char *rom_path) {
   LogSetup("Assets write: %s", written ? "OK" : "FAIL");
   free(assets);
   if (!written || !AssetsFileLooksValid(kAssetsFilename)) {
+    ProfileSetupFailure("SD assets write error", kAssetsFilename);
     ShowFatalSetupError(
       "Error saving zelda3_assets.dat.\n"
       "Check free space and the SD card.");
@@ -3129,14 +3141,23 @@ static int SelectRom(RomEntry *roms, int rom_count, const char *status) {
 // is intentional: a new profile may inherit another profile's INI, but must
 // not inherit its "already migrated" state. Later menu writes leave it alone.
 static bool MigrateWideDefaults(const char *ini) {
-  char marker[640], temporary[640], marker_temporary[660];
+  char marker[640], temporary[640], marker_temporary[660], backup[640];
   if (snprintf(marker,sizeof(marker),"%s.wide-defaults-v1",ini)>=(int)sizeof(marker) ||
       snprintf(temporary,sizeof(temporary),"%s.wide-defaults.tmp",ini)>=(int)sizeof(temporary) ||
-      snprintf(marker_temporary,sizeof(marker_temporary),"%s.tmp",marker)>=(int)sizeof(marker_temporary))
-    return false;
+      snprintf(marker_temporary,sizeof(marker_temporary),"%s.tmp",marker)>=(int)sizeof(marker_temporary) ||
+      snprintf(backup,sizeof(backup),"%s.wide-defaults.bak",ini)>=(int)sizeof(backup))
+    return ProfileSetupFailure("Settings path too long", ini);
+  // Recover a stopped replacement before creating any default INI. Never
+  // rename over an existing destination: SD FS and host POSIX differ here.
+  if (!IsRegularFile(ini) && IsRegularFile(backup) && rename(backup,ini)!=0)
+    return ProfileSetupFailure("Settings recovery failed", backup);
+  if (!CopyFileIfMissing(kBundledConfig,ini))
+    return ProfileSetupFailure("Settings create failed", ini);
   if (IsRegularFile(marker)) return true;
-  FILE *input=fopen(ini,"rb");if(!input)return false;
-  FILE *output=fopen(temporary,"wb");if(!output){fclose(input);return false;}
+  FILE *input=fopen(ini,"rb");
+  if(!input)return ProfileSetupFailure("Settings read failed", ini);
+  FILE *output=fopen(temporary,"wb");
+  if(!output){fclose(input);return ProfileSetupFailure("Settings write failed", temporary);}
   char line[1024], parsed[1024];bool general=false,inserted=false,ok=true;
   while(fgets(line,sizeof(line),input)) {
     strcpy(parsed,line);char *text=Trim(parsed);
@@ -3158,44 +3179,67 @@ static bool MigrateWideDefaults(const char *ini) {
   if(ferror(input))ok=false;
   if(fclose(input)!=0)ok=false;
   if(fclose(output)!=0)ok=false;
-  if(!ok || rename(temporary,ini)!=0){remove(temporary);return false;}
-  output=fopen(marker_temporary,"wb");if(!output)return false;
+  if(!ok){remove(temporary);return ProfileSetupFailure("Settings write failed", ini);}
+  // Keep a complete old INI until the new file and migration marker are closed.
+  // A restart can recover the backup if promotion was interrupted.
+  if(IsRegularFile(backup) && remove(backup)!=0)
+    return ProfileSetupFailure("Settings backup failed", backup);
+  if(rename(ini,backup)!=0)
+    return ProfileSetupFailure("Settings backup failed", ini);
+  if(rename(temporary,ini)!=0) {
+    ProfileSetupFailure("Settings install failed", ini);
+    if(rename(backup,ini)!=0)
+      LogSetup("Settings rollback deferred to next boot: %s (errno=%d)",backup,errno);
+    return false;
+  }
+  output=fopen(marker_temporary,"wb");
+  if(!output)return ProfileSetupFailure("Settings marker failed", marker_temporary);
   ok=fputs("1\n",output)>=0;
   if(fclose(output)!=0)ok=false;
-  if(!ok || rename(marker_temporary,marker)!=0){remove(marker_temporary);return false;}
+  if(!ok || rename(marker_temporary,marker)!=0) {
+    remove(marker_temporary);
+    return ProfileSetupFailure("Settings marker failed", marker);
+  }
+  if(remove(backup)!=0)
+    LogSetup("Settings migrated; backup retained: %s (errno=%d)",backup,errno);
   LogSetup("Applied one-time WIDE/FixedCamera defaults: %s",ini);
   return true;
 }
 
 static bool EnsureProfileReady(RomEntry *rom, bool force_extract) {
+  g_profile_prepare_status = "ROM preparation failed";
+  LogSetup("Preparing profile: %s, ROM: %s", rom->profile, rom->filename);
   if (!EnsureDirectory(kProfilesDirectory) || !EnsureDirectory(rom->profile))
+    return ProfileSetupFailure("SD profile folder error", rom->profile);
+  char profile_assets[512], profile_ini[512];
+  snprintf(profile_assets,sizeof(profile_assets),"%s/%s",rom->profile,kAssetsFilename);
+  snprintf(profile_ini,sizeof(profile_ini),"%s/zelda3.ini",rom->profile);
+  if (!MigrateWideDefaults(profile_ini))
     return false;
   char cwd[512];
   if (!getcwd(cwd, sizeof(cwd)))
-    return false;
+    return ProfileSetupFailure("SD directory error", rom->profile);
   if (chdir(rom->profile) != 0)
-    return false;
-  CopyFileIfMissing(kBundledConfig, "zelda3.ini");
+    return ProfileSetupFailure("SD directory error", rom->profile);
   bool ready = !force_extract && AssetsFileLooksValid(kAssetsFilename);
   if (!ready) {
     char rom_path[640];
     snprintf(rom_path, sizeof(rom_path), "../../%s", rom->filename);
     ready = ExtractAssetsFromRom(rom_path);
+  } else {
+    LogSetup("Reusing validated profile assets");
   }
-  chdir(cwd);
-  if (ready) {
-    char profile_assets[512];
-    char profile_ini[512];
-    snprintf(profile_assets, sizeof(profile_assets), "%s/%s",
-             rom->profile, kAssetsFilename);
-    snprintf(profile_ini, sizeof(profile_ini), "%s/zelda3.ini", rom->profile);
-    ready = MigrateWideDefaults(profile_ini) &&
-            CopyFileReplacing(profile_assets, kAssetsFilename) &&
-            CopyFileReplacing(profile_ini, "zelda3.ini") &&
-            PrepareSaveDirectory(rom, false);
-    WriteSelectedRom(rom);
-  }
-  return ready;
+  if (chdir(cwd)!=0)
+    return ProfileSetupFailure("SD directory error", cwd);
+  if (!ready) return false;
+  if (!CopyFileReplacing(profile_assets, kAssetsFilename))
+    return ProfileSetupFailure("SD assets copy error", profile_assets);
+  if (!CopyFileReplacing(profile_ini, "zelda3.ini"))
+    return ProfileSetupFailure("SD settings copy error", profile_ini);
+  if (!PrepareSaveDirectory(rom, false))
+    return ProfileSetupFailure("SD save folder error", rom->profile);
+  WriteSelectedRom(rom);
+  return true;
 }
 
 static bool ResolveActiveProfile(char *profile, size_t profile_size) {
@@ -3213,18 +3257,12 @@ static bool ResolveActiveProfile(char *profile, size_t profile_size) {
       ReadSelectedRomInfo(&selected_info) &&
       FindSelectedRomEntry(&selected_info, roms, rom_count, &selected_rom) &&
       ProfileAssetsValid(selected_rom.profile)) {
-    char profile_assets[512];
-    char profile_ini[512];
-    snprintf(profile_assets, sizeof(profile_assets), "%s/%s",
-             selected_rom.profile, kAssetsFilename);
-    snprintf(profile_ini, sizeof(profile_ini), "%s/zelda3.ini",
-             selected_rom.profile);
-    if (!MigrateWideDefaults(profile_ini) ||
-        !CopyFileReplacing(profile_assets, kAssetsFilename) ||
-        !CopyFileReplacing(profile_ini, "zelda3.ini"))
+    if (!EnsureProfileReady(&selected_rom, false)) {
+      ShowFatalSetupError(g_profile_prepare_status);
       return false;
+    }
     snprintf(profile, profile_size, "%s", selected_rom.profile);
-    return PrepareSaveDirectory(&selected_rom, false);
+    return true;
   }
 
   int legacy_choice = -1;
@@ -3237,14 +3275,13 @@ static bool ResolveActiveProfile(char *profile, size_t profile_size) {
       if (!MigrateLegacyStorage(&roms[legacy_choice]))
         return false;
       snprintf(profile, profile_size, "%s", roms[legacy_choice].profile);
-      return ProfileAssetsValid(profile) &&
-             PrepareSaveDirectoryForProfile(profile);
+      return EnsureProfileReady(&roms[legacy_choice], false);
     }
     if (EnsureProfileReady(&roms[legacy_choice], true)) {
       snprintf(profile, profile_size, "%s", roms[legacy_choice].profile);
       return true;
     }
-    SelectRom(roms, rom_count, "Incompatible ROM");
+    SelectRom(roms, rom_count, g_profile_prepare_status);
     return false;
   }
 
@@ -3258,7 +3295,7 @@ static bool ResolveActiveProfile(char *profile, size_t profile_size) {
       snprintf(profile, profile_size, "%s", roms[choice].profile);
       return true;
     }
-    status = "Incompatible ROM";
+    status = g_profile_prepare_status;
     if (rom_count <= 1)
       SelectRom(roms, rom_count, status);
   }
