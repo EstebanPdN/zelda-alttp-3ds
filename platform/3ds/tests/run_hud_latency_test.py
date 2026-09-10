@@ -16,6 +16,7 @@ code=r'''
 #include <string.h>
 #include <assert.h>
 typedef int s32;
+static void *ss_old_display_pixels;
 static bool ss_is_new_3ds,ss_scene_redraw_pending,ss_worker_interactive,ss_touch_redraw_pending;
 static bool ss_worker_busy,ss_worker_sidebar_patch,ss_worker_map_patch,ss_worker_running;
 static bool ss_enabled=true,ss_frame_ready,done_ready;
@@ -28,7 +29,7 @@ static uint64_t ss_patch_redraw_count,ss_patch_redraw_total_ticks,ss_patch_redra
 static uint64_t ss_full_redraw_count,ss_full_redraw_total_ticks,ss_full_redraw_max_ticks;
 static uint64_t ss_touch_redraw_count,ss_touch_redraw_total_ticks,ss_touch_redraw_max_ticks;
 static uint8_t live[128];
-enum {TAB_MAP,MODE_GAME,kBottomRedrawFull=1,kBottomRedrawHud=2,kBottomRedrawMap=4};
+enum {TAB_MAP,TAB_ITEMS,TAB_GEAR,TAB_SETTINGS,MODE_GAME,kBottomRedrawFull=1,kBottomRedrawHud=2,kBottomRedrawMap=4};
 #define CUR_THREAD_HANDLE 0
 static int threadGetHandle(int t){return t;}
 static void svcSetThreadPriority(int t,int p){priority=p;}
@@ -56,11 +57,28 @@ static void LightEvent_Wait(int *e){if(waits++)ss_worker_running=false;}
 static bool LightEvent_TryWait(int *e){bool d=done_ready;done_ready=false;return d;}
 static void LightEvent_Signal(int *e){if(e==&ss_worker_start)signals++;else done_ready=true;}
 static void draw_bottom_map_patch(void){assert(priority>=0x30);}
-static void draw_bottom_sidebar_patch(void){assert(priority==0x2f);drawn_health=live[0x6d];}
+static void draw_bottom_sidebar_patch(void){assert(priority==0x30);drawn_health=live[0x6d];}
 static void draw_second_screen(int n){if(!ss_worker_touch_request_ticks)assert(priority>=0x30);drawn_health=live[0x6d];}
 '''+s[a:b]+fn('static void prioritize_bottom_scene(')+fn('static void prioritize_bottom_touch(')
 if 'static s32 bottom_worker_priority(' in s:code+=fn('static s32 bottom_worker_priority(')+fn('static void prioritize_bottom_hud(')
 code+=fn('static void request_bottom_redraw_on_state_change(')+fn('void SecondScreenSDL_BeginFrame(')+fn('static void second_screen_worker_main(')
+code+=r'''
+typedef struct {int x,y,w,h;} SDL_Rect;
+static int SDL_RenderReadPixels(void *r, const SDL_Rect *rect, int fmt, void *dst, int pitch) {assert(0);return -1;}
+#define SDL_PIXELFORMAT_RGB565 0
+typedef void SDL_Renderer;
+'''
+code+='#include "'+str(r/'app/jni/src/src/platform/linux/bottom_hearts.h')+'"\n'
+code+=r'''
+static BottomHearts ss_worker_hearts[2],ss_display_hearts;
+static uint8_t display[512*256*2],worker0[512*256*2],worker1[512*256*2];
+static uint8_t *ss_present_pixels[2]={worker0,worker1};
+static bool ss_old_display_valid;
+enum {k3DSBottomTextureWidth=512,k3DSBottomTextureHeight=256,W=320,H=240};
+static int presents;
+static int bottom_buffer_pitch(void){return ss_is_new_3ds?2048:1024;}
+static void Platform3DS_PresentBottomFrame(const uint8_t *p,int pitch,int w,int h){presents++;}
+'''+fn('void SecondScreenSDL_Update(')
 code+=r'''
 static void RunWorker(void){waits=0;ss_worker_running=true;second_screen_worker_main(NULL);assert(done_ready);}
 static void Present(void){SecondScreenSDL_BeginFrame(1);assert(ss_frame_ready);ss_frame_ready=false;}
@@ -91,7 +109,36 @@ int main(void) {
  // New keeps its existing full redraw route and ignores Old priority changes.
  ss_is_new_3ds=true;ss_redraw_requests=0;live[0x6d]=8;priority=0x31;
  SecondScreenSDL_BeginFrame(1);assert(!ss_worker_sidebar_patch&&!ss_worker_map_patch&&priority==0x31);
- puts("PASS actual damage/healing invalidation, queued latest health, HUD-before-map dispatch, busy-map fairness, scene/touch priority, New unchanged and idle restoration");
+ // Retained Old health must bypass even a blocked/busy map worker.
+ ss_is_new_3ds=false;ss_old_display_pixels=display;ss_worker_busy=true;
+ ss_worker_touch_request_ticks=0;ss_worker_interactive=false;ss_worker_sidebar_patch=false;
+ request_bottom_redraw_on_state_change(); // settle the synthetic New-to-Old switch
+ ss_redraw_requests=0;ss_frame_ready=false;done_ready=false;priority=0x31;
+ ss_display_hearts=(BottomHearts){.valid=true,.count=3,.size=16,.capacity=24,.health=8};
+ for(int i=0;i<3;i++)ss_display_hearts.rect[i]=(SDL_Rect){224+i*20,140,16,16};
+ ss_old_display_valid=true;
+ for(int i=0;i<64;i++){bottom_heart_glyphs[0][i]=0;bottom_heart_glyphs[1][i]=0xffff0000;bottom_heart_glyphs[2][i]=0xffff0000;}
+ int old_signals=signals;
+ for(int health=24;health>=0;health-=4){
+   int old_presents=presents;live[0x6d]=health;SecondScreenSDL_BeginFrame(1);
+   assert(!ss_redraw_requests && priority==0x31 && signals==old_signals);
+   SecondScreenSDL_Update(1);assert(presents==old_presents+1);
+   assert(ss_display_hearts.health==health);
+ }
+ // No changed glyph means no transfer. Busy worker storage must stay untouched.
+ int old_presents=presents;SecondScreenSDL_Update(1);assert(presents==old_presents);
+ for(unsigned i=0;i<sizeof(worker0);i++)assert(worker0[i]==0 && worker1[i]==0);
+ // A completed old map must not make current hearts regress to captured health.
+ ss_worker_hearts[0]=ss_display_hearts;ss_worker_hearts[0].health=24;
+ ss_front_buffer=0;ss_frame_ready=true;SecondScreenSDL_Update(1);
+ assert(ss_display_hearts.health==0 && presents==old_presents+1);
+ // A capacity/half-magic mismatch and hidden tabs must not draw a stale layout.
+ live[0x6d]=24;live[0x6c]=32;old_presents=presents;
+ SecondScreenSDL_Update(1);assert(presents==old_presents);
+ live[0x6c]=24;live[0x7b]=1;SecondScreenSDL_Update(1);assert(presents==old_presents);
+ live[0x7b]=0;tab=TAB_SETTINGS;SecondScreenSDL_Update(1);assert(presents==old_presents);
+ tab=TAB_MAP;SecondScreenSDL_Update(1);assert(presents==old_presents+1);
+ puts("PASS retained hearts while worker busy: no job/priority changes, immediate latest health, no unchanged-glyph upload, worker buffers untouched, completed-map reconciliation, capacity/half-magic/hidden-tab guards; fallback damage/healing invalidation, queued latest health, HUD-before-map dispatch, busy-map fairness, scene/touch priority, New unchanged and idle restoration");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='alttp-hud-latency-') as t:

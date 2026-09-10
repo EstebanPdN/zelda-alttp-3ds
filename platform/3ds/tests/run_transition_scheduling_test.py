@@ -14,6 +14,7 @@ code=r'''
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
+static void *ss_old_display_pixels;
 static bool ss_is_new_3ds,ss_scene_redraw_pending,ss_worker_interactive,ss_touch_redraw_pending;
 static uint64_t ss_worker_touch_request_ticks;
 static bool ss_worker_busy,ss_worker_sidebar_patch,ss_worker_map_patch;

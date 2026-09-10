@@ -142,3 +142,13 @@ This is a software optimization, not a PICA200 PPU backend or a measured 60 FPS
 result. The [GPU feasibility design](docs/old3ds-pica200-design.md) describes that
 separate implementation. E11 and subsequent experiments remain local, with CIA,
 3DSX and a verified LAN installation QR; there is no public E11 download.
+
+## Local E20: retained Old hearts
+
+E20 replaces E19's high-priority sidebar redraw on damage with a bounded update
+of changed heart cells in a main-owned RGB565 display copy. Heart underlays and
+glyphs are retained from normal UI drawing, so damage does not wake/promote the
+map worker or rebuild the equipment ring and counters. The normal bottom GPU
+transfer remains; no new physical frame-time guarantee is claimed. New retains
+its redraw/presentation policy. See platform/3ds/tests/run_bottom_hearts_test.py
+and run_hud_latency_test.py for pixel and scheduling regressions.
