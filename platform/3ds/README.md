@@ -42,10 +42,10 @@ physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
 `load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
 complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E16 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E17 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 16
+Short name:  Zelda 3DS EXP 17
 Long name:   A Link to the Past 3DS experimental 11
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
@@ -229,7 +229,7 @@ the first game presentation. The LCD gate wraps libctru's automatic unmask;
 there is one startup VBlank wait and no additional steady-state frame wait.
 
 On first E16 use, every ROM profile is migrated to WIDE/FixedCamera, on both
-Old and New. The atomic INI rewrite changes only those two options. Marker
+Old and New. The INI migration changes only those two options. Marker
 `zelda3.ini.wide-defaults-v1` sits beside the profile INI; later changes and
 restarts preserve user choices. New profiles get their own migration marker.
 Auto also now resolves to WIDE/FixedCamera on both models. This supersedes
@@ -239,3 +239,20 @@ Old automatic map updates are deferred during iris modules15/16 and resume
 at the destination using the main thread's priority. Only actual touch
 requests use the preemptive UI priority. This avoids promoting a full map
 redraw above gameplay during a door transition; New scheduling is retained.
+
+### E17 profile preparation repair
+
+E16 renamed the temporary migration INI onto an existing file. That relies on
+overwrite semantics which SD archive rename can reject even though host and
+emulator filesystems accept it. E17 moves the old INI to a sibling backup,
+promotes the closed temporary file into the vacant name and rolls back on
+failure. A later boot restores a stranded backup before creating defaults.
+The marker name remains wide-defaults-v1: completed migrations are respected.
+
+Automatic, selector and legacy routes use the same profile preparation.
+Storage errors identify the failed stage instead of saying Incompatible ROM.
+Settings errors log the path and errno in setup-progress.txt. Validated cached
+assets remain usable without extraction; ROM decoding rules are unchanged.
+`run_profile_boot_test.py` covers rejection of overwrite, failed rename stages,
+recovery, multiple profiles, cached assets and error classification. The
+persistence harness also models non-overwriting SD rename.

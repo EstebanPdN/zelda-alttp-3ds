@@ -19,6 +19,15 @@ code=r'''
 #include <strings.h>
 #include <assert.h>
 #include <sys/stat.h>
+#include <errno.h>
+// SD archive rename can reject an existing destination. Do not inherit the
+// host filesystem's overwrite behavior (which hid E16's regression).
+static int sd_rename(const char *from, const char *to) {
+ struct stat st;
+ if(stat(to,&st)==0){errno=EEXIST;return -1;}
+ return rename(from,to);
+}
+#define rename sd_rename
 #define __3DS__ 1
 #define SDL_strcasecmp strcasecmp
 #define SDL_strncasecmp strncasecmp
@@ -30,12 +39,15 @@ enum {kPlatform3DSCStickDisabled,kPlatform3DSCStickTurbo};
 static bool g_is_new_3ds,g_display_mode_auto,g_wide_edge_mode_auto;
 static bool g_display_mode_legacy_stretch,g_runtime_wide_edge_seen,g_show_fps;
 static int g_display_mode,g_wide_edge_mode,g_wide_zoom_index,g_cstick_mode,g_turbo_multiplier;
+static const char *kBundledConfig="bundled.ini";
+static bool ProfileSetupFailure(const char *status,const char *path){return false;}
 static const char *kProfilesDirectory="profiles", *g_active_save_directory="saves/test-rom";
 static bool ParseBool(const char *v,bool *b){*b=atoi(v)!=0;return true;}
 '''
 for signature in ['static bool CopyFileReplacing(const char *source, const char *destination) {','void Platform3DS_PersistRuntimeSettings(void)', 'static void Platform3DS_ApplyAutoDisplayDefaults(void)', 'static char *Trim(char *text)', 'static void LoadRuntimeSetting(const char *key, const char *value)', 'void Platform3DS_LoadRuntimeSettings(void)']:
  code+=function(s,signature)
 code+=function(s,'static bool IsRegularFile(const char *path) {')
+code+=function(s,'static bool CopyFileIfMissing(')
 code+=function(s,'static bool MigrateWideDefaults(')
 code+=function(u,'static void update_ini(')
 code+=r'''
