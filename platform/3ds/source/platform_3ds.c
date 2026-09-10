@@ -1,4 +1,6 @@
 #include "platform_3ds.h"
+#include "updater.h"
+static uint32_t *g_update_pixels;
 #include "ppu_gpu.h"
 #include "present_image.h"
 
@@ -892,6 +894,7 @@ bool Platform3DS_InitTopPresenter(void) {
 }
 
 void Platform3DS_ShutdownTopPresenter(void) {
+  linearFree(g_update_pixels); g_update_pixels = NULL;
   g_last_top_source = NULL;
   if (!g_gpu_presenter_initialized)
     return;
@@ -982,6 +985,59 @@ static void DrawStatusText(float x, float y, float scale,
 static float StatusTextWidth(const char *text, float scale) {
   size_t length = strlen(text);
   return length ? ((float)length * 6.0f - 1.0f) * scale : 0.0f;
+}
+
+static uint8_t SetupGlyph(char c, int row);
+static unsigned g_update_note_pages = 1;
+unsigned Platform3DS_UpdateNotesPages(void) { return g_update_note_pages; }
+static void UpdateText(int x, int y, const char *s, int numerator, int denominator, uint32_t color) {
+  for (; *s; s++, x += 6 * numerator / denominator) {
+    for (int row = 0; row < 7; row++) {
+      uint8_t bits = SetupGlyph(*s, row);
+      for (int col = 0; col < 5; col++) if (bits & (1u << (4-col))) {
+        for (int yy = y + row*numerator/denominator; yy < y + (row+1)*numerator/denominator && yy < 240; yy++)
+          for (int xx = x + col*numerator/denominator; xx < x + (col+1)*numerator/denominator && xx < 400; xx++)
+            if (xx >= 0 && yy >= 0) g_update_pixels[yy*512+xx] = color;
+      }
+    }
+  }
+}
+void Platform3DS_PresentUpdatePage(bool show_notes, unsigned page) {
+  if (!g_gpu_presenter_initialized) return;
+  if (!g_update_pixels) g_update_pixels = linearMemAlign(512*256*4, 64);
+  if (!g_update_pixels) return;
+  static char notes[12289], lines[384][43];
+  UpdateStatus state; Updater_GetStatus(&state);
+  unsigned count;
+  if (show_notes && state.version[0]) {
+    Updater_GetNotes(notes, sizeof(notes));
+    count = Update_FormatNotes(notes, lines, 384);
+  } else {
+    strcpy(lines[0], "Select a release on the touch screen");
+    strcpy(lines[1], "to read its changelog here.");
+    count = 2;
+  }
+  g_update_note_pages = (count + 13) / 14;
+  if (page >= g_update_note_pages) page = g_update_note_pages - 1;
+  for (unsigned i = 0; i < 512*256; i++) g_update_pixels[i] = 0x171b1a;
+  for (int x = 10; x < 390; x++) { g_update_pixels[30*512+x] = 0xe8c260; g_update_pixels[221*512+x] = 0xe8c260; }
+  char title[64]; snprintf(title, sizeof(title), "CHANGELOG %s", show_notes ? state.version : "");
+  UpdateText(12, 9, title, 2, 1, 0xe8c260);
+  for (unsigned i = page*14; i < count && i < (page+1)*14; i++)
+    UpdateText(12, 36 + (i-page*14)*13, lines[i], 3, 2, 0xffffff);
+  char footer[64]; snprintf(footer, sizeof(footer), "PAGE %u / %u", page+1, g_update_note_pages);
+  UpdateText(12, 228, footer, 1, 1, 0xe8c260);
+  if (!C3D_FrameBegin(0)) return;
+  g_gpu_frame_active = true;
+  Platform3DS_CleanDataCache(g_update_pixels, 512*256*4);
+  C3D_SyncDisplayTransfer(g_update_pixels, GX_BUFFER_DIM(512,256),
+    g_top_texture.data, GX_BUFFER_DIM(512,256), GX_TRANSFER_OUT_TILED(1) |
+    GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8));
+  g_top_subtexture = (Tex3DS_SubTexture){.width=400,.height=240,.left=0,.right=400.0f/512,.top=1,.bottom=1-240.0f/256};
+  C2D_Image image = {.tex=&g_top_texture,.subtex=&g_top_subtexture};
+  C2D_DrawParams params = {.pos={.x=0,.y=0,.w=400,.h=240},.depth=0};
+  Platform3DS_ClearBlackTarget(g_top_target); C2D_SceneBegin(g_top_target);
+  Platform3DS_DrawMappedImage(image, &params, ConfigureArgbTextureEnv);
 }
 
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
@@ -3289,7 +3345,7 @@ static bool ResolveActiveProfile(char *profile, size_t profile_size) {
 
   const char *status = NULL;
   while (aptMainLoop()) {
-    int choice = rom_count == 1 && !status ? 0 : SelectRom(roms, rom_count, status);
+    int choice = rom_count == 1 && !force_selector && !status ? 0 : SelectRom(roms, rom_count, status);
     if (choice < 0)
       return false;
     PresentRomSelector(roms, rom_count, choice, "Preparing selected ROM...");

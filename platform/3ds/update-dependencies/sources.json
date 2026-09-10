@@ -1,0 +1,32 @@
+[
+  {
+    "file": "mbedtls.tar.gz",
+    "url": "https://codeload.github.com/Mbed-TLS/mbedtls/tar.gz/refs/tags/v2.28.8",
+    "sha256": "4fef7de0d8d542510d726d643350acb3cdb9dc76ad45611b59c9aa08372b4213"
+  },
+  {
+    "file": "curl.tar.xz",
+    "url": "https://curl.se/download/curl-8.4.0.tar.xz",
+    "sha256": "16c62a9c4af0f703d28bda6d7bbf37ba47055ad3414d70dec63e2e6336f2a82d"
+  },
+  {
+    "file": "jansson.tar.gz",
+    "url": "https://codeload.github.com/akheron/jansson/tar.gz/refs/tags/v2.14",
+    "sha256": "c739578bf6b764aa0752db9a2fdadcfe921c78f1228c7ec0bb47fa804c55d17b"
+  },
+  {
+    "file": "mbedtls.patch",
+    "url": "https://raw.githubusercontent.com/devkitPro/pacman-packages/master/3ds/mbedtls/mbedtls-2.28.8.patch",
+    "sha256": "84892ec63ab68804a582364d8c4bd6c8dfd0d697ed175bddcd5b7339cce35563"
+  },
+  {
+    "file": "curl.patch",
+    "url": "https://raw.githubusercontent.com/devkitPro/pacman-packages/master/3ds/curl/curl-8.4.0.patch",
+    "sha256": "e41d19d24631f3dce4a0e1c5f9fd92c36f4ddd803d07a943507dab525813ecbe"
+  },
+  {
+    "file": "cacert.pem",
+    "url": "https://curl.se/ca/cacert.pem",
+    "sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9"
+  }
+]

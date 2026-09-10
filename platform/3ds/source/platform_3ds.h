@@ -101,3 +101,6 @@ bool Platform3DS_DumpMemory(const char *directory,
                             const uint16_t *vram, size_t vram_words,
                             const Platform3DSCaptureStats *capture_stats,
                             bool screens_ok);
+
+void Platform3DS_PresentUpdatePage(bool show_notes, unsigned page);
+unsigned Platform3DS_UpdateNotesPages(void);

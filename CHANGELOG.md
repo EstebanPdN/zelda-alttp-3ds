@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.1-E1 (local experimental)
+
+- Added GitHub updates with Stable and Pre-release channels.
+- Added startup update checks, verified downloads and in-app installation.
+- Added release changelogs on the top screen with page controls.
+- Combined Restart and ROM selection; removed Remap Buttons from settings.
+- Fixed stale overworld colors after mirror and portal world transitions.
+
 ## v3.0
 
 - Added PICA200 GPU rendering for Old 3DS with automatic software fallback.

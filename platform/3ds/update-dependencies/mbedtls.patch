@@ -1,0 +1,53 @@
+diff --git a/library/entropy.c b/library/entropy.c
+index e9a7ae63d..b572edd2f 100644
+--- a/library/entropy.c
++++ b/library/entropy.c
+@@ -107,6 +107,19 @@ void mbedtls_entropy_init(mbedtls_entropy_context *ctx)
+ #endif /* MBEDTLS_NO_DEFAULT_ENTROPY_SOURCES */
+ }
+ 
++#ifdef __3DS__
++    #include <3ds.h>
++    int mbedtls_hardware_poll( void *data,
++                               unsigned char *output, size_t len, size_t *olen )
++    {
++        (void)(data);
++        sslcGenerateRandomData(output, len);
++        if(olen)
++            *olen = len;
++        return 0;
++    }
++#endif
++
+ void mbedtls_entropy_free(mbedtls_entropy_context *ctx)
+ {
+     /* If the context was already free, don't call free() again.
+diff --git a/library/net_sockets.c b/library/net_sockets.c
+index 2c2a876b0..bf2925c97 100644
+--- a/library/net_sockets.c
++++ b/library/net_sockets.c
+@@ -33,7 +33,7 @@
+ 
+ #if !defined(unix) && !defined(__unix__) && !defined(__unix) && \
+     !defined(__APPLE__) && !defined(_WIN32) && !defined(__QNXNTO__) && \
+-    !defined(__HAIKU__) && !defined(__midipix__)
++    !defined(__HAIKU__) && !defined(__midipix__) && !defined(__3DS__)
+ #error "This module only works on Unix and Windows, see MBEDTLS_NET_C in config.h"
+ #endif
+ 
+@@ -411,6 +411,7 @@
+             }
+ 
+             memcpy(client_ip, &addr4->sin_addr.s_addr, *cip_len);
++#ifndef __3DS__
+         } else {
+             struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) &client_addr;
+             *cip_len = sizeof(addr6->sin6_addr.s6_addr);
+@@ -420,6 +421,7 @@
+             }
+ 
+             memcpy(client_ip, &addr6->sin6_addr.s6_addr, *cip_len);
++#endif
+         }
+     }
+ 
