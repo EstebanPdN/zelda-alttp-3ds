@@ -22,6 +22,10 @@ static struct {
   PicaAtlas *cache;
   PicaLine lines[PICA_MAX_LINES];
   C3D_Tex atlas, main, sub, result;
+  C3D_Tex atlasPool[2];
+  PicaAtlas *cachePool[2];
+  Vertex *vertexPool[2];
+  unsigned slot,lastSubmittedSlot;
   C3D_RenderTarget *mainTarget,*subTarget,*resultTarget;
   DVLB_s *shader;
   shaderProgram_s shaderProgram;
@@ -328,20 +332,31 @@ static bool Target(C3D_Tex *texture,C3D_RenderTarget **target,GPU_TEXCOLOR fmt,b
   *target=C3D_RenderTargetCreateFromTex(texture,GPU_TEXFACE_2D,0,depth?GPU_RB_DEPTH24_STENCIL8:-1);
   return *target && (!depth || ((*target)->frameBuf.depthBuf && (*target)->frameBuf.depthMask));
 }
+static bool SelectBuffers(unsigned slot) {
+  g.slot=slot;g.atlas=g.atlasPool[slot];g.cache=g.cachePool[slot];g.vertices=g.vertexPool[slot];
+  BufInfo_Init(&g.buffers);
+  return BufInfo_Add(&g.buffers,g.vertices,sizeof(Vertex),3,0x210)>=0;
+}
 bool PpuGpuInit(void) {
   if(Platform3DS_IsNew3DS()) return false;
   if(g.initialized) return g.ready;
   g.initialized=true;g.reason="initialization";
   if(!PicaC3DCompatible()) {g.reason="citro3d-layout";return false;}
   remove("pica-color-probe.raw");remove("pica-geometry-probe.raw");
-  g.saved=calloc(1,sizeof(Ppu));g.scratch=calloc(1,sizeof(Ppu));g.cache=calloc(1,sizeof(PicaAtlas));
-  g.vertices=linearMemAlign(PICA_MAX_VERTICES*sizeof(Vertex),128);
+  g.saved=calloc(1,sizeof(Ppu));g.scratch=calloc(1,sizeof(Ppu));
   g.readback=linearMemAlign(512*256*4,128);
-  if(!g.saved||!g.scratch||!g.cache||!g.vertices||!g.readback) return false;
-  if(!C3D_TexInit(&g.atlas,PICA_ATLAS_W,PICA_ATLAS_H,GPU_RGBA8)) return false;
-  C3D_TexSetFilter(&g.atlas,GPU_NEAREST,GPU_NEAREST);
-  C3D_TexSetWrap(&g.atlas,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
-  PicaAtlasInit(g.cache,g.atlas.data);if(!Clean(g.atlas.data,g.atlas.size)) return false;
+  if(!g.saved||!g.scratch||!g.readback)return false;
+  for(unsigned slot=0;slot<2;slot++) {
+    g.cachePool[slot]=calloc(1,sizeof(PicaAtlas));
+    g.vertexPool[slot]=linearMemAlign(PICA_MAX_VERTICES*sizeof(Vertex),128);
+    C3D_Tex *atlas=&g.atlasPool[slot];
+    if(!g.cachePool[slot]||!g.vertexPool[slot]||!C3D_TexInit(atlas,PICA_ATLAS_W,PICA_ATLAS_H,GPU_RGBA8))return false;
+    C3D_TexSetFilter(atlas,GPU_NEAREST,GPU_NEAREST);
+    C3D_TexSetWrap(atlas,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
+    PicaAtlasInit(g.cachePool[slot],atlas->data);
+    if(!Clean(atlas->data,atlas->size))return false;
+  }
+  if(!SelectBuffers(0))return false;
   if(!Target(&g.main,&g.mainTarget,GPU_RGBA8,true) || !Target(&g.sub,&g.subTarget,GPU_RGBA8,true) || !Target(&g.result,&g.resultTarget,GPU_RGBA5551,false)) return false;
   g.shader=DVLB_ParseFile((u32*)alttp_pica_shader_shbin,alttp_pica_shader_shbin_size);
   if(!g.shader||!g.shader->numDVLE || R_FAILED(shaderProgramInit(&g.shaderProgram))) return false;
@@ -351,7 +366,6 @@ bool PpuGpuInit(void) {
   if(g.scaleLocation<0) {g.reason="shader-uniform";return false;}
   AttrInfo_Init(&g.attributes);
   AttrInfo_AddLoader(&g.attributes,0,GPU_SHORT,4);AttrInfo_AddLoader(&g.attributes,1,GPU_SHORT,2);AttrInfo_AddLoader(&g.attributes,2,GPU_UNSIGNED_BYTE,4);
-  BufInfo_Init(&g.buffers);if(BufInfo_Add(&g.buffers,g.vertices,sizeof(Vertex),3,0x210)<0) return false;
   g.ready=ColorProbe() && GeometryProbe();g.output=g.prepared=false;return g.ready;
 }
 void PpuGpuShutdown(void) {
@@ -360,13 +374,13 @@ void PpuGpuShutdown(void) {
   if(g.mainTarget) C3D_RenderTargetDelete(g.mainTarget);
   if(g.subTarget) C3D_RenderTargetDelete(g.subTarget);
   if(g.resultTarget) C3D_RenderTargetDelete(g.resultTarget);
-  C3D_Tex *textures[]={&g.atlas,&g.main,&g.sub,&g.result};
-  for(unsigned i=0;i<4;i++) if(textures[i]->data) C3D_TexDelete(textures[i]);
+  C3D_Tex *textures[]={&g.atlasPool[0],&g.atlasPool[1],&g.main,&g.sub,&g.result};
+  for(unsigned i=0;i<5;i++) if(textures[i]->data) C3D_TexDelete(textures[i]);
   if(g.program) shaderProgramFree(&g.shaderProgram);
   if(g.shader) DVLB_Free(g.shader);
-  if(g.vertices) linearFree(g.vertices);
+  for(unsigned slot=0;slot<2;slot++){if(g.vertexPool[slot])linearFree(g.vertexPool[slot]);free(g.cachePool[slot]);}
   if(g.readback) linearFree(g.readback);
-  free(g.saved);free(g.scratch);free(g.cache);memset(&g,0,sizeof(g));
+  free(g.saved);free(g.scratch);memset(&g,0,sizeof(g));
 }
 bool PpuGpuCanAttempt(void) {
   if(!g.ready || g.forceCpu) g.prepareUs=g.syncUs=g.buildUs=g.submitUs=g.uploadBytes=0;
@@ -376,9 +390,11 @@ void PpuGpuForceCpuFrame(void) {g.forceCpu=true;}
 bool PpuGpuBegin(Ppu *p,unsigned height) {
   g.prepared=g.output=false;g.frames++;
   if(!g.ready || g.forceCpu || height>PICA_MAX_LINES) return false;
-  uint64_t start=svcGetSystemTick();
-  if(!PicaC3DWaitIdle()) {g.reason="prior-gpu-wait";return false;}
-  g.syncUs=Us(start);
+  // The presenter retires the preceding queue at FrameBegin before submitting
+  // a new one. Prepare in the OTHER slot while its GPU frame is in flight.
+  // Choose from the last submitted slot, not attempted frames/fallbacks.
+  if(!SelectBuffers(g.lastSubmittedSlot^1u)){g.reason="vertex-buffer";return false;}
+  g.syncUs=0;
   memcpy(g.saved,p,sizeof(Ppu));g.captured=0;ResetRanges(256+p->extraLeftRight*2,height);
   PicaAtlasBegin(g.cache);p->gpuRecording=true;p->gpuInvalidWrite=false;
   return true;
@@ -398,7 +414,7 @@ bool PpuGpuFinish(Ppu *p) {
   }
   start=svcGetSystemTick();g.uploadBytes=0;
   // Dirty adjacent slots become one cache-clean range. Atlas memory is kept
-  // until the previous GPU frame retires at Begin, including failed preflights.
+  // in the inactive slot while the GPU consumes the other frame, including failed preflights.
   for(unsigned i=1;i<PICA_SLOTS;) {
     if(!(g.cache->dirty[i/32]&(1u<<(i&31)))) {i++;continue;}
     unsigned first=i++;
@@ -429,7 +445,7 @@ bool PpuGpuDraw(void) {
   bool ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition();
   RestoreC2D();g.submitUs=Us(start);g.prepared=false;
   if(ok) {
-    g.gpuFrames++;RecordFrame(true);
+    g.lastSubmittedSlot=g.slot;g.gpuFrames++;RecordFrame(true);
     if(g.gpuFrames==1 || g.gpuFrames==120)
       Platform3DS_LogRuntime("PICA200 gameplay submitted=%llu cpu=%llu size=%ux%u vertices=%u prepare=%lu us build=%lu us",
         g.gpuFrames,g.cpuFrames,g.width,g.height,g.count,(unsigned long)g.prepareUs,(unsigned long)g.buildUs);
@@ -438,7 +454,7 @@ bool PpuGpuDraw(void) {
   return ok;
 }
 void PpuGpuWriteDiagnostics(FILE *f) {
-  fprintf(f,"PICA200 schema=2 initialized=%u enabled=%u output=%u reason=%s\n",g.initialized,g.ready,g.output,g.reason?g.reason:"not-initialized");
+  fprintf(f,"PICA200 schema=3 initialized=%u enabled=%u output=%u reason=%s\n",g.initialized,g.ready,g.output,g.reason?g.reason:"not-initialized");
   fprintf(f,"PICA frames_attempted=%llu submitted=%llu cpu_frames=%llu width=%u height=%u vertices=%u\n",g.frames,g.gpuFrames,g.cpuFrames,g.width,g.height,g.count);
   fprintf(f,"PICA prepare_us=%lu prior_gpu_wait_us=%lu geometry_build_us=%lu submit_us=%lu tile_upload_bytes=%lu\n",(unsigned long)g.prepareUs,(unsigned long)g.syncUs,(unsigned long)g.buildUs,(unsigned long)g.submitUs,(unsigned long)g.uploadBytes);
   if(g.cache) fprintf(f,"PICA tile_hits=%lu tile_decodes=%lu live_slots=%lu\n",(unsigned long)g.cache->hits,(unsigned long)g.cache->decodes,(unsigned long)g.cache->live);
@@ -447,6 +463,7 @@ void PpuGpuWriteDiagnostics(FILE *f) {
   fprintf(f,"PICA queue_fence=GX-completion readback_cache_result=%08lx color_band_errors=",(unsigned long)g.readbackCacheResult);
   for(unsigned i=0;i<16;i++) fprintf(f,"%s%lu",i?",":"",(unsigned long)g.probeBandErrors[i]);
   fputc('\n',f);
+  fprintf(f,"PICA resource_slots=2 current_slot=%u last_submitted_slot=%u dump_readback=CPU-uncached-VRAM timeout_ms=1000\n",g.slot,g.lastSubmittedSlot);
   fputs("PICA recent-frame history: GPU preparation/submit wall spans; CPU rows describe GPU preflight only, not CPU PPU time.\n",f);
   fputs("number,gpu,prepare_us,prior_gpu_wait_us,build_us,submit_us,upload_bytes,vertices,decodes,reason\n",f);
   for(unsigned i=0;i<g.historyCount;i++) {
@@ -459,12 +476,16 @@ void PpuGpuWriteDiagnostics(FILE *f) {
 }
 const uint32_t *PpuGpuReadback(void) {
   if(!g.output || !g.readback) return NULL;
-  // Called at dump time outside an application frame. A private readback frame
-  // keeps Citro3D/GX ordering valid and does not submit screen targets.
-  if(!C3D_FrameBegin(0)) return NULL;
-  bool ok=TransferReadback(GX_TRANSFER_FMT_RGBA8);C3D_FrameEnd(GX_CMDLIST_FLUSH);
-  bool readbackOk=FinishReadback(512*256*4);
-  if(!ok || !readbackOk) return NULL;
-  for(unsigned i=0;i<512*256;i++) g.readback[i]>>=8;
+  // VRAM is CPU-visible and uncached. Do not submit a transfer-only GPU frame
+  // while capturing: both physical E13 failures stopped exactly at that step.
+  if(!PicaC3DWaitIdleFor(1000000000ll)) return NULL;
+  const volatile uint16_t *src=g.result.data;
+  for(unsigned y=0;y<256;y++) for(unsigned x=0;x<512;x++) {
+    unsigned xx=x&7,yy=y&7;
+    unsigned m=(xx&1)|((yy&1)<<1)|((xx&2)<<1)|((yy&2)<<2)|((xx&4)<<2)|((yy&4)<<3);
+    uint16_t v=src[((y/8)*64+x/8)*64+m];
+    unsigned red=(v>>11)&31,green=(v>>6)&31,blue=(v>>1)&31;
+    g.readback[y*512+x]=(((red<<3)|(red>>2))<<16)|(((green<<3)|(green>>2))<<8)|(blue<<3)|(blue>>2);
+  }
   return g.readback;
 }

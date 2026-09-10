@@ -21,3 +21,7 @@ static inline void PicaC3DUnbindSecondary(void) {
 static inline bool PicaC3DWaitIdle(void) {
   return gxCmdQueueWait(&C3Di_GetContext()->gxQueue, -1);
 }
+
+static inline bool PicaC3DWaitIdleFor(s64 timeout) {
+  return gxCmdQueueWait(&C3Di_GetContext()->gxQueue, timeout);
+}

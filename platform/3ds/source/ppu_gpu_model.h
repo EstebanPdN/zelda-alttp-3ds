@@ -20,6 +20,7 @@ typedef struct {
   uint16_t hash[PICA_HASH];
   uint32_t frame, cursor, hits, decodes, live;
   uint32_t dirty[PICA_SLOTS/32];
+  uint8_t objectColumns[128][PICA_MAX_LINES];
 } PicaAtlas;
 typedef struct {
   int16_t x0,y0,x1,y1;
@@ -41,7 +42,7 @@ typedef struct {
   void *context;
   const char *failure;
   uint32_t quads[PICA_GROUPS];
-  uint16_t bandEnd[PICA_MAX_LINES];
+  uint16_t bandEnd[PICA_MAX_LINES],commonEnd[PICA_MAX_LINES];
 } PicaFrame;
 void PicaAtlasInit(PicaAtlas *cache, uint32_t *pixels);
 void PicaAtlasBegin(PicaAtlas *cache);
