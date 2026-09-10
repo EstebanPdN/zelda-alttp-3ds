@@ -1533,6 +1533,25 @@ static void prioritize_bottom_touch(void) {
     svcSetThreadPriority(threadGetHandle(ss_worker_thread),
                          ss_worker_interactive_priority);
 }
+// Short HUD patches may preempt gameplay briefly. A full/map render already
+// in progress only gets the game's priority, so damage cannot promote a long
+// map rebuild above the game thread.
+static s32 bottom_worker_priority(void) {
+  if (ss_worker_touch_request_ticks ||
+      (ss_worker_sidebar_patch && !ss_worker_map_patch))
+    return ss_worker_interactive_priority;
+  if (ss_worker_interactive ||
+      (__atomic_load_n(&ss_redraw_requests, __ATOMIC_ACQUIRE) & kBottomRedrawHud))
+    return ss_worker_scene_priority;
+  return ss_worker_idle_priority;
+}
+
+static void prioritize_bottom_hud(void) {
+  if (!ss_is_new_3ds && ss_worker_thread && ss_worker_busy &&
+      !ss_touch_redraw_pending && !ss_worker_touch_request_ticks)
+    svcSetThreadPriority(threadGetHandle(ss_worker_thread), bottom_worker_priority());
+}
+
 #endif
 
 static void request_dump_now(void) {
@@ -1806,8 +1825,10 @@ static void request_bottom_redraw_on_state_change(void) {
   initialized = true;
   if (full_changed || (ss_is_new_3ds && hud_changed))
     request_bottom_redraw(kBottomRedrawFull);
-  else if (hud_changed)
+  if (!ss_is_new_3ds && hud_changed) {
     request_bottom_redraw(kBottomRedrawHud);
+    prioritize_bottom_hud();
+  }
 }
 
 static bool can_patch_bottom_sidebar(void) {
@@ -2274,9 +2295,7 @@ static void second_screen_worker_main(void *unused) {
     if (!ss_worker_running)
       break;
     if (!ss_is_new_3ds) {
-      s32 priority = ss_worker_interactive ? ss_worker_interactive_priority :
-                                             ss_worker_idle_priority;
-      svcSetThreadPriority(CUR_THREAD_HANDLE, priority);
+      svcSetThreadPriority(CUR_THREAD_HANDLE, bottom_worker_priority());
     }
     uint64_t start = !ss_is_new_3ds ? svcGetSystemTick() : 0;
     if (ss_worker_map_patch) {
@@ -2384,6 +2403,17 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
       (requests != 0 || periodic_redraw)) {
     requests = __atomic_exchange_n(&ss_redraw_requests, 0,
                                    __ATOMIC_ACQ_REL);
+    // Serve health/magic/counters first using only the small existing sidebar.
+    // Leave map/full requests queued; a simultaneous scene change must not
+    // swallow this HUD update. Explicit touch navigation keeps precedence.
+    if (!ss_is_new_3ds && (requests & kBottomRedrawHud) &&
+        !ss_touch_redraw_pending && can_patch_bottom_sidebar()) {
+      uint32_t deferred = requests & ~kBottomRedrawHud;
+      if (periodic_redraw) deferred |= kBottomRedrawFull;
+      if (deferred) request_bottom_redraw(deferred);
+      requests = kBottomRedrawHud;
+      periodic_redraw = false;
+    }
     bool patch_only = !periodic_redraw && (requests & kBottomRedrawFull) == 0 &&
       (!(requests & kBottomRedrawMap) || can_patch_bottom_map()) &&
       (!(requests & kBottomRedrawHud) || can_patch_bottom_sidebar());

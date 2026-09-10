@@ -16,6 +16,10 @@ code=r'''
 #include <assert.h>
 static bool ss_is_new_3ds,ss_scene_redraw_pending,ss_worker_interactive,ss_touch_redraw_pending;
 static uint64_t ss_worker_touch_request_ticks;
+static bool ss_worker_busy,ss_worker_sidebar_patch,ss_worker_map_patch;
+static int ss_worker_idle_priority=0x31;
+#define ss_redraw_requests requests
+typedef int s32;
 static int ss_worker_thread=1,ss_worker_interactive_priority=0x2f,ss_worker_scene_priority=0x30;
 static int priority=0x31,tab,module=9,area;
 static unsigned requests;
@@ -34,7 +38,7 @@ static int SS_GetLinkY(void){return 0;}
 static uint32_t SDL_GetTicks(void){return 1000;}
 static int mode_for_module(int m){return MODE_GAME;}
 static void request_bottom_redraw(unsigned r){requests|=r;}
-'''+s[a:b]+fn('static void prioritize_bottom_scene(')+fn('static void prioritize_bottom_touch(')+fn('static void request_bottom_redraw_on_state_change(')+r'''
+'''+s[a:b]+fn('static void prioritize_bottom_scene(')+fn('static void prioritize_bottom_touch(')+fn('static s32 bottom_worker_priority(')+fn('static void prioritize_bottom_hud(')+fn('static void request_bottom_redraw_on_state_change(')+r'''
 int main(void) {
  request_bottom_redraw_on_state_change();assert(!requests&&priority==0x31);
  module=15;request_bottom_redraw_on_state_change();assert(!requests&&priority==0x31);

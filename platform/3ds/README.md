@@ -42,10 +42,10 @@ physical 400x240 and 320x240 BMP captures, the two raw display framebuffers,
 `load-state.bin` and a short `DUMP SAVED` notice. NDSP playback pauses for the
 complete synchronous capture and resumes at the same playback position.
 
-The HOME Menu metadata is versioned for every release. v3.0-E18 uses:
+The HOME Menu metadata is versioned for every release. v3.0-E19 uses:
 
 ```text
-Short name:  Zelda 3DS EXP 18
+Short name:  Zelda 3DS EXP 19
 Long name:   A Link to the Past 3DS experimental 11
 ProductCode: CTR-P-Z3DE
 UniqueId:    0x5A13E
@@ -281,3 +281,22 @@ run_wide_columns_test.py exercises both ends and directions at3,076 camera
 positions, canonical map edits, restoration/exclusions and private dump replay.
 The four reported dumps match between Old/New CPU and GPU geometry. 000/002
 remain unchanged;001/003 differ only in the first16 pixels horizontally.
+
+### E19 prompt bottom HUD updates
+
+Health is read from live RAM F36D; the Old sidebar update used to run at the
+background worker priority and could be starved by gameplay. HUD changes now
+request a dedicated existing sidebar patch even if a full/map redraw is also
+pending. That small patch uses touch-level priority; deferred map/full work
+is kept queued. Explicit touch navigation retains precedence.
+
+If a map/full redraw is already running when health changes, it receives main
+thread priority to finish fairly, never the higher HUD priority solely because
+of damage. Worker entry uses the same distinction, retaining scene priority
+for automatic full redraws and resetting to idle on completion. New retains
+its prior redraw cadence and priority policy. No pixel geometry changes.
+
+run_hud_latency_test.py uses actual invalidation/dispatch/worker functions with
+a controlled scheduler: damage/healing, busy map, newest health, deferred full
+work, simultaneous scene changes, touch, New and priority restoration. The same
+test fails against E18. This validates policy, not physical latency in ms.
