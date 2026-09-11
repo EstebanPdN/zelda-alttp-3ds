@@ -169,7 +169,19 @@ int main(void) {
  ss_is_new_3ds=false;ss_worker_thread=0;ss_worker_busy=false;ss_front_buffer=-1;
  ss_frame_ready=false;art_ready=true;priority=0x30;SecondScreenSDL_BeginFrame(1);
  assert(ss_front_buffer==0 && ss_frame_ready && ss_worker_thread==0);
- puts("PASS startup and dropped-frame retry on both models; retained hearts while worker busy: no job/priority changes, immediate latest health, no unchanged-glyph upload, worker buffers untouched, completed-map reconciliation, capacity/half-magic/hidden-tab guards; fallback damage/healing invalidation, queued latest health, HUD-before-map dispatch, busy-map fairness, scene/touch priority, New unchanged and idle restoration");
+ // Completion during top rendering is consumed by Update in the SAME frame.
+ for(int model=0;model<2;model++) {
+  ss_is_new_3ds=model;ss_front_buffer=0;ss_worker_buffer=1;
+  ss_worker_busy=true;ss_frame_ready=false;done_ready=true;
+  int old_signals=signals,old_waits=waits;old_presents=presents;
+  SecondScreenSDL_Update(1);
+  assert(!ss_worker_busy&&!done_ready&&ss_front_buffer==1&&presents==old_presents+1);
+  assert(signals==old_signals&&waits==old_waits); // No job or blocking wait added.
+  ss_worker_busy=true;done_ready=false;old_presents=presents;
+  SecondScreenSDL_Update(1);assert(ss_worker_busy&&presents==old_presents);
+  assert(signals==old_signals&&waits==old_waits);
+ }
+ puts("PASS same-frame completion on both models with zero extra jobs/waits; startup and dropped-frame retry on both models; retained hearts while worker busy: no job/priority changes, immediate latest health, no unchanged-glyph upload, worker buffers untouched, completed-map reconciliation, capacity/half-magic/hidden-tab guards; fallback damage/healing invalidation, queued latest health, HUD-before-map dispatch, busy-map fairness, scene/touch priority, New unchanged and idle restoration");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='alttp-hud-latency-') as t:

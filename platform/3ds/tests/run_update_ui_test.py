@@ -48,16 +48,17 @@ void SS_Set3DSDisplayMode(int v){}void SS_Set3DSWideEdgeMode(int v){}
 void SS_SetHudHidden(bool b){}void SS_RequestMemoryDump(const char*d){}
 void SS_RequestLoadLatestDumpState(void){}int SS_GetEquippedSlot(void){return 0;}
 void SS_EquipSlot(int v){} void SS_SetWidescreen(bool b){}
-static void touch(RectFS r){
+static void touch_expect(RectFS r,bool changed){
  SDL_Event e={0};e.type=SDL_FINGERDOWN;e.tfinger.windowID=0;
  e.tfinger.x=(r.x+r.w/2)/320;e.tfinger.y=(r.y+r.h/2)/240;
- int before=redraws;assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+1);
- assert(redraw_tab==tab&&priority_tab==tab);
- e.type=SDL_FINGERUP;assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+1);
+ int before=redraws;assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+(changed?1:0));
+ if(changed)assert(redraw_tab==tab&&priority_tab==tab);
+ e.type=SDL_FINGERUP;assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+(changed?1:0));
  e.type=SDL_MOUSEBUTTONDOWN;e.button.windowID=ss_winid;e.button.which=SDL_TOUCH_MOUSEID;
- assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+1);
+ assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+(changed?1:0));
 }
 
+static void touch(RectFS r){touch_expect(r,true);}
 void Updater_GetStatus(UpdateStatus*out){*out=fixture;}
 void SS_ArmButtonCapture(bool b){} int SS_GetCapturedButton(void){return -1;}
 void SS_SetGamepadControls(const int*p){} bool SS_IsWidescreen(void){return true;}
@@ -89,6 +90,18 @@ int main(int argc,char**argv){SDL_Init(0);W=320;H=240;u=.5f;
  ss_win=(SDL_Window*)1;ss_winid=5;ss_is_new_3ds=m;art_ready=true;
  update_mode=false;tab=TAB_MAP;draw_tab_bar(42);draw_settings(panel);
  for(int i=0;i<100;i++) {touch(tab_gear_r);assert(tab==TAB_GEAR);touch(tab_map_r);assert(tab==TAB_MAP);}
+ touch(tab_items_r);assert(tab==TAB_ITEMS);touch_expect(tab_items_r,false);assert(tab==TAB_ITEMS);
+ touch(tab_gear_r);assert(tab==TAB_GEAR);touch_expect(tab_gear_r,false);assert(tab==TAB_GEAR);
+ touch(tab_map_r);touch_expect(tab_map_r,false);assert(tab==TAB_MAP);
+ // Visible borders/gaps and strip edges accept one touch, with no content-area leakage.
+ const float samples[]={0,93,94,95,186,187,188,279,280,319};
+ const int targets[]={TAB_GEAR,TAB_GEAR,TAB_GEAR,TAB_MAP,TAB_MAP,TAB_MAP,TAB_ITEMS,TAB_ITEMS,TAB_SETTINGS,TAB_SETTINGS};
+ for(int i=0;i<10;i++)for(int y=198;y<=239;y+=41){
+   tab=targets[i]==TAB_MAP?TAB_ITEMS:TAB_MAP;
+   touch((RectFS){samples[i],y,0,0});assert(tab==targets[i]);
+ }
+ assert(tab_at_position(50,197)==-1&&tab_at_position(-1,220)==-1&&tab_at_position(320,220)==-1);
+ tab=TAB_MAP;
  touch(tab_settings_r);assert(tab==TAB_SETTINGS);
  fixture.state=UPDATE_CURRENT;touch(settings_row_r[3]);assert(update_mode);
  draw_settings(panel);touch(update_release_r);assert(update_show_notes);
@@ -103,7 +116,7 @@ int main(int argc,char**argv){SDL_Init(0);W=320;H=240;u=.5f;
  ss_win=NULL;
  SDL_DestroyTexture(tex_letters);tex_letters=NULL;SDL_DestroyRenderer(ss_r);SDL_FreeSurface(screen);
  }
- SDL_Quit();puts("PASS: actual settings/update drawing on Old RGB565 and New ARGB8888; five evenly spaced larger rows, no empty slot, both channels/all states, no control overlap. 200 tab switches/model, paused Update controls, channel/notes/pages/back/cancel/install/restart, NULL-window touch and no synthetic-mouse duplicate. Host font stand-in used for screenshots.");}
+ SDL_Quit();puts("PASS: actual settings/update drawing on Old RGB565 and New ARGB8888; five evenly spaced larger rows, no empty slot, both channels/all states, no control overlap. 200 tab switches/model, border/gap/edge targets, idempotent tabs without extra redraws, paused Update controls, channel/notes/pages/back/cancel/install/restart, NULL-window touch and no synthetic-mouse duplicate. Host font stand-in used for screenshots.");}
 '''
 (out/'ui-test.c').write_text(code)
 sdk=args.sdl_root.resolve();flags=shlex.split(subprocess.check_output(['bash',str(sdk/'sdl2-config'),'--static-libs'],text=True));flags=[x for x in flags if x.startswith('-Wl,') or x in ['-lm','-liconv']]
