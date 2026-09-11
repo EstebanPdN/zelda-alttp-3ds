@@ -32,6 +32,7 @@ cmake \
   -DCMAKE_TOOLCHAIN_FILE="${DEVKITPRO}/cmake/3DS.cmake" \
   -DCMAKE_BUILD_TYPE=Release \
   -DSDL2_ROOT="${SDL_PREFIX}" \
+  -DSDL2_DIR="${SDL_PREFIX}/lib/cmake/SDL2" \
   -DUPDATE_DEPS_ROOT="${UPDATE_DEPS_ROOT:-${DEVKITPRO}/portlibs/3ds}"
 cmake --build "${GAME_BUILD}" --parallel
 
@@ -59,7 +60,7 @@ fi
   cd "${ROOT}"
   "${MAKEROM}" \
     -f cia \
-    -o "${GAME_BUILD}/zelda3-3ds-v3.1-E4.cia" \
+    -o "${GAME_BUILD}/zelda3-3ds-v3.1-E5.cia" \
     -DAPP_ROMFS=build-3ds/game/romfs \
     -rsf platform/3ds/cia/zelda3.rsf \
     -target t \
@@ -70,5 +71,5 @@ fi
 )
 
 printf 'Listos:\n'
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.1-E4.3dsx"
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.1-E4.cia"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.1-E5.3dsx"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.1-E5.cia"

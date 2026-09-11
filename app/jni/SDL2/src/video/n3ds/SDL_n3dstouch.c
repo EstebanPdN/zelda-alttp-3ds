@@ -55,7 +55,10 @@ void N3DS_PollTouch(void)
     static SDL_bool was_pressed = SDL_FALSE;
     SDL_bool pressed;
     hidTouchRead(&touch);
-    pressed = (touch.px != 0 || touch.py != 0);
+    /* Coordinates may remain populated after release. Only KEY_TOUCH says
+       whether this HID sample is an actual contact. In particular, a stale
+       startup position must not latch was_pressed before the first tap. */
+    pressed = (hidKeysHeld() & KEY_TOUCH) ? SDL_TRUE : SDL_FALSE;
 
     if (pressed != was_pressed) {
         was_pressed = pressed;

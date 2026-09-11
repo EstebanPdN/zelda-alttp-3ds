@@ -1557,6 +1557,15 @@ static void draw_tab_bar(float tab_h) {
 
 static SDL_Window *main_win;
 static bool ss_enabled;
+#if defined(__3DS__) || defined(ZELDA3_TEST_3DS_UI)
+typedef struct BottomTouchTrace {
+  uint32_t timestamp;
+  uint16_t x, y;
+  uint8_t before_tab, after_tab, update, contact;
+} BottomTouchTrace;
+static BottomTouchTrace ss_touch_trace[32];
+static unsigned ss_touch_trace_count;
+#endif
 #ifdef __3DS__
 static uint8_t *ss_present_pixels[2];
 static int ss_front_buffer = -1;
@@ -2310,7 +2319,12 @@ bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
 #ifdef __3DS__
   float x, y;
   if (NativeTouch_Decode(e, &x, &y)) {
+    unsigned before = tab;
     handle_tap(x - (320.0f - W) * 0.5f, y - (240.0f - H) * 0.5f);
+    ss_touch_trace[ss_touch_trace_count++ % 32] = (BottomTouchTrace){
+      e->common.timestamp, (uint16_t)x, (uint16_t)y, before, tab,
+      update_mode, (hidKeysHeld() & KEY_TOUCH) != 0
+    };
     return true;
   }
 #endif
@@ -2731,6 +2745,14 @@ bool SecondScreenSDL_WriteDiagnostics(const char *directory) {
     for (unsigned i = 0; i < sizeof(rects) / sizeof(rects[0]); i++)
       fprintf(f, "%s=%.6f,%.6f,%.6f,%.6f\n", names[i], rects[i].x, rects[i].y, rects[i].w, rects[i].h);
   }
+  fprintf(f, "Touch input: KEY_TOUCH edges; protected physical coordinates\n");
+  unsigned first = ss_touch_trace_count > 32 ? ss_touch_trace_count - 32 : 0;
+  for (unsigned i = first; i < ss_touch_trace_count; ++i) {
+    const BottomTouchTrace *t = &ss_touch_trace[i % 32];
+    fprintf(f, "touch=%u ms=%lu point=%u,%u contact=%u tab=%u->%u update=%u\n",
+            i, (unsigned long)t->timestamp, t->x, t->y, t->contact,
+            t->before_tab, t->after_tab, t->update);
+  }
   bool ok = !ferror(f);
   ok = fclose(f) == 0 && ok;
   if (capture) {
@@ -2815,6 +2837,7 @@ static void rebuild_renderer(int w2, int h2) {
 void SecondScreenSDL_Shutdown(void) {
 #ifdef __3DS__
   NativeTouch_Shutdown();
+  ss_touch_trace_count = 0;
 #endif
   ss_enabled = false;
   leave_settings_submenu();
