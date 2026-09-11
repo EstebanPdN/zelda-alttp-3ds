@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.1-E3
+
+- Improved bottom-tab touch targets and reduced navigation delay.
+- Added GitHub updates with Stable and Pre-release channels.
+- Added verified downloads and in-game update installation.
+- Added paginated changelogs with matching top and bottom menu styles.
+- Combined Restart and ROM selection and simplified Settings.
+- Fixed Update touch controls and blank bottom-screen startup.
+- Fixed stale overworld colors after mirror and portal transitions.
+
 ## v3.1-E2 (local experimental)
 
 - Fixed unresponsive Update controls on Old and New 3DS.

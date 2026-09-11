@@ -82,36 +82,27 @@ The custom logo banner is prebuilt in `assets/banner.cgfx`. Technical GPU
 implementation records are preserved in `PICA200-E12.md`, `PICA200-E13.md` and
 `PICA200-E14.md`. Focused source-level regressions live in `tests/`.
 
-## Local v3.1-E2 updater
+## Updates
 
-Settings contains Screen, Turbo Speed, Developer, Update and Restart.
-Restart always opens the ROM selector and starts the selected ROM fresh;
-SRAM and per-ROM saves remain intact. Automatic state restoration is skipped
-for that restart.
+In Settings > Update, choose Stable or Pre-release. Tap the release name to
+read its changelog on the top screen, with Prev/Next below for more pages.
+Choose Download Update and confirm installation, then reopen the game.
+Save in-game before installing. Startup checks also indicate newer releases.
 
-Update checks the selected Stable or Pre-release channel from
-EstebanPdN/zelda-alttp-3ds on GitHub. Checks also run in the background at
-startup; available updates are indicated on the title/menu card. Choose the
-channel, tap the release name to read its changelog above, and use Prev/Next
-below to turn pages. Download Update opens an installation confirmation.
-A completed installation closes the application; reopen it from HOME or HBL.
-Save your game before installing.
+Version [v3.1-E3](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.1-E3)
+is an experimental pre-release; v3.0 remains the stable release. Earlier
+updater builds can find E3 through the Pre-release channel.
 
-Downloads use verified HTTPS, GitHub asset size and SHA-256, and the CIA title
-ID must match this port. Channel selection is stored in update/channel.txt.
-Only newer versions are offered: version tags use vMAJOR.MINOR[.PATCH] or
-vMAJOR.MINOR[.PATCH]-E<number>; assets must be named
-zelda3-3ds-vVERSION.cia / .3dsx and include GitHub's sha256 digest.
-Pre-release checks scan the latest 100 release records. Changelogs display
-up to 12 KiB as wrapped ASCII text with Markdown links/images simplified.
+Settings is Screen, Turbo Speed, Developer, Update, Restart. Restart opens
+the ROM selector and starts the selected ROM fresh; existing saves remain.
 
-This is a local hardware-test build. The current public v3.0 and older
-pre-releases do not supersede v3.1-E1. No release was published for this build.
+Downloads use verified HTTPS and the GitHub asset's SHA-256/size. CIA title ID
+must match this port. Channel selection persists in update/channel.txt.
+Versions use vMAJOR.MINOR[.PATCH] with optional -E<number>; matching assets use
+zelda3-3ds-vVERSION.cia or .3dsx. Only newer versions are offered. The
+pre-release list scans 100 release records; changelogs show up to 12 KiB.
 
-The E2 touch repair dispatches SDL touch edges before game pause/timing exits,
-including inside Update on both models. Navigation is committed before waking
-the redraw worker. Old 3DS prepares its initial bottom image synchronously;
-failed GPU submissions retain pending UI images for retry. Settings now has
-five evenly sized rows. Changelogs use the same game letter/glyph sheets,
-menu colors and full-screen border as the bottom UI; small hints use integer
-pixel scaling. These changes still require the owner's console verification.
+Content tabs select their view without toggling back to Map. Touch targets
+cover button borders and spaces between them. A completed UI worker result
+is presented in the same frame when available; unfinished jobs stay asynchronous.
+No additional periodic drawing, busy waiting or game pacing change is used.

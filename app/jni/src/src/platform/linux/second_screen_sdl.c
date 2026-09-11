@@ -2027,6 +2027,18 @@ static void draw_bottom_sidebar_patch(void) {
 }
 #endif
 
+// Split the entire visible tab strip at gap midpoints. Borders, rounded
+// corners and spacing are valid touch targets, not dead pixels.
+static int tab_at_position(float x, float y) {
+  if (tab_gear_r.w <= 0 || tab_settings_r.w <= 0 || x < 0 || x >= W ||
+      y < tab_gear_r.y - 4 * u || y >= H)
+    return -1;
+  if (x < (tab_gear_r.x + tab_gear_r.w + tab_map_r.x) * 0.5f) return TAB_GEAR;
+  if (x < (tab_map_r.x + tab_map_r.w + tab_items_r.x) * 0.5f) return TAB_MAP;
+  if (x < (tab_items_r.x + tab_items_r.w + tab_settings_r.x) * 0.5f) return TAB_ITEMS;
+  return TAB_SETTINGS;
+}
+
 static void apply_tap(float x, float y) {
   int module = SS_GetModule() & 0xFF;
   int ui_mode = mode_for_module(module);
@@ -2049,10 +2061,14 @@ static void apply_tap(float x, float y) {
   }
   if (!art_ready) return;
 
-  if (in_rect(&tab_items_r, x, y)) { tab = (tab == TAB_ITEMS) ? TAB_MAP : TAB_ITEMS; leave_settings_submenu(); return; }
-  if (in_rect(&tab_map_r, x, y))   { tab = TAB_MAP; leave_settings_submenu(); return; }
-  if (in_rect(&tab_gear_r, x, y))  { tab = (tab == TAB_GEAR) ? TAB_MAP : TAB_GEAR; leave_settings_submenu(); return; }
-  if (in_rect(&tab_settings_r, x, y)) { tab = (tab == TAB_SETTINGS) ? TAB_MAP : TAB_SETTINGS; leave_settings_submenu(); return; }
+  int requested_tab = tab_at_position(x, y);
+  if (requested_tab >= 0) {
+    // Content tabs select their view; contact bounce/repeated taps must not
+    // toggle Items or Gear back to Map. The settings cog retains its back action.
+    tab = requested_tab == TAB_SETTINGS && tab == TAB_SETTINGS ? TAB_MAP : requested_tab;
+    leave_settings_submenu();
+    return;
+  }
 
 settings_tap:
   if (tab == TAB_SETTINGS) {
@@ -2267,6 +2283,9 @@ settings_tap:
 }
 
 static void handle_tap(float x, float y) {
+  if (mode_for_module(SS_GetModule() & 0xff) == MODE_GAME &&
+      tab != TAB_SETTINGS && tab_at_position(x, y) == tab)
+    return; // Already selected: no additional software redraw or upload.
   // Commit navigation before waking a worker that can preempt this thread.
   // Publishing first could draw the old tab and consume the only redraw.
   apply_tap(x, y);
@@ -2624,6 +2643,14 @@ void SecondScreenSDL_BeginFrame(int logic_frames) {
 
 void SecondScreenSDL_Update(int logic_frames) {
   (void)logic_frames;
+  // The worker often finishes while the top PPU renders. Harvest its ready
+  // event here as well as at BeginFrame, saving a frame without waiting or
+  // scheduling another redraw. A busy worker remains fully asynchronous.
+  if (ss_worker_busy && LightEvent_TryWait(&ss_worker_done)) {
+    ss_front_buffer = ss_worker_buffer;
+    ss_worker_busy = false;
+    ss_frame_ready = true;
+  }
   if (ss_front_buffer < 0) return;
   if (!ss_is_new_3ds && ss_old_display_pixels) {
     bool changed = ss_frame_ready || ss_present_retry;

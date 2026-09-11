@@ -135,36 +135,16 @@ Logo work by [Phibonacci](https://github.com/Phibonacci), based on the original
 
 See [3DS controls and diagnostics](platform/3ds/README.md).
 
-## Local v3.1-E2 updater
+## Updates
 
-Settings contains Screen, Turbo Speed, Developer, Update and Restart.
-Restart always opens the ROM selector and starts the selected ROM fresh;
-SRAM and per-ROM saves remain intact. Automatic state restoration is skipped
-for that restart.
+In Settings > Update, choose Stable or Pre-release. Tap the release name to
+read its changelog on the top screen, with Prev/Next below for more pages.
+Choose Download Update and confirm installation, then reopen the game.
+Save in-game before installing. Startup checks also indicate newer releases.
 
-Update checks the selected Stable or Pre-release channel from
-EstebanPdN/zelda-alttp-3ds on GitHub. Checks also run in the background at
-startup; available updates are indicated on the title/menu card. Choose the
-channel, tap the release name to read its changelog above, and use Prev/Next
-below to turn pages. Download Update opens an installation confirmation.
-A completed installation closes the application; reopen it from HOME or HBL.
-Save your game before installing.
+Version [v3.1-E3](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.1-E3)
+is an experimental pre-release; v3.0 remains the stable release. Earlier
+updater builds can find E3 through the Pre-release channel.
 
-Downloads use verified HTTPS, GitHub asset size and SHA-256, and the CIA title
-ID must match this port. Channel selection is stored in update/channel.txt.
-Only newer versions are offered: version tags use vMAJOR.MINOR[.PATCH] or
-vMAJOR.MINOR[.PATCH]-E<number>; assets must be named
-zelda3-3ds-vVERSION.cia / .3dsx and include GitHub's sha256 digest.
-Pre-release checks scan the latest 100 release records. Changelogs display
-up to 12 KiB as wrapped ASCII text with Markdown links/images simplified.
-
-This is a local hardware-test build. The current public v3.0 and older
-pre-releases do not supersede v3.1-E1. No release was published for this build.
-
-The E2 touch repair dispatches SDL touch edges before game pause/timing exits,
-including inside Update on both models. Navigation is committed before waking
-the redraw worker. Old 3DS prepares its initial bottom image synchronously;
-failed GPU submissions retain pending UI images for retry. Settings now has
-five evenly sized rows. Changelogs use the same game letter/glyph sheets,
-menu colors and full-screen border as the bottom UI; small hints use integer
-pixel scaling. These changes still require the owner's console verification.
+Settings is Screen, Turbo Speed, Developer, Update, Restart. Restart opens
+the ROM selector and starts the selected ROM fresh; existing saves remain.
