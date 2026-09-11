@@ -1094,6 +1094,10 @@ static void ZeldaRunGameLoop() {
 }
 
 void ZeldaInitialize() {
+  // ROM reselection re-enters here in the same process. Reset volatile RAM
+  // with the new PPU/APU so the first frame runs the normal boot sequence.
+  // Saved SRAM is loaded separately by ZeldaReadSram after initialization.
+  memset(g_ram, 0, sizeof(g_ram));
   g_zenv.dma = dma_init(NULL);
   g_zenv.ppu = ppu_init(NULL);
   g_zenv.ram = g_ram;

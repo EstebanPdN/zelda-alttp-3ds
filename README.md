@@ -142,9 +142,10 @@ read its changelog on the top screen, with Prev/Next below for more pages.
 Choose Download Update and confirm installation, then reopen the game.
 Save in-game before installing. Startup checks also indicate newer releases.
 
-Version [v3.1](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.1)
-is the latest stable release. Earlier updater builds can find it through
-the Stable channel.
+Version [v3.2-E1](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.2-E1)
+is an experimental pre-release; v3.1 remains stable. Select the Pre-release
+channel to install it. It fixes Restart retaining stale game RAM after ROM
+reselection, which could leave gameplay black and silent.
 
 Settings is Screen, Turbo Speed, Developer, Update, Restart. Restart opens
 the ROM selector and starts the selected ROM fresh; existing saves remain.

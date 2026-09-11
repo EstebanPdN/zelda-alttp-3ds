@@ -60,7 +60,7 @@ fi
   cd "${ROOT}"
   "${MAKEROM}" \
     -f cia \
-    -o "${GAME_BUILD}/zelda3-3ds-v3.1.cia" \
+    -o "${GAME_BUILD}/zelda3-3ds-v3.2-E1.cia" \
     -DAPP_ROMFS=build-3ds/game/romfs \
     -rsf platform/3ds/cia/zelda3.rsf \
     -target t \
@@ -71,5 +71,5 @@ fi
 )
 
 printf 'Listos:\n'
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.1.3dsx"
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.1.cia"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.2-E1.3dsx"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.2-E1.cia"
