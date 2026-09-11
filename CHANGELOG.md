@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.2-E1
+
+- Fixed black screens and missing audio after Restart and ROM reselection.
+
 ## v3.1
 
 - Added in-game GitHub updates with Stable/Pre-release channels and verified downloads.
