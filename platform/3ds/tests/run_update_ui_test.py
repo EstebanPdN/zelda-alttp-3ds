@@ -12,6 +12,7 @@ s=s.replace('#include "../../', '#include "'+str(r/'app/jni/src/src')+'/')
 code='''#include <assert.h>
 #include <SDL.h>
 #include "updater.h"
+#include "native_touch.h"
 #include "hardware_profile.h"
 static bool model;
 static const Platform3DSHardwareProfile*Platform3DS_GetHardwareProfile(void){return Platform3DS_ProfileForModel(model);}
@@ -51,7 +52,10 @@ void SS_EquipSlot(int v){} void SS_SetWidescreen(bool b){}
 static void touch_expect(RectFS r,bool changed){
  SDL_Event e={0};e.type=SDL_FINGERDOWN;e.tfinger.windowID=0;
  e.tfinger.x=(r.x+r.w/2)/320;e.tfinger.y=(r.y+r.h/2)/240;
- int before=redraws;assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+(changed?1:0));
+ int before=redraws;
+ assert(SDL_PushEvent(&e)==1);
+ assert(SDL_PeepEvents(&e,1,SDL_GETEVENT,native_touch_event,native_touch_event)==1);
+ assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+(changed?1:0));
  if(changed)assert(redraw_tab==tab&&priority_tab==tab);
  e.type=SDL_FINGERUP;assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+(changed?1:0));
  e.type=SDL_MOUSEBUTTONDOWN;e.button.windowID=ss_winid;e.button.which=SDL_TOUCH_MOUSEID;
@@ -59,6 +63,8 @@ static void touch_expect(RectFS r,bool changed){
 }
 
 static void touch(RectFS r){touch_expect(r,true);}
+static int prior_calls;
+static int prior_filter(void*data,SDL_Event*e){assert(data==&prior_calls);prior_calls++;return e->type!=SDL_KEYUP;}
 void Updater_GetStatus(UpdateStatus*out){*out=fixture;}
 void SS_ArmButtonCapture(bool b){} int SS_GetCapturedButton(void){return -1;}
 void SS_SetGamepadControls(const int*p){} bool SS_IsWidescreen(void){return true;}
@@ -71,7 +77,29 @@ static void font(void){
  SDL_Surface*s=SDL_CreateRGBSurfaceWithFormatFrom(pixels,256,256,32,256*4,SDL_PIXELFORMAT_ARGB8888);tex_letters=SDL_CreateTextureFromSurface(ss_r,s);SDL_SetTextureBlendMode(tex_letters,SDL_BLENDMODE_BLEND);SDL_FreeSurface(s);
 }
 static void bounds(RectFS a){assert(a.x>=0&&a.y>=0&&a.x+a.w<=W&&a.y+a.h<=H);}
-int main(int argc,char**argv){SDL_Init(0);W=320;H=240;u=.5f;
+int main(int argc,char**argv){
+ SDL_setenv("SDL_VIDEODRIVER","dummy",1);assert(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS)==0);
+ SDL_Window*projection_window=SDL_CreateWindow("top viewport",0,0,400,240,SDL_WINDOW_HIDDEN);
+ assert(projection_window);SDL_Renderer*projection=SDL_CreateRenderer(projection_window,-1,SDL_RENDERER_SOFTWARE);assert(projection);
+ SDL_Rect shifted={-80,0,400,240};assert(SDL_RenderSetViewport(projection,&shifted)==0);
+ // Real SDL renderer watch changes an unprotected native event before delivery.
+ SDL_Event control={0};control.type=SDL_FINGERDOWN;control.tfinger.x=48.0f/320;control.tfinger.y=220.0f/240;
+ assert(SDL_PushEvent(&control)==1);assert(SDL_PeepEvents(&control,1,SDL_GETEVENT,SDL_FINGERDOWN,SDL_FINGERDOWN)==1);
+ assert(fabsf(control.tfinger.x*320-48)>50); // E3 interpreted this as a different tab.
+ SDL_SetEventFilter(prior_filter,&prior_calls);
+ assert(NativeTouch_Init());
+ SDL_Event key={0};key.type=SDL_KEYDOWN;assert(SDL_PushEvent(&key)==1);
+ assert(SDL_PeepEvents(&key,1,SDL_GETEVENT,SDL_KEYDOWN,SDL_KEYDOWN)==1);
+ key.type=SDL_KEYUP;assert(SDL_PushEvent(&key)==0);
+ SDL_Event invalid={0};invalid.type=SDL_FINGERDOWN;invalid.tfinger.x=NAN;assert(SDL_PushEvent(&invalid)==0);
+ invalid.tfinger.x=-1;assert(SDL_PushEvent(&invalid)==0);
+ // Every physical pixel survives the event queue/renderer without a shift.
+ for(int y=0;y<240;y++)for(int x=0;x<320;x++){
+  SDL_Event e={0};e.type=SDL_FINGERDOWN;e.tfinger.x=x/320.0f;e.tfinger.y=y/240.0f;
+  assert(SDL_PushEvent(&e)==1);assert(SDL_PeepEvents(&e,1,SDL_GETEVENT,native_touch_event,native_touch_event)==1);
+  float px,py;assert(NativeTouch_Decode(&e,&px,&py));assert(px==x&&py==y);
+ }
+ W=320;H=240;u=.5f;
  for(int m=0;m<2;m++){model=m;SDL_Surface*screen=SDL_CreateRGBSurfaceWithFormat(0,320,240,m?32:16,m?SDL_PIXELFORMAT_ARGB8888:SDL_PIXELFORMAT_RGB565);ss_r=SDL_CreateSoftwareRenderer(screen);font();
  RectFS panel={5,5,310,190};update_mode=false;draw_settings(panel);
  for(int i=0;i<5;i++){bounds(settings_row_r[i]);if(i)assert(settings_row_r[i].y>=settings_row_r[i-1].y+settings_row_r[i-1].h);}
@@ -116,7 +144,12 @@ int main(int argc,char**argv){SDL_Init(0);W=320;H=240;u=.5f;
  ss_win=NULL;
  SDL_DestroyTexture(tex_letters);tex_letters=NULL;SDL_DestroyRenderer(ss_r);SDL_FreeSurface(screen);
  }
- SDL_Quit();puts("PASS: actual settings/update drawing on Old RGB565 and New ARGB8888; five evenly spaced larger rows, no empty slot, both channels/all states, no control overlap. 200 tab switches/model, border/gap/edge targets, idempotent tabs without extra redraws, paused Update controls, channel/notes/pages/back/cancel/install/restart, NULL-window touch and no synthetic-mouse duplicate. Host font stand-in used for screenshots.");}
+ NativeTouch_Shutdown();assert(!native_touch_event);
+ SDL_EventFilter restored;void*restored_data;SDL_GetEventFilter(&restored,&restored_data);
+ assert(restored==prior_filter&&restored_data==&prior_calls&&prior_calls>76800);
+ assert(NativeTouch_Init());NativeTouch_Shutdown(); // ROM restart can reinstall the filter.
+ SDL_DestroyRenderer(projection);SDL_DestroyWindow(projection_window);
+ SDL_Quit();puts("PASS: 76800 physical pixels through real SDL queue and renderer watch; E3 control shifts, E4 stays exact; actual settings/update drawing on Old RGB565 and New ARGB8888; five evenly spaced larger rows, no empty slot, both channels/all states, no control overlap. 200 tab switches/model, border/gap/edge targets, idempotent tabs without extra redraws, paused Update controls, channel/notes/pages/back/cancel/install/restart, NULL-window touch and no synthetic-mouse duplicate. Host font stand-in used for screenshots.");}
 '''
 (out/'ui-test.c').write_text(code)
 sdk=args.sdl_root.resolve();flags=shlex.split(subprocess.check_output(['bash',str(sdk/'sdl2-config'),'--static-libs'],text=True));flags=[x for x in flags if x.startswith('-Wl,') or x in ['-lm','-liconv']]

@@ -89,9 +89,9 @@ read its changelog on the top screen, with Prev/Next below for more pages.
 Choose Download Update and confirm installation, then reopen the game.
 Save in-game before installing. Startup checks also indicate newer releases.
 
-Version [v3.1-E3](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.1-E3)
+Version [v3.1-E4](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.1-E4)
 is an experimental pre-release; v3.0 remains the stable release. Earlier
-updater builds can find E3 through the Pre-release channel.
+updater builds can find E4 through the Pre-release channel.
 
 Settings is Screen, Turbo Speed, Developer, Update, Restart. Restart opens
 the ROM selector and starts the selected ROM fresh; existing saves remain.
@@ -106,3 +106,7 @@ Content tabs select their view without toggling back to Map. Touch targets
 cover button borders and spaces between them. A completed UI worker result
 is presented in the same frame when available; unfinished jobs stay asynchronous.
 No additional periodic drawing, busy waiting or game pacing change is used.
+
+E4 preserves native touch coordinates before SDL renderer viewport transforms.
+This corrects touches landing on the wrong bottom-screen controls. Use the
+FBI QR if an earlier version's shifted touch controls prevent opening Update.

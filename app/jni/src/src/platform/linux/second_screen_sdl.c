@@ -21,6 +21,7 @@
 #include <3ds.h>
 #include "platform_3ds.h"
 #include "updater.h"
+#include "native_touch.h"
 #else
 enum Platform3DSDisplayMode {
   kPlatform3DSDisplayOriginal,
@@ -1673,6 +1674,10 @@ bool SecondScreenSDL_Init(SDL_Window *main_window) {
 #ifdef __3DS__
   main_win = main_window;
   ss_is_new_3ds = Platform3DS_IsNew3DS();
+  if (!NativeTouch_Init()) {
+    Platform3DS_LogRuntime("ERROR registering native touch event: %s", SDL_GetError());
+    return false;
+  }
   ss_enabled = true;
   return true;
 #else
@@ -2302,14 +2307,19 @@ static void handle_tap(float x, float y) {
 
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
   if (!ss_win) return false;
+#ifdef __3DS__
+  float x, y;
+  if (NativeTouch_Decode(e, &x, &y)) {
+    handle_tap(x - (320.0f - W) * 0.5f, y - (240.0f - H) * 0.5f);
+    return true;
+  }
+#endif
   switch (e->type) {
   case SDL_FINGERDOWN:
 #ifdef __3DS__
-    // SDL's N3DS backend sends physical touch with a NULL window. Consume
-    // its queued edge regardless of focus, including while gameplay pauses.
-    handle_tap(e->tfinger.x * 320.0f - (320.0f - W) * 0.5f,
-               e->tfinger.y * 240.0f - (240.0f - H) * 0.5f);
-    return true;
+    // Native points arrive through the protected event above. Never reuse
+    // renderer-transformed FINGER coordinates or activate a touch twice.
+    return e->tfinger.touchId == 0;
 #else
     if (e->tfinger.windowID == ss_winid) { handle_tap(e->tfinger.x * W, e->tfinger.y * H); return true; }
     return false;
@@ -2803,6 +2813,9 @@ static void rebuild_renderer(int w2, int h2) {
 }
 
 void SecondScreenSDL_Shutdown(void) {
+#ifdef __3DS__
+  NativeTouch_Shutdown();
+#endif
   ss_enabled = false;
   leave_settings_submenu();
   tab = TAB_MAP;
