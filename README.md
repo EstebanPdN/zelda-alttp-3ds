@@ -142,14 +142,14 @@ read its changelog on the top screen, with Prev/Next below for more pages.
 Choose Download Update and confirm installation, then reopen the game.
 Save in-game before installing. Startup checks also indicate newer releases.
 
-Version [v3.1-E5](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.1-E5)
-is an experimental pre-release; v3.0 remains the stable release. Earlier
-updater builds can find E5 through the Pre-release channel.
+Version [v3.1](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.1)
+is the latest stable release. Earlier updater builds can find it through
+the Stable channel.
 
 Settings is Screen, Turbo Speed, Developer, Update, Restart. Restart opens
 the ROM selector and starts the selected ROM fresh; existing saves remain.
 
-E5 uses the native HID contact flag for touch press and release detection,
+Version 3.1 uses the native HID contact flag for touch press and release detection,
 including startup and releases with residual coordinates. Physical coordinates
 remain protected from SDL viewport transforms. The last 32 touch selections
 are included in diagnostic dumps. Use the FBI QR if touch controls prevent
