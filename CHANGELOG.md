@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.1
+
+- Added in-game GitHub updates with Stable/Pre-release channels and verified downloads.
+- Added paginated changelogs with matching screen styles.
+- Fixed bottom-screen startup, touch accuracy and navigation delay.
+- Simplified Settings and combined Restart with ROM selection.
+- Fixed stale world colors after mirror and portal transitions.
+- Added touch history to diagnostic dumps.
+
 ## v3.1-E5
 
 - Fixed touch press and release detection with residual coordinates.
