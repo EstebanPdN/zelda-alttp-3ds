@@ -1,8 +1,12 @@
 from pathlib import Path
 import subprocess,shlex,argparse
-args=argparse.ArgumentParser();args.add_argument('--sdl-root',type=Path,required=True);args.add_argument('--out',type=Path,required=True);args=args.parse_args()
+args=argparse.ArgumentParser();args.add_argument('--sdl-root',type=Path,required=True);args.add_argument('--out',type=Path,required=True);args.add_argument('--touch-source',type=Path);args=args.parse_args()
 r=Path(__file__).resolve().parents[3];out=args.out.resolve();out.mkdir(parents=True,exist_ok=True);src=r/'app/jni/src/src/platform/linux/second_screen_sdl.c'
 s=src.read_text()
+touch_source = args.touch_source or r/'app/jni/SDL2/src/video/n3ds/SDL_n3dstouch.c'
+touch_source = touch_source.read_text()
+native_poll = touch_source[touch_source.index('void N3DS_PollTouch(void)'):touch_source.index('#endif /* SDL_VIDEO_DRIVER_N3DS */')]
+
 # Enable only the platform-independent updater panel in this host harness.
 a=s.index('static void draw_update_panel(');b=s.index('static void draw_settings(',a)
 s=s[:a]+s[a:b].replace('#ifdef __3DS__','#if 1')+s[b:]
@@ -35,8 +39,20 @@ static bool Platform3DS_GetShowFps(void){return false;}
 static void Platform3DS_SetShowFps(bool v){}
 static void Platform3DS_RequestRomSelection(void){restarts++;}
 static unsigned Platform3DS_UpdateNotesPages(void){return 3;}
+#define KEY_TOUCH (1u<<20)
+typedef struct {unsigned short px,py;} touchPosition;
+static touchPosition raw_touch;
+static unsigned raw_held;
+static void hidTouchRead(touchPosition*p){*p=raw_touch;}
+static unsigned hidKeysHeld(void){return raw_held;}
+extern int SDL_AddTouch(SDL_TouchID,SDL_TouchDeviceType,const char*);
+extern int SDL_SendTouch(SDL_TouchID,SDL_FingerID,SDL_Window*,SDL_bool,float,float,float);
+extern int SDL_SendTouchMotion(SDL_TouchID,SDL_FingerID,SDL_Window*,float,float,float);
+#define N3DS_TOUCH_ID 0
+#define TOUCHSCREEN_SCALE_X (1.0f/320)
+#define TOUCHSCREEN_SCALE_Y (1.0f/240)
 #define ZELDA3_TEST_3DS_UI 1
-'''+s+'''
+'''+native_poll+s+'''
 static UpdateStatus fixture;
 static void request_bottom_redraw(unsigned bits){redraw_tab=tab;redraws++;}
 static void prioritize_bottom_touch(void){priority_tab=tab;}
@@ -53,9 +69,16 @@ static void touch_expect(RectFS r,bool changed){
  SDL_Event e={0};e.type=SDL_FINGERDOWN;e.tfinger.windowID=0;
  e.tfinger.x=(r.x+r.w/2)/320;e.tfinger.y=(r.y+r.h/2)/240;
  int before=redraws;
- assert(SDL_PushEvent(&e)==1);
+ raw_touch=(touchPosition){(unsigned short)lroundf(e.tfinger.x*320),(unsigned short)lroundf(e.tfinger.y*240)};
+ raw_held=KEY_TOUCH;N3DS_PollTouch();
  assert(SDL_PeepEvents(&e,1,SDL_GETEVENT,native_touch_event,native_touch_event)==1);
  assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+(changed?1:0));
+ // A held contact/movement must not activate the menu twice.
+ N3DS_PollTouch();SDL_Event duplicate;
+ assert(SDL_PeepEvents(&duplicate,1,SDL_GETEVENT,native_touch_event,native_touch_event)==0);
+ // Release with unchanged coordinates must re-arm the next contact.
+ raw_held=0;N3DS_PollTouch();
+ assert(SDL_PeepEvents(&e,1,SDL_GETEVENT,SDL_FINGERUP,SDL_FINGERUP)==1);
  if(changed)assert(redraw_tab==tab&&priority_tab==tab);
  e.type=SDL_FINGERUP;assert(SecondScreenSDL_HandleEvent(&e));assert(redraws==before+(changed?1:0));
  e.type=SDL_MOUSEBUTTONDOWN;e.button.windowID=ss_winid;e.button.which=SDL_TOUCH_MOUSEID;
@@ -88,6 +111,12 @@ int main(int argc,char**argv){
  assert(fabsf(control.tfinger.x*320-48)>50); // E3 interpreted this as a different tab.
  SDL_SetEventFilter(prior_filter,&prior_calls);
  assert(NativeTouch_Init());
+ assert(SDL_AddTouch(0,SDL_TOUCH_DEVICE_DIRECT,"Native test")>=0);
+ // Boot/resume can expose a previous position with no active contact.
+ // The production backend must not manufacture a press or latch its state.
+ raw_touch=(touchPosition){140,217};raw_held=0;N3DS_PollTouch();
+ SDL_Event phantom;
+ assert(SDL_PeepEvents(&phantom,1,SDL_GETEVENT,native_touch_event,native_touch_event)==0);
  SDL_Event key={0};key.type=SDL_KEYDOWN;assert(SDL_PushEvent(&key)==1);
  assert(SDL_PeepEvents(&key,1,SDL_GETEVENT,SDL_KEYDOWN,SDL_KEYDOWN)==1);
  key.type=SDL_KEYUP;assert(SDL_PushEvent(&key)==0);
@@ -96,8 +125,11 @@ int main(int argc,char**argv){
  // Every physical pixel survives the event queue/renderer without a shift.
  for(int y=0;y<240;y++)for(int x=0;x<320;x++){
   SDL_Event e={0};e.type=SDL_FINGERDOWN;e.tfinger.x=x/320.0f;e.tfinger.y=y/240.0f;
-  assert(SDL_PushEvent(&e)==1);assert(SDL_PeepEvents(&e,1,SDL_GETEVENT,native_touch_event,native_touch_event)==1);
+  raw_touch=(touchPosition){x,y};raw_held=KEY_TOUCH;N3DS_PollTouch();
+  assert(SDL_PeepEvents(&e,1,SDL_GETEVENT,native_touch_event,native_touch_event)==1);
   float px,py;assert(NativeTouch_Decode(&e,&px,&py));assert(px==x&&py==y);
+  raw_held=0;N3DS_PollTouch();
+  assert(SDL_PeepEvents(&e,1,SDL_GETEVENT,SDL_FINGERUP,SDL_FINGERUP)==1);
  }
  W=320;H=240;u=.5f;
  for(int m=0;m<2;m++){model=m;SDL_Surface*screen=SDL_CreateRGBSurfaceWithFormat(0,320,240,m?32:16,m?SDL_PIXELFORMAT_ARGB8888:SDL_PIXELFORMAT_RGB565);ss_r=SDL_CreateSoftwareRenderer(screen);font();
@@ -149,7 +181,7 @@ int main(int argc,char**argv){
  assert(restored==prior_filter&&restored_data==&prior_calls&&prior_calls>76800);
  assert(NativeTouch_Init());NativeTouch_Shutdown(); // ROM restart can reinstall the filter.
  SDL_DestroyRenderer(projection);SDL_DestroyWindow(projection_window);
- SDL_Quit();puts("PASS: 76800 physical pixels through real SDL queue and renderer watch; E3 control shifts, E4 stays exact; actual settings/update drawing on Old RGB565 and New ARGB8888; five evenly spaced larger rows, no empty slot, both channels/all states, no control overlap. 200 tab switches/model, border/gap/edge targets, idempotent tabs without extra redraws, paused Update controls, channel/notes/pages/back/cancel/install/restart, NULL-window touch and no synthetic-mouse duplicate. Host font stand-in used for screenshots.");}
+ SDL_Quit();puts("PASS: 76800 physical pixels through real SDL queue and renderer watch; E3 viewport control shifts; native KEY_TOUCH edges reject residual startup/release coordinates; actual settings/update drawing on Old RGB565 and New ARGB8888; five evenly spaced larger rows, no empty slot, both channels/all states, no control overlap. 200 tab switches/model, border/gap/edge targets, idempotent tabs without extra redraws, paused Update controls, channel/notes/pages/back/cancel/install/restart, NULL-window touch and no synthetic-mouse duplicate. Host font stand-in used for screenshots.");}
 '''
 (out/'ui-test.c').write_text(code)
 sdk=args.sdl_root.resolve();flags=shlex.split(subprocess.check_output(['bash',str(sdk/'sdl2-config'),'--static-libs'],text=True));flags=[x for x in flags if x.startswith('-Wl,') or x in ['-lm','-liconv']]
