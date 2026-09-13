@@ -2,6 +2,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 typedef uint32_t u32; typedef uint64_t u64; typedef int32_t Result; typedef uint32_t Handle; typedef int LightLock; typedef void *Thread;
+typedef int32_t s32;
+#define CUR_THREAD_HANDLE 0xffff8000u
+Result svcGetThreadPriority(s32*,Handle);
+Result sslcInit(Handle);void sslcExit(void);
 typedef struct {uint64_t titleID;} AM_TitleInfo;
 typedef struct {u32 freeClusters,clusterSize;} FS_ArchiveResource;
 typedef struct {int type; const char *path;} FS_Path;
