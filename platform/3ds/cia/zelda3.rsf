@@ -109,6 +109,7 @@ AccessControlInfo:
     - APT:U
     - ac:u
     - soc:U
+    - ssl:C
     - am:net
     - cfg:u
     - dsp::DSP
@@ -126,6 +127,7 @@ SystemControlInfo:
     am: 0x0004013000001502
     ac: 0x0004013000002402
     socket: 0x0004013000002e02
+    ssl: 0x0004013000002f02
     cfg: 0x0004013000001702
     dsp: 0x0004013000001a02
     gsp: 0x0004013000001c02
