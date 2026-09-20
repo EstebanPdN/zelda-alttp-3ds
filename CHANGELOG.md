@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.2
+
+- Optimized update downloads and installation.
+- Fixed black screens and missing audio after Restart and ROM reselection.
+
 ## v3.2-E1
 
 - Fixed black screens and missing audio after Restart and ROM reselection.
