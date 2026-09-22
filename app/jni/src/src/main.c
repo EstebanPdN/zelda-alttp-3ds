@@ -43,6 +43,7 @@ bool SecondScreenSDL_Init(SDL_Window *main_window);
 bool SecondScreenSDL_HandleEvent(const SDL_Event *e);
 void SecondScreenSDL_Handle3DSTouch(void);
 void SecondScreenSDL_Update(int logic_frames);
+void SecondScreenSDL_SetDiagnostics(int current_fps, int average_fps);
 #ifdef __3DS__
 void SecondScreenSDL_BeginFrame(int logic_frames);
 #endif
@@ -89,6 +90,15 @@ static uint8 g_gamepad_buttons;
 static int g_input1_state;
 static bool g_display_perf;
 static int g_curr_fps;
+#ifdef __3DS__
+static int g_3ds_current_fps;
+static int g_3ds_average_fps;
+static uint32 g_3ds_visual_fps_window_start_ms;
+static uint32 g_3ds_visual_fps_window_frames;
+static uint32 g_3ds_average_fps_samples[20];
+static uint32 g_3ds_average_fps_sample_count;
+static uint32 g_3ds_average_fps_sample_pos;
+#endif
 static int g_ppu_render_flags = 0;
 static int g_snes_width, g_snes_height;
 static int g_sdl_audio_mixer_volume = SDL_MIX_MAXVOLUME;
@@ -475,10 +485,21 @@ static void SdlRenderer_BeginDraw(int width, int height, uint8 **pixels, int *pi
 static void SdlRenderer_EndDraw() {
 
 #ifdef __3DS__
+  int focus_x = -1;
+  int focus_y = -1;
+  if ((main_module_index == 7 || main_module_index == 9) &&
+      submodule_index == 0) {
+    focus_x = (int)(uint16)(link_x_coord - BG2HOFS_copy2) + 8;
+    focus_y = (int)(uint16)(link_y_coord - BG2VOFS_copy2) + 12;
+    if (g_sdl_renderer_rect.w > 256)
+      focus_x += (g_sdl_renderer_rect.w - 256) / 2;
+  }
   Platform3DS_PresentTopFrame(g_3ds_top_pixels,
                               k3DSTopTextureWidth * 4,
                               g_sdl_renderer_rect.w,
-                              g_sdl_renderer_rect.h);
+                              g_sdl_renderer_rect.h,
+                              focus_x,
+                              focus_y);
 #else
 //  uint64 before = SDL_GetPerformanceCounter();
   SDL_UnlockTexture(g_texture);
@@ -568,14 +589,18 @@ int main(int argc, char** argv) {
   if (argc >= 2 && strcmp(argv[0], "--config") == 0) {
     config_file = argv[1];
     argc -= 2, argv += 2;
-  } else {
+  }
 #ifdef __3DS__
+restart_3ds_runtime:
+  if (!config_file) {
     if (!Platform3DS_PrepareStorage())
       return 0;
-#else
-    SwitchDirectory();
-#endif
   }
+#else
+  if (!config_file) {
+    SwitchDirectory();
+  }
+#endif
 
   ParseConfigFile(config_file);
 #ifdef __3DS__
@@ -752,11 +777,21 @@ int main(int argc, char** argv) {
 #endif
   uint32 frameCtr = 0;
   bool audiopaused = true;
+#ifdef __3DS__
+  bool system_exit_requested = false;
+#endif
 
   if (g_config.autosave)
     HandleCommand(kKeys_Load + 0, true);
 
   while(running) {
+#ifdef __3DS__
+    if (Platform3DS_ShouldExit()) {
+      system_exit_requested = true;
+      running = false;
+      break;
+    }
+#endif
     while(SDL_PollEvent(&event)) {
       if (SecondScreenSDL_HandleEvent(&event))
         continue;
@@ -795,10 +830,16 @@ int main(int argc, char** argv) {
         HandleInput(event.key.keysym.sym, event.key.keysym.mod, false);
         break;
       case SDL_QUIT:
+#ifdef __3DS__
+        system_exit_requested = true;
+#endif
         running = false;
         break;
       }
     }
+
+    if (!running)
+      break;
 
     if (g_paused != audiopaused) {
       audiopaused = g_paused;
@@ -849,12 +890,39 @@ int main(int argc, char** argv) {
       render_interval_us = (uint32)(
         (frame_work_start - last_render_counter) * 1000000ull /
         logic_frequency);
+      uint32 now_ms = SDL_GetTicks();
+      if (g_3ds_visual_fps_window_start_ms == 0)
+        g_3ds_visual_fps_window_start_ms = now_ms;
+      g_3ds_visual_fps_window_frames++;
+      uint32 elapsed_ms = now_ms - g_3ds_visual_fps_window_start_ms;
+      if (elapsed_ms >= 500) {
+        g_3ds_current_fps =
+          (int)((uint64)g_3ds_visual_fps_window_frames * 1000ull /
+                (elapsed_ms ? elapsed_ms : 1));
+        g_3ds_average_fps_samples[g_3ds_average_fps_sample_pos] =
+          (uint32)g_3ds_current_fps;
+        g_3ds_average_fps_sample_pos =
+          (g_3ds_average_fps_sample_pos + 1) %
+          countof(g_3ds_average_fps_samples);
+        if (g_3ds_average_fps_sample_count <
+            countof(g_3ds_average_fps_samples))
+          g_3ds_average_fps_sample_count++;
+        uint32 fps_sum = 0;
+        for (uint32 i = 0; i < g_3ds_average_fps_sample_count; i++)
+          fps_sum += g_3ds_average_fps_samples[i];
+        g_3ds_average_fps = g_3ds_average_fps_sample_count ?
+          (int)(fps_sum / g_3ds_average_fps_sample_count) :
+          g_3ds_current_fps;
+        g_3ds_visual_fps_window_start_ms = now_ms;
+        g_3ds_visual_fps_window_frames = 0;
+      }
     }
     last_render_counter = frame_work_start;
 
     bool turbo_held;
     int turbo_multiplier;
     inputs = Platform3DS_ReadInput(&turbo_held, &turbo_multiplier);
+    SecondScreenSDL_SetDiagnostics(g_3ds_current_fps, g_3ds_average_fps);
     SecondScreenSDL_Handle3DSTouch();
     if (Platform3DS_TakeQuickDumpRequest())
       SecondScreenSDL_RequestDump();
@@ -962,8 +1030,13 @@ int main(int argc, char** argv) {
     }
 #endif
   }
-  if (g_config.autosave)
+  if (g_config.autosave) {
+#ifdef __3DS__
+    if (system_exit_requested && device)
+      SDL_PauseAudioDevice(device, 1);
+#endif
     HandleCommand(kKeys_Save + 0, true);
+  }
 
   // clean sdl
   if (g_config.enable_audio) {
@@ -980,6 +1053,10 @@ int main(int argc, char** argv) {
   SecondScreenSDL_Shutdown();
   SDL_DestroyWindow(window);
   SDL_Quit();
+#ifdef __3DS__
+  if (Platform3DS_TakeRomSelectionRequest())
+    goto restart_3ds_runtime;
+#endif
   //SaveConfigFile();
   return 0;
 }

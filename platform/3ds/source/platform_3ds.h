@@ -28,19 +28,33 @@ void Platform3DS_ApplyConfig(struct Config *config);
 void Platform3DS_LogRuntime(const char *format, ...);
 uint16_t Platform3DS_ReadInput(bool *turbo_held, int *turbo_multiplier);
 void Platform3DS_LoadRuntimeSettings(void);
+void Platform3DS_ShowFatalError(const char *message);
 enum Platform3DSDisplayMode Platform3DS_GetDisplayMode(void);
 void Platform3DS_SetDisplayMode(enum Platform3DSDisplayMode mode);
 enum Platform3DSWideEdgeMode Platform3DS_GetWideEdgeMode(void);
 void Platform3DS_SetWideEdgeMode(enum Platform3DSWideEdgeMode mode);
+int Platform3DS_GetWideZoomIndex(void);
+void Platform3DS_SetWideZoomIndex(int zoom_index);
 enum Platform3DSCStickMode Platform3DS_GetCStickMode(void);
 void Platform3DS_SetCStickMode(enum Platform3DSCStickMode mode);
 bool Platform3DS_TakeQuickDumpRequest(void);
+void Platform3DS_RequestRomSelection(void);
+bool Platform3DS_TakeRomSelectionRequest(void);
+bool Platform3DS_ShouldExit(void);
+bool Platform3DS_IsSystemClosing(void);
+bool Platform3DS_IsNew3DS(void);
+bool Platform3DS_CanUseCore1PpuWorker(void);
+bool Platform3DS_IsVersionOverlayVisible(void);
+void Platform3DS_BlankScreens(void);
+void Platform3DS_FormatSavePath(const char *filename,
+                                char *out, size_t out_size);
 int Platform3DS_GetTurboMultiplier(void);
 void Platform3DS_SetTurboMultiplier(int multiplier);
 bool Platform3DS_InitTopPresenter(void);
 void Platform3DS_ShutdownTopPresenter(void);
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
-                                 int width, int height);
+                                 int width, int height,
+                                 int focus_x, int focus_y);
 void Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,
                                     int width, int height);
 void Platform3DS_EndFrame(void);

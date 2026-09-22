@@ -343,6 +343,8 @@ static PpuWorkerState g_ppu_new_worker;
 static bool g_ppu_worker_initialized;
 static int g_ppu_split_line = 112;
 static int g_ppu_last_split_line = 112;
+static int g_ppu_old3ds_worker_lines = 56;
+static int g_ppu_old3ds_last_worker_lines = 56;
 static uint64 g_ppu_main_duration_ticks;
 
 static void ZeldaPpuWorkerMain(void *argument) {
@@ -388,7 +390,8 @@ static int ZeldaEnsurePpuWorkers(void) {
   s32 priority = 0x30;
   svcGetThreadPriority(&priority, CUR_THREAD_HANDLE);
 
-  bool system_worker =
+  bool can_use_core1 = Platform3DS_CanUseCore1PpuWorker();
+  bool system_worker = can_use_core1 &&
     ZeldaCreatePpuWorker(&g_ppu_system_worker, 1, priority);
   bool new_worker = is_new_3ds &&
     ZeldaCreatePpuWorker(&g_ppu_new_worker, 2, priority);
@@ -399,7 +402,8 @@ static int ZeldaEnsurePpuWorkers(void) {
   } else {
     Platform3DS_LogRuntime(
       "PPU workers: Core 1=%s, Core 2=%s",
-      system_worker ? "enabled" : "unavailable",
+      system_worker ? "enabled" :
+      (can_use_core1 ? "unavailable" : "disabled/no budget"),
       new_worker ? "enabled" : "unavailable");
   }
   return count;
@@ -414,7 +418,10 @@ void ZeldaShutdownPpuWorker(void) {
     if (!state->thread)
       continue;
     __atomic_store_n(&state->running, false, __ATOMIC_RELEASE);
-    threadJoin(state->thread, U64_MAX);
+    Result join_result = threadJoin(state->thread, 2000000000ull);
+    if (R_FAILED(join_result))
+      Platform3DS_LogRuntime("WARNING: PPU worker join timeout: 0x%08lx",
+                             (unsigned long)join_result);
     threadFree(state->thread);
     state->thread = NULL;
   }
@@ -439,6 +446,44 @@ bool ZeldaGetPpuWorkerStats(int *split_line,
       worker_ticks * 1000000ull / SYSCLOCK_ARM11);
   }
   return true;
+}
+
+static int ZeldaOld3DSChooseWorkerLines(int height) {
+  const int min_worker_lines = 24;
+  const int max_worker_lines = height / 3;
+  int worker_lines = g_ppu_old3ds_worker_lines;
+
+  if (g_ppu_main_duration_ticks != 0 &&
+      g_ppu_system_worker.duration_ticks != 0 &&
+      g_ppu_old3ds_last_worker_lines > 0) {
+    int previous_worker_lines = g_ppu_old3ds_last_worker_lines;
+    int previous_main_lines = height - previous_worker_lines;
+    uint64 main_per_line =
+      g_ppu_main_duration_ticks / (uint64)IntMax(previous_main_lines, 1);
+    uint64 worker_per_line =
+      g_ppu_system_worker.duration_ticks /
+      (uint64)IntMax(previous_worker_lines, 1);
+
+    if (main_per_line != 0 && worker_per_line != 0) {
+      uint64 wanted =
+        (uint64)height * main_per_line / (main_per_line + worker_per_line);
+      int target = (int)wanted;
+      target = IntMin(IntMax(target, min_worker_lines), max_worker_lines);
+
+      if (target > worker_lines + 4)
+        worker_lines += 4;
+      else if (target < worker_lines - 4)
+        worker_lines -= 4;
+      else
+        worker_lines = target;
+    }
+  }
+
+  worker_lines = IntMin(IntMax(worker_lines, min_worker_lines),
+                        max_worker_lines);
+  g_ppu_old3ds_worker_lines = worker_lines;
+  g_ppu_old3ds_last_worker_lines = worker_lines;
+  return worker_lines;
 }
 #else
 void ZeldaShutdownPpuWorker(void) {
@@ -505,10 +550,10 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
       new_worker->first_line = main_last + 1;
       new_worker->last_line = height;
     } else {
-      int system_last = height * 3 / 13;
-      main_first = system_last + 1;
-      system_worker->first_line = 1;
-      system_worker->last_line = system_last;
+      int worker_lines = ZeldaOld3DSChooseWorkerLines(height);
+      main_last = height - worker_lines;
+      system_worker->first_line = main_last + 1;
+      system_worker->last_line = height;
     }
     g_ppu_last_split_line = main_last;
 
@@ -1183,6 +1228,7 @@ void SaveLoadSlot(int cmd, int which) {
 
 void SaveLoadSlot(int cmd, int which) {
   char name[128];
+  char path[256];
   SDL_RWops* rwops;
 
   if (which & 256) {
@@ -1193,7 +1239,12 @@ void SaveLoadSlot(int cmd, int which) {
     snprintf(name, sizeof(name), "saves/save%d.sav", which);
   }
 
-  rwops = SDL_RWFromFileInExternal(name, cmd != kSaveLoad_Save ? "rb" : "wb");
+#ifdef __3DS__
+  Platform3DS_FormatSavePath(name, path, sizeof(path));
+#else
+  snprintf(path, sizeof(path), "%s", name);
+#endif
+  rwops = SDL_RWFromFileInExternal(path, cmd != kSaveLoad_Save ? "rb" : "wb");
   if (rwops) {
     printf("*** %s slot %d\n",
            cmd == kSaveLoad_Save ? "Saving" : cmd == kSaveLoad_Load ? "Loading" : "Replaying", which);
@@ -1311,7 +1362,13 @@ SDL_RWops* SDL_RWFromFileInExternal(const char *filename, const char *mode) {
 #endif  // __ANDROID__
 
 void ZeldaReadSram() {
-  SDL_RWops *stream = SDL_RWFromFileInExternal("saves/sram.dat", "rb");
+  char path[256];
+#ifdef __3DS__
+  Platform3DS_FormatSavePath("saves/sram.dat", path, sizeof(path));
+#else
+  snprintf(path, sizeof(path), "%s", "saves/sram.dat");
+#endif
+  SDL_RWops *stream = SDL_RWFromFileInExternal(path, "rb");
   if (stream) {
     size_t bytesRead = SDL_RWread(stream, g_zenv.sram, 1, 8192);
     if (bytesRead != 8192) {
@@ -1336,10 +1393,25 @@ void ZeldaWriteSram() {
     fprintf(stderr, "External storage path not available.\n");
   }
 #else
-  rename("saves/sram.dat", "saves/sram.bak");
+  char old_path[256];
+  char bak_path[256];
+#ifdef __3DS__
+  Platform3DS_FormatSavePath("saves/sram.dat", old_path, sizeof(old_path));
+  Platform3DS_FormatSavePath("saves/sram.bak", bak_path, sizeof(bak_path));
+#else
+  snprintf(old_path, sizeof(old_path), "%s", "saves/sram.dat");
+  snprintf(bak_path, sizeof(bak_path), "%s", "saves/sram.bak");
+#endif
+  rename(old_path, bak_path);
 #endif
 
-  SDL_RWops *stream = SDL_RWFromFileInExternal("saves/sram.dat", "wb");
+  char path[256];
+#ifdef __3DS__
+  Platform3DS_FormatSavePath("saves/sram.dat", path, sizeof(path));
+#else
+  snprintf(path, sizeof(path), "%s", "saves/sram.dat");
+#endif
+  SDL_RWops *stream = SDL_RWFromFileInExternal(path, "wb");
   if (stream) {
     // Fill 'sram' with the data you want to write
     size_t bytesWritten = SDL_RWwrite(stream, g_zenv.sram, 1, 8192);
@@ -1351,3 +1423,6 @@ void ZeldaWriteSram() {
     fprintf(stderr, "Unable to write saves/sram.dat\n");
   }
 }
+#ifdef __3DS__
+#include "platform_3ds.h"
+#endif
