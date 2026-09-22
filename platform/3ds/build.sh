@@ -43,22 +43,29 @@ fi
 
 "${BANNERTOOL}" makesmdh \
   -s "Zelda ALttP 3DS" \
-  -l "Zelda A Link to the Past 3DS v1.5" \
+  -l "Zelda A Link to the Past 3DS v1.6" \
   -p "snesrev / samyost1 / 3DS port" \
   -i "${ROOT}/platform/3ds/assets/icon.png" \
   -f visible,nosavebackups \
   -o "${GAME_BUILD}/zelda3-3ds.icn"
 
-"${BANNERTOOL}" makebanner \
-  -i "${ROOT}/platform/3ds/assets/banner.png" \
-  -a "${ROOT}/platform/3ds/assets/banner.wav" \
-  -o "${GAME_BUILD}/zelda3-3ds.bnr"
+if [[ -f "${ROOT}/platform/3ds/assets/banner.cgfx" ]]; then
+  "${BANNERTOOL}" makebanner \
+    -ci "${ROOT}/platform/3ds/assets/banner.cgfx" \
+    -a "${ROOT}/platform/3ds/assets/banner.wav" \
+    -o "${GAME_BUILD}/zelda3-3ds.bnr"
+else
+  "${BANNERTOOL}" makebanner \
+    -i "${ROOT}/platform/3ds/assets/banner.png" \
+    -a "${ROOT}/platform/3ds/assets/banner.wav" \
+    -o "${GAME_BUILD}/zelda3-3ds.bnr"
+fi
 
 (
   cd "${ROOT}"
   "${MAKEROM}" \
     -f cia \
-    -o "${GAME_BUILD}/zelda3-3ds-v1.5.cia" \
+    -o "${GAME_BUILD}/zelda3-3ds-v1.6.cia" \
     -DAPP_ROMFS=build-3ds/game/romfs \
     -rsf platform/3ds/cia/zelda3.rsf \
     -target t \
@@ -69,5 +76,5 @@ fi
 )
 
 printf 'Listos:\n'
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.5.3dsx"
-printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.5.cia"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.6.3dsx"
+printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v1.6.cia"

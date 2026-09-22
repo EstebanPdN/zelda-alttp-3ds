@@ -30,12 +30,18 @@ console's own firmware through Rosalina's `Dump DSP firmware` command.
 The CIA metadata uses the Legacy memory mode for Old 3DS compatibility and
 requests the New 3DS 804 MHz/L2 configuration when that hardware is available.
 
-The HOME Menu metadata is versioned for every release. v1.5 uses:
+The HOME Menu metadata is versioned for every release. v1.6 uses:
 
 ```text
 Short name: Zelda ALttP 3DS
-Long name:  Zelda A Link to the Past 3DS v1.5
+Long name:  Zelda A Link to the Past 3DS v1.6
 ```
+
+The CIA banner prefers `assets/banner.cgfx` when present. v1.6 uses a real
+HOME Menu CGFX model generated from the supplied SNES box glTF with only the
+base diffuse texture; normal and metallic maps are intentionally omitted to keep
+the banner small and reliable on 3DS hardware. `assets/banner.png` remains as a
+flat fallback for builds where the CGFX asset is removed.
 
 ## Requirements
 
