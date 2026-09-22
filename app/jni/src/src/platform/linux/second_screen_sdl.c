@@ -1079,9 +1079,10 @@ static const char *display_mode_label(void) {
 static const char *wide_zoom_label(void) {
 #ifdef __3DS__
   switch (Platform3DS_GetWideZoomIndex()) {
-  case 1: return "1.5X";
-  case 2: return "2X";
-  case 3: return "2.5X";
+  case 1: return "1.2X";
+  case 2: return "1.5X";
+  case 3: return "2X";
+  case 4: return "2.5X";
   case 0:
   default: return "1X";
   }
@@ -1640,12 +1641,13 @@ static void handle_tap(float x, float y) {
       } else if (in_rect(&screen_row_r[2], x, y)) {
 #ifdef __3DS__
         if (Platform3DS_GetDisplayMode() == kPlatform3DSDisplayUltraWideMod) {
-          int zoom_index = (Platform3DS_GetWideZoomIndex() + 1) & 3;
+          int zoom_index = (Platform3DS_GetWideZoomIndex() + 1) % 5;
           Platform3DS_SetWideZoomIndex(zoom_index);
           update_ini("[General]", "WideZoom",
                      zoom_index == 0 ? "1x" :
-                     zoom_index == 1 ? "1.5x" :
-                     zoom_index == 2 ? "2x" : "2.5x");
+                     zoom_index == 1 ? "1.2x" :
+                     zoom_index == 2 ? "1.5x" :
+                     zoom_index == 3 ? "2x" : "2.5x");
         }
 #endif
       } else if (in_rect(&screen_row_r[3], x, y)) {

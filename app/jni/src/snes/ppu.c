@@ -60,6 +60,7 @@ void ppu_reset(Ppu* ppu) {
   ppu->extraLeftCur = 0;
   ppu->extraRightCur = 0;
   ppu->extraBottomCur = 0;
+  ppu->renderObjXOffset = 0;
   ppu->windowExtLeft = ppu->windowExtRight = NULL;
   ppu->vramPointer = 0;
   ppu->vramIncrementOnHigh = false;
@@ -143,6 +144,7 @@ void PpuBeginDrawing(Ppu *ppu, uint8_t *pixels, size_t pitch, uint32_t render_fl
   ppu->renderFlags = render_flags;
   ppu->renderPitch = (uint)pitch;
   ppu->renderBuffer = pixels;
+  ppu->renderObjXOffset = 0;
 
   // Cache the brightness computation
   if (ppu->brightness != ppu->lastBrightnessMult) {
@@ -1318,6 +1320,7 @@ static bool ppu_evaluateSprites(Ppu* ppu, int line) {
     // in y-range, get the x location, using the high bit as well
     int x = (ppu->oam[index] & 0xff) + (highOam & 1) * 256;
     x -= (x >= 256 + extra_left_right) * 512;
+    x += ppu->renderObjXOffset;
     // if in x-range
     if (x <= -(spriteSize + extra_left_right))
       continue;

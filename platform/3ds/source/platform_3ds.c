@@ -129,8 +129,8 @@ static void Platform3DS_ApplyAutoDisplayDefaults(void) {
     g_display_mode = g_is_new_3ds ? kPlatform3DSDisplayUltraWideMod :
                                     kPlatform3DSDisplayOriginal;
   if (g_wide_edge_mode_auto)
-    g_wide_edge_mode = g_is_new_3ds ? kPlatform3DSWideEdgeStandard :
-                                      kPlatform3DSWideEdgeFixedCamera;
+    g_wide_edge_mode = g_is_new_3ds ? kPlatform3DSWideEdgeFixedCamera :
+                                      kPlatform3DSWideEdgeStandard;
 }
 
 static void LogSetup(const char *format, ...) {
@@ -300,12 +300,14 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
     }
   } else if (strcasecmp(key, "WideZoom") == 0) {
     int zoom_index = 0;
-    if (strcasecmp(value, "1.5") == 0 || strcasecmp(value, "1.5x") == 0)
+    if (strcasecmp(value, "1.2") == 0 || strcasecmp(value, "1.2x") == 0)
       zoom_index = 1;
-    else if (strcasecmp(value, "2") == 0 || strcasecmp(value, "2x") == 0)
+    else if (strcasecmp(value, "1.5") == 0 || strcasecmp(value, "1.5x") == 0)
       zoom_index = 2;
-    else if (strcasecmp(value, "2.5") == 0 || strcasecmp(value, "2.5x") == 0)
+    else if (strcasecmp(value, "2") == 0 || strcasecmp(value, "2x") == 0)
       zoom_index = 3;
+    else if (strcasecmp(value, "2.5") == 0 || strcasecmp(value, "2.5x") == 0)
+      zoom_index = 4;
     g_wide_zoom_index = zoom_index;
   } else if (strcasecmp(key, "CStickMode") == 0) {
     if (strcasecmp(value, "Disabled") == 0 ||
@@ -396,8 +398,8 @@ int Platform3DS_GetWideZoomIndex(void) {
 void Platform3DS_SetWideZoomIndex(int zoom_index) {
   if (zoom_index < 0)
     zoom_index = 0;
-  if (zoom_index > 3)
-    zoom_index = 3;
+  if (zoom_index > 4)
+    zoom_index = 4;
   g_wide_zoom_index = zoom_index;
   Platform3DS_LogRuntime("Wide zoom set: %d", g_wide_zoom_index);
 }
@@ -751,7 +753,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
 
   const bool stretch = g_display_mode == kPlatform3DSDisplayStretch;
   const bool wide = g_display_mode == kPlatform3DSDisplayUltraWideMod;
-  static const float zoom_values[4] = { 1.0f, 1.5f, 2.0f, 2.5f };
+  static const float zoom_values[5] = { 1.0f, 1.2f, 1.5f, 2.0f, 2.5f };
   float zoom = wide ? zoom_values[g_wide_zoom_index] : 1.0f;
   float source_width = (float)width / zoom;
   float source_height = (float)height / zoom;
@@ -777,8 +779,8 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   }
   const float draw_width = stretch ? (float)GSP_SCREEN_HEIGHT_TOP :
                                      (float)width;
-  const float draw_height =
-    height < GSP_SCREEN_WIDTH ? (float)height : (float)GSP_SCREEN_WIDTH;
+  const float draw_height = (stretch || wide) ? (float)GSP_SCREEN_WIDTH :
+    (height < GSP_SCREEN_WIDTH ? (float)height : (float)GSP_SCREEN_WIDTH);
   g_top_subtexture = (Tex3DS_SubTexture){
     .width = (u16)source_width,
     .height = (u16)source_height,
@@ -1788,7 +1790,7 @@ static uint8 *ApplyBpsCompatibleRom(const uint8 *src, size_t src_size_in,
   uint32 src_size = (uint32)SetupBpsDecodeInt(&patch);
   uint32 dst_size = (uint32)SetupBpsDecodeInt(&patch);
   uint32 meta_size = (uint32)SetupBpsDecodeInt(&patch);
-  if (src_size != src_size_in || patch + meta_size > patch_end)
+  if (src_size > src_size_in || patch + meta_size > patch_end)
     return NULL;
   patch += meta_size;
   uint8 *dst = malloc(dst_size);
@@ -1843,6 +1845,17 @@ static uint8 *ApplyBpsCompatibleRom(const uint8 *src, size_t src_size_in,
 fail:
   free(dst);
   return NULL;
+}
+
+static uint8 *NormalizeRomForExtraction(uint8 *rom, size_t *rom_size) {
+  if (!rom || !rom_size)
+    return rom;
+  if ((*rom_size % 0x8000) == 512) {
+    LogSetup("Detected 512-byte copier header; stripping for extraction");
+    memmove(rom, rom + 512, *rom_size - 512);
+    *rom_size -= 512;
+  }
+  return rom;
 }
 
 static void FreeBlocks(OwnedBlock *blocks, int count) {
@@ -2079,12 +2092,30 @@ static bool ExtractTranslationLanguage(const uint8 *rom, size_t rom_size,
   return true;
 }
 
-static bool AddSpanishLanguageToAssets(const uint8 *assets_data,
-                                       size_t assets_size,
-                                       const uint8 *rom,
-                                       size_t rom_size,
-                                       uint8 **out_data,
-                                       size_t *out_size) {
+static const char *DetectTranslatedRomLanguage(const uint8 *rom,
+                                               size_t rom_size) {
+  static const char kPortugueseTitle[] = "A LENDA DE ZELDA (BR)";
+  if (rom_size >= 0x7fc0 + sizeof(kPortugueseTitle) - 1 &&
+      memcmp(rom + 0x7fc0, kPortugueseTitle,
+             sizeof(kPortugueseTitle) - 1) == 0)
+    return "pt";
+  return "es";
+}
+
+static bool RomLooksJapanese(const uint8 *rom, size_t rom_size) {
+  static const char kJapaneseTitle[] = "ZELDANODENSETSU";
+  return rom_size >= 0x7fc0 + sizeof(kJapaneseTitle) - 1 &&
+         memcmp(rom + 0x7fc0, kJapaneseTitle,
+                sizeof(kJapaneseTitle) - 1) == 0;
+}
+
+static bool AddTranslatedLanguageToAssets(const uint8 *assets_data,
+                                          size_t assets_size,
+                                          const uint8 *rom,
+                                          size_t rom_size,
+                                          const char *language_code,
+                                          uint8 **out_data,
+                                          size_t *out_size) {
   *out_data = NULL;
   *out_size = 0;
   OwnedBlock language_dialogue = {0};
@@ -2164,14 +2195,24 @@ static bool AddSpanishLanguageToAssets(const uint8 *assets_data,
       language_font.data = NULL;
       OwnedBlock map_parts[2] = {0};
       OwnedBlock packed_map_entry = {0};
-      static const uint8 name[] = { 'e', 's' };
+      uint8 name[8];
+      size_t name_size = strlen(language_code);
+      if (name_size == 0 || name_size > sizeof(name)) {
+        ok = false;
+      }
+      if (ok)
+        memcpy(name, language_code, name_size);
       uint8 conf[] = { (uint8)index, (uint8)index, 2 };
-      ok = CopyBlock(&map_parts[0], name, sizeof(name)) &&
+      ok = ok &&
+           CopyBlock(&map_parts[0], name, name_size) &&
            CopyBlock(&map_parts[1], conf, sizeof(conf)) &&
            PackBlocks(map_parts, 2, &packed_map_entry);
       FreeBlocks(map_parts, 2);
-      if (ok)
+      if (ok) {
         map[index] = packed_map_entry;
+        packed_map_entry.data = NULL;
+        packed_map_entry.size = 0;
+      }
     }
   }
   OwnedBlock packed_dialogues = {0};
@@ -2230,11 +2271,12 @@ static bool AddSpanishLanguageToAssets(const uint8 *assets_data,
   return ok;
 }
 
-static bool WriteSpanishProfileIni(void) {
+static bool WriteTranslatedProfileIni(const char *language_code) {
   FILE *file = fopen("zelda3.ini", "ab");
   if (!file)
     return false;
-  bool ok = fprintf(file, "\n[General]\nLanguage = es\n") > 0;
+  bool ok = fprintf(file, "\n[General]\nLanguage = %s\n",
+                    language_code) > 0;
   if (fclose(file) != 0)
     ok = false;
   return ok;
@@ -2254,6 +2296,7 @@ static bool TryBuildTranslatedAssets(const uint8 *rom, size_t rom_size,
   FreeBlocks(&probe_font, 1);
   if (!translatable)
     return false;
+  const char *language_code = DetectTranslatedRomLanguage(rom, rom_size);
 
   DIR *directory = opendir("../..");
   if (!directory)
@@ -2273,27 +2316,91 @@ static bool TryBuildTranslatedAssets(const uint8 *rom, size_t rom_size,
     uint8 *base_rom = ReadWholeFile(path, &base_size);
     if (!base_rom)
       continue;
+    base_rom = NormalizeRomForExtraction(base_rom, &base_size);
     size_t base_assets_size = 0;
     uint8 *base_assets = ApplyBps(base_rom, base_size, patch, patch_size,
                                   &base_assets_size);
+    if (!base_assets)
+      base_assets = ApplyBpsCompatibleRom(base_rom, base_size, patch,
+                                          patch_size, &base_assets_size);
     free(base_rom);
+    if (base_assets && !AssetsBlobLooksValid(base_assets, base_assets_size)) {
+      LogSetup("Installed base ROM produced invalid compatible assets: %s",
+               entry->d_name);
+      free(base_assets);
+      base_assets = NULL;
+      base_assets_size = 0;
+    }
     if (!base_assets)
       continue;
     uint8 *translated_assets = NULL;
     size_t translated_assets_size = 0;
-    success = AddSpanishLanguageToAssets(base_assets, base_assets_size,
-                                         rom, rom_size,
-                                         &translated_assets,
-                                         &translated_assets_size);
+    success = AddTranslatedLanguageToAssets(base_assets, base_assets_size,
+                                            rom, rom_size, language_code,
+                                            &translated_assets,
+                                            &translated_assets_size);
     free(base_assets);
     if (success) {
       *assets_out = translated_assets;
       *assets_size_out = translated_assets_size;
-      WriteSpanishProfileIni();
-      LogSetup("Spanish profile assets generated using base ROM: %s",
-               entry->d_name);
+      WriteTranslatedProfileIni(language_code);
+      LogSetup("Translated profile assets generated using base ROM: %s, language: %s",
+               entry->d_name, language_code);
     } else {
       free(translated_assets);
+    }
+  }
+  closedir(directory);
+  return success;
+}
+
+static bool TryBuildBaseAssetsFromInstalledUsRom(const uint8 *patch,
+                                                 size_t patch_size,
+                                                 uint8 **assets_out,
+                                                 size_t *assets_size_out) {
+  *assets_out = NULL;
+  *assets_size_out = 0;
+  DIR *directory = opendir("../..");
+  if (!directory)
+    return false;
+  bool success = false;
+  struct dirent *entry;
+  while (!success && (entry = readdir(directory)) != NULL) {
+    if (RomFileShouldBeIgnored(entry->d_name) ||
+        !(HasExtension(entry->d_name, ".sfc") ||
+          HasExtension(entry->d_name, ".smc")))
+      continue;
+    char path[640];
+    snprintf(path, sizeof(path), "../../%s", entry->d_name);
+    if (!IsRegularFile(path))
+      continue;
+    size_t base_size = 0;
+    uint8 *base_rom = ReadWholeFile(path, &base_size);
+    if (!base_rom)
+      continue;
+    base_rom = NormalizeRomForExtraction(base_rom, &base_size);
+    size_t base_assets_size = 0;
+    uint8 *base_assets = ApplyBps(base_rom, base_size, patch, patch_size,
+                                  &base_assets_size);
+    if (!base_assets)
+      base_assets = ApplyBpsCompatibleRom(base_rom, base_size, patch,
+                                          patch_size, &base_assets_size);
+    free(base_rom);
+    if (base_assets && !AssetsBlobLooksValid(base_assets, base_assets_size)) {
+      LogSetup("Installed fallback ROM produced invalid compatible assets: %s",
+               entry->d_name);
+      free(base_assets);
+      base_assets = NULL;
+      base_assets_size = 0;
+    }
+    if (base_assets && AssetsBlobLooksValid(base_assets, base_assets_size)) {
+      *assets_out = base_assets;
+      *assets_size_out = base_assets_size;
+      success = true;
+      LogSetup("Base assets generated using installed USA-compatible ROM: %s",
+               entry->d_name);
+    } else {
+      free(base_assets);
     }
   }
   closedir(directory);
@@ -2308,6 +2415,7 @@ static bool ExtractAssetsFromRom(const char *rom_path) {
   size_t patch_size = 0;
   size_t assets_size = 0;
   uint8 *rom = ReadWholeFile(rom_path, &rom_size);
+  rom = NormalizeRomForExtraction(rom, &rom_size);
   LogSetup("ROM read: %lu bytes", (unsigned long)rom_size);
   uint8 *patch = ReadWholeFile(kBundledPatch, &patch_size);
   LogSetup("Patch read: %lu bytes", (unsigned long)patch_size);
@@ -2330,12 +2438,33 @@ static bool ExtractAssetsFromRom(const char *rom_path) {
   LogSetup("BPS result: %s, %lu bytes", assets ? "OK" : "FAIL",
            (unsigned long)assets_size);
   if (!assets) {
+    LogSetup("Trying compatible BPS extraction");
+    assets = ApplyBpsCompatibleRom(rom, rom_size, patch, patch_size,
+                                   &assets_size);
+    LogSetup("Compatible BPS result: %s, %lu bytes",
+             assets ? "OK" : "FAIL", (unsigned long)assets_size);
+    if (assets && !AssetsBlobLooksValid(assets, assets_size)) {
+      LogSetup("Compatible BPS result failed assets validation");
+      free(assets);
+      assets = NULL;
+      assets_size = 0;
+    }
+  }
+  if (!assets) {
     LogSetup("Trying compatible translation extraction");
     assets = NULL;
     assets_size = 0;
     if (TryBuildTranslatedAssets(rom, rom_size, patch, patch_size,
                                  &assets, &assets_size)) {
       LogSetup("Translation assets result: OK, %lu bytes",
+               (unsigned long)assets_size);
+    }
+  }
+  if (!assets && RomLooksJapanese(rom, rom_size)) {
+    LogSetup("Trying Japanese ROM boot fallback with USA-compatible base assets");
+    if (TryBuildBaseAssetsFromInstalledUsRom(patch, patch_size,
+                                             &assets, &assets_size)) {
+      LogSetup("Japanese fallback assets result: OK, %lu bytes",
                (unsigned long)assets_size);
     }
   }
@@ -2831,8 +2960,9 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->audio_samples = 1024;
   config->enable_msu = 0;
   config->disable_frame_delay = true;
-  Platform3DS_LogRuntime("Runtime settings: display=%d, turbo=%d",
+  Platform3DS_LogRuntime("Runtime settings: display=%d, wide_edge=%d, turbo=%d",
                          (int)g_display_mode,
+                         (int)g_wide_edge_mode,
                          g_turbo_multiplier);
 }
 

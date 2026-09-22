@@ -14,6 +14,7 @@
 #include "audio.h"
 #include "assets.h"
 #include "android_logging.h"
+#include "wide_camera.h"
 #ifdef __3DS__
 #include <3ds.h>
 #include "platform_3ds.h"
@@ -151,7 +152,8 @@ static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
   c->rep_count--;
 }
 
-static void ConfigurePpuSideSpace() {
+static void ConfigurePpuSideSpace(int visual_x, bool fixed_camera,
+                                  bool horizontal_transition) {
   // Let PPU impl know about the maximum allowed extra space on the sides and bottom
   int extra_right = 0, extra_left = 0, extra_bottom = 0;
 //  printf("main %d, sub %d  (%d, %d, %d)\n", main_module_index, submodule_index, BG2HOFS_copy2, room_bounds_x.v[2 | (quadrant_fullsize_x >> 1)], quadrant_fullsize_x >> 1);
@@ -169,16 +171,34 @@ static void ConfigurePpuSideSpace() {
       extra_bottom = 16;
     } else {
       // outdoors
-      extra_left = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
-      extra_right = ow_scroll_vars0.xend - BG2HOFS_copy2;
+      if (horizontal_transition) {
+        extra_left = extra_right = kPpuExtraLeftRight;
+      } else if (fixed_camera) {
+        int left = WideCamera_Unwrap16(ow_scroll_vars0.xstart, visual_x);
+        int right = WideCamera_Unwrap16(ow_scroll_vars0.xend, visual_x);
+        extra_left = IntMax(visual_x - left, 0);
+        extra_right = IntMax(right - visual_x, 0);
+      } else {
+        extra_left = BG2HOFS_copy2 - ow_scroll_vars0.xstart;
+        extra_right = ow_scroll_vars0.xend - BG2HOFS_copy2;
+      }
       extra_bottom = ow_scroll_vars0.yend - BG2VOFS_copy2;
     }
   } else if (mod == 7) {
     // indoors, except when the light cone is in use
     if (!(hdr_dungeon_dark_with_lantern && TS_copy != 0)) {
       int qm = quadrant_fullsize_x >> 1;
-      extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
-      extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
+      if (horizontal_transition) {
+        extra_left = extra_right = kPpuExtraLeftRight;
+      } else if (fixed_camera) {
+        int left = WideCamera_Unwrap16(room_bounds_x.v[qm], visual_x);
+        int right = WideCamera_Unwrap16(room_bounds_x.v[qm + 2], visual_x);
+        extra_left = IntMax(visual_x - left, 0);
+        extra_right = IntMax(right - visual_x, 0);
+      } else {
+        extra_left = IntMax(BG2HOFS_copy2 - room_bounds_x.v[qm], 0);
+        extra_right = IntMax(room_bounds_x.v[qm + 2] - BG2HOFS_copy2, 0);
+      }
     }
 
     int qy = quadrant_fullsize_y >> 1;
@@ -190,9 +210,38 @@ static void ConfigurePpuSideSpace() {
   PpuSetExtraSideSpace(g_zenv.ppu, extra_left, extra_right, extra_bottom);
 }
 
+typedef struct FixedCameraTracker {
+  bool initialized;
+  bool transition_active;
+  uint8 context;
+  int direction;
+  uint16 last_logical_x;
+  int last_visual_x;
+  uint16 transition_start_x;
+  int transition_end_x;
+  int transition_distance;
+  int transition_start_visual_x;
+  int transition_end_offset;
+} FixedCameraTracker;
+
+static FixedCameraTracker g_fixed_camera_tracker;
+
+static uint8 GetFixedCameraEffectiveContext(void) {
+  int mod = main_module_index;
+  if (mod == 14)
+    mod = saved_module_for_menu;
+  if ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
+      (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
+       mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
+    mod = player_is_indoors ? 7 : 9;
+  return mod == 7 || mod == 9 ? (uint8)mod : 0;
+}
+
 void ZeldaSetWidescreenEdgeMode(int mode) {
-  g_widescreen_edge_mode =
-      mode == 1 ? 1 : 0;
+  int new_mode = mode == 1 ? 1 : 0;
+  if (g_widescreen_edge_mode != new_mode)
+    memset(&g_fixed_camera_tracker, 0, sizeof(g_fixed_camera_tracker));
+  g_widescreen_edge_mode = new_mode;
 }
 
 int ZeldaGetWidescreenEdgeMode(void) {
@@ -200,106 +249,271 @@ int ZeldaGetWidescreenEdgeMode(void) {
 }
 
 int ZeldaGetWidescreenFixedCameraMargin(void) {
+  bool visual_fixes_enabled =
+    (enhanced_features0 & kFeatures0_WidescreenVisualFixes) != 0;
+#ifdef ZELDA_CAMERA_TEST
+  visual_fixes_enabled = true;
+#endif
+  uint8 context = GetFixedCameraEffectiveContext();
   if (g_widescreen_edge_mode != 1 ||
-      !(enhanced_features0 & kFeatures0_WidescreenVisualFixes) ||
+      !visual_fixes_enabled ||
       !g_zenv.ppu || g_zenv.ppu->extraLeftRight == 0 ||
-      (main_module_index != 7 && main_module_index != 9))
+      context == 0)
     return 0;
-  if (main_module_index == 7 && hdr_dungeon_dark_with_lantern && TS_copy != 0)
+  if (main_module_index == 14 && submodule_index == 7 &&
+      overworld_map_state >= 4)
     return 0;
+  if (context == 7) {
+    if (hdr_dungeon_dark_with_lantern && TS_copy != 0)
+      return 0;
+  }
   return g_zenv.ppu->extraLeftRight;
 }
 
 typedef struct FixedCameraRenderState {
   bool active;
-  uint16 bg1_hofs_copy2;
-  uint16 bg2_hofs_copy2;
-  uint16 bg1_hofs_copy;
-  uint16 bg2_hofs_copy;
+  bool uses_visual_camera;
+  bool horizontal_transition;
+  int visual_x;
   uint16 ppu_bg1_hscroll;
   uint16 ppu_bg2_hscroll;
-  uint16 oam[0x110];
+  int16 ppu_obj_x_offset;
 } FixedCameraRenderState;
 
-static void ShiftRenderOamX(Ppu *ppu, int delta) {
-  for (int i = 0; i < 128; i++) {
-    int word_index = i * 2;
-    int ext_index = 0x100 + (word_index >> 4);
-    int shift = word_index & 15;
-    int high = (ppu->oam[ext_index] >> shift) & 1;
-    int x = (ppu->oam[word_index] & 0xff) + high * 256;
-    if (x >= 256 + ppu->extraLeftRight)
-      x -= 512;
-    x += delta;
-    int encoded = x & 0x1ff;
-    ppu->oam[word_index] = (ppu->oam[word_index] & 0xff00) | (encoded & 0xff);
-    ppu->oam[ext_index] =
-        (ppu->oam[ext_index] & ~(1u << shift)) |
-        (((encoded >> 8) & 1) << shift);
-  }
+static uint8 GetFixedCameraContext(void) {
+  if (!ZeldaGetWidescreenFixedCameraMargin())
+    return 0;
+  return GetFixedCameraEffectiveContext();
 }
 
-static uint16 ClampHorizontalCameraForRender(void) {
-  int margin = ZeldaGetWidescreenFixedCameraMargin();
-  if (!margin)
-    return BG2HOFS_copy2;
-
-  int left, right;
-  if (main_module_index == 7) {
+static void GetFixedCameraBounds(uint8 context, int reference_x,
+                                 int *left, int *right) {
+  uint16 left_raw, right_raw;
+  if (context == 7) {
     int qm = quadrant_fullsize_x >> 1;
-    left = room_bounds_x.v[qm] + margin;
-    right = room_bounds_x.v[qm + 2] - margin;
+    left_raw = room_bounds_x.v[qm];
+    right_raw = room_bounds_x.v[qm + 2];
   } else {
-    left = ow_scroll_vars0.xstart + margin;
-    right = ow_scroll_vars0.xend - margin;
+    left_raw = ow_scroll_vars0.xstart;
+    right_raw = ow_scroll_vars0.xend;
   }
-  int current = BG2HOFS_copy2;
-  if (right < left)
-    return BG2HOFS_copy2;
-  if (current < left)
-    return (uint16)left;
-  if (current > right)
-    return (uint16)right;
-  return BG2HOFS_copy2;
+  *left = WideCamera_Unwrap16(left_raw, reference_x);
+  *right = WideCamera_Unwrap16(right_raw, reference_x);
+}
+
+static int GetFixedCameraTransitionDirection(uint8 context) {
+  if (context == 9) {
+    int direction = BYTE(overworld_screen_trans_dir_bits) & 3;
+    return direction == 1 ? 1 : direction == 2 ? -1 : 0;
+  }
+  if ((submodule_index == 1 || submodule_index == 2) &&
+      overworld_screen_transition >= 2) {
+    return overworld_screen_transition == 2 ? 1 :
+           overworld_screen_transition == 3 ? -1 : 0;
+  }
+  return 0;
+}
+
+static int GetFixedCameraTransitionEndX(uint8 context, int direction,
+                                        uint16 start_logical_x) {
+  if (context == 7) {
+    int target = direction > 0 ? left_right_scroll_target :
+                                 left_right_scroll_target_end;
+    return WideCamera_FindDungeonTransitionEnd(
+      start_logical_x, direction, target);
+  }
+
+  uint16 target = direction > 0 ? left_right_scroll_target_end :
+                                  left_right_scroll_target;
+  int end_logical_x = WideCamera_Unwrap16(target, start_logical_x);
+  if ((direction > 0 && end_logical_x <= start_logical_x) ||
+      (direction < 0 && end_logical_x >= start_logical_x))
+    return start_logical_x + direction * 256;
+  return end_logical_x;
+}
+
+static int GetFixedCameraTransitionEndOffset(uint8 context,
+                                             int end_logical_x,
+                                             int margin) {
+  int left, right;
+  if (context == 9) {
+    uint16 destination_left = overworld_offset_base_x << 3;
+    left = WideCamera_Unwrap16(destination_left, end_logical_x);
+    right = left + (BYTE(overworld_area_is_big) ? 0x300 : 0x100);
+  } else {
+    GetFixedCameraBounds(context, end_logical_x, &left, &right);
+  }
+  int end_visual_x =
+    WideCamera_ClampToBounds(end_logical_x, left, right, margin);
+  return end_logical_x - end_visual_x;
+}
+
+static int CalculateFixedCameraVisualX(uint8 context, int margin,
+                                       bool *transitioning) {
+  const uint16 logical_x = BG2HOFS_copy2;
+  int left, right;
+  GetFixedCameraBounds(context, logical_x, &left, &right);
+  int direction = GetFixedCameraTransitionDirection(context);
+  *transitioning = direction != 0;
+
+#ifdef ZELDA_CAMERA_TEST
+  bool was_transition_active = g_fixed_camera_tracker.transition_active;
+  int previous_direction = g_fixed_camera_tracker.direction;
+  uint16 previous_logical_x = g_fixed_camera_tracker.last_logical_x;
+  int previous_visual_x = g_fixed_camera_tracker.last_visual_x;
+#endif
+
+  if (!g_fixed_camera_tracker.initialized ||
+      g_fixed_camera_tracker.context != context) {
+    memset(&g_fixed_camera_tracker, 0, sizeof(g_fixed_camera_tracker));
+    g_fixed_camera_tracker.initialized = true;
+    g_fixed_camera_tracker.context = context;
+    g_fixed_camera_tracker.last_logical_x = logical_x;
+    g_fixed_camera_tracker.last_visual_x =
+      WideCamera_ClampToBounds(logical_x, left, right, margin);
+  }
+
+  int visual_x;
+  if (direction != 0) {
+#ifdef ZELDA_CAMERA_TEST
+    bool started_transition = false;
+#endif
+    if (!g_fixed_camera_tracker.transition_active ||
+        g_fixed_camera_tracker.direction != direction) {
+      int logical_step =
+        (int16)(logical_x - g_fixed_camera_tracker.last_logical_x);
+      int previous_offset =
+        logical_x - g_fixed_camera_tracker.last_visual_x;
+      bool use_previous_frame =
+        logical_step >= -16 && logical_step <= 16 &&
+        previous_offset >= -margin - 16 &&
+        previous_offset <= margin + 16;
+      g_fixed_camera_tracker.transition_start_x = use_previous_frame ?
+        g_fixed_camera_tracker.last_logical_x : logical_x;
+      g_fixed_camera_tracker.transition_start_visual_x = use_previous_frame ?
+        g_fixed_camera_tracker.last_visual_x : logical_x - direction * margin;
+      g_fixed_camera_tracker.transition_end_x =
+        GetFixedCameraTransitionEndX(
+          context, direction, g_fixed_camera_tracker.transition_start_x);
+      g_fixed_camera_tracker.transition_distance =
+        direction > 0 ?
+          g_fixed_camera_tracker.transition_end_x -
+            g_fixed_camera_tracker.transition_start_x :
+          g_fixed_camera_tracker.transition_start_x -
+            g_fixed_camera_tracker.transition_end_x;
+      if (g_fixed_camera_tracker.transition_distance <= 0)
+        g_fixed_camera_tracker.transition_distance = 256;
+      g_fixed_camera_tracker.transition_active = true;
+      g_fixed_camera_tracker.direction = direction;
+#ifdef ZELDA_CAMERA_TEST
+      started_transition = true;
+#endif
+    }
+    if (logical_x == g_fixed_camera_tracker.transition_start_x) {
+      g_fixed_camera_tracker.transition_end_offset =
+        GetFixedCameraTransitionEndOffset(
+          context, g_fixed_camera_tracker.transition_end_x, margin);
+    }
+#ifdef ZELDA_CAMERA_TEST
+    if (started_transition) {
+      fprintf(stderr,
+              "camera transition context=%u dir=%d logical=%u visual=%d "
+              "end=%d distance=%d end_offset=%d "
+              "sub=%u room=%04x bounds=%04x,%04x,%04x,%04x qm=%u "
+              "ow_base=%04x big=%u\n",
+              context, direction,
+              g_fixed_camera_tracker.transition_start_x,
+              g_fixed_camera_tracker.transition_start_visual_x,
+              g_fixed_camera_tracker.transition_end_x,
+              g_fixed_camera_tracker.transition_distance,
+              g_fixed_camera_tracker.transition_end_offset,
+              submodule_index, dungeon_room_index,
+              room_bounds_x.v[0], room_bounds_x.v[1],
+              room_bounds_x.v[2], room_bounds_x.v[3],
+              quadrant_fullsize_x >> 1,
+              overworld_offset_base_x << 3,
+              BYTE(overworld_area_is_big) != 0);
+    }
+#endif
+    visual_x = WideCamera_InterpolateTransition(
+      logical_x,
+      g_fixed_camera_tracker.transition_start_x,
+      g_fixed_camera_tracker.transition_start_visual_x,
+      g_fixed_camera_tracker.transition_end_offset,
+      direction, g_fixed_camera_tracker.transition_distance);
+  } else {
+    g_fixed_camera_tracker.transition_active = false;
+    g_fixed_camera_tracker.direction = 0;
+    visual_x = WideCamera_ClampToBounds(logical_x, left, right, margin);
+  }
+
+#ifdef ZELDA_CAMERA_TEST
+  if (direction != 0 && was_transition_active &&
+      previous_direction == direction) {
+    int logical_step = direction *
+      (int16)(logical_x - previous_logical_x);
+    int visual_step = direction * (visual_x - previous_visual_x);
+    if (logical_step >= 0 && visual_step < 0) {
+      fprintf(stderr,
+              "camera ERROR reversed during transition: context=%u "
+              "dir=%d logical=%u->%u visual=%d->%d\n",
+              context, direction, previous_logical_x, logical_x,
+              previous_visual_x, visual_x);
+    }
+  } else if (direction == 0 && was_transition_active) {
+    int exit_step = visual_x - previous_visual_x;
+    if (exit_step < 0)
+      exit_step = -exit_step;
+    if (exit_step > 4) {
+      fprintf(stderr,
+              "camera ERROR jump after transition: context=%u "
+              "logical=%u visual=%d->%d step=%d\n",
+              context, logical_x, previous_visual_x, visual_x, exit_step);
+    }
+  }
+#endif
+
+  g_fixed_camera_tracker.last_logical_x = logical_x;
+  g_fixed_camera_tracker.last_visual_x = visual_x;
+  return visual_x;
 }
 
 static FixedCameraRenderState BeginFixedCameraRender(void) {
   FixedCameraRenderState state = {0};
-  uint16 visual_x = ClampHorizontalCameraForRender();
-  if (visual_x == BG2HOFS_copy2)
+  state.visual_x = BG2HOFS_copy2;
+  int margin = ZeldaGetWidescreenFixedCameraMargin();
+  uint8 context = GetFixedCameraContext();
+  if (!margin || !context) {
+    memset(&g_fixed_camera_tracker, 0, sizeof(g_fixed_camera_tracker));
+    return state;
+  }
+
+  state.uses_visual_camera = true;
+  state.visual_x = CalculateFixedCameraVisualX(
+    context, margin, &state.horizontal_transition);
+  int delta = (int16)(BG2HOFS_copy2 - (uint16)state.visual_x);
+  if (delta == 0)
     return state;
 
   state.active = true;
-  state.bg1_hofs_copy2 = BG1HOFS_copy2;
-  state.bg2_hofs_copy2 = BG2HOFS_copy2;
-  state.bg1_hofs_copy = BG1HOFS_copy;
-  state.bg2_hofs_copy = BG2HOFS_copy;
   state.ppu_bg1_hscroll = g_zenv.ppu->bgLayer[0].hScroll;
   state.ppu_bg2_hscroll = g_zenv.ppu->bgLayer[1].hScroll;
-  memcpy(state.oam, g_zenv.ppu->oam, sizeof(state.oam));
+  state.ppu_obj_x_offset = g_zenv.ppu->renderObjXOffset;
 
-  int delta = (int)BG2HOFS_copy2 - (int)visual_x;
-  BG1HOFS_copy2 -= delta;
-  BG2HOFS_copy2 = visual_x;
-  BG1HOFS_copy -= delta;
-  BG2HOFS_copy = visual_x;
   g_zenv.ppu->bgLayer[0].hScroll =
       (state.ppu_bg1_hscroll - delta) & 0x3ff;
-  g_zenv.ppu->bgLayer[1].hScroll = visual_x & 0x3ff;
-  ShiftRenderOamX(g_zenv.ppu, delta);
+  g_zenv.ppu->bgLayer[1].hScroll =
+      (state.ppu_bg2_hscroll - delta) & 0x3ff;
+  g_zenv.ppu->renderObjXOffset = state.ppu_obj_x_offset + delta;
   return state;
 }
 
 static void EndFixedCameraRender(const FixedCameraRenderState *state) {
   if (!state->active)
     return;
-  BG1HOFS_copy2 = state->bg1_hofs_copy2;
-  BG2HOFS_copy2 = state->bg2_hofs_copy2;
-  BG1HOFS_copy = state->bg1_hofs_copy;
-  BG2HOFS_copy = state->bg2_hofs_copy;
   g_zenv.ppu->bgLayer[0].hScroll = state->ppu_bg1_hscroll;
   g_zenv.ppu->bgLayer[1].hScroll = state->ppu_bg2_hscroll;
-  memcpy(g_zenv.ppu->oam, state->oam, sizeof(state->oam));
+  g_zenv.ppu->renderObjXOffset = state->ppu_obj_x_offset;
 }
 
 static void ZeldaDrawPpuLines(Ppu *ppu, int height,
@@ -521,8 +735,11 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
 
   FixedCameraRenderState fixed_camera_state = BeginFixedCameraRender();
 
-  if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240)
-    ConfigurePpuSideSpace();
+  if (g_zenv.ppu->extraLeftRight != 0 || render_flags & kPpuRenderFlags_Height240) {
+    ConfigurePpuSideSpace(fixed_camera_state.visual_x,
+                          fixed_camera_state.uses_visual_camera,
+                          fixed_camera_state.horizontal_transition);
+  }
 
   PpuSetWindow1Ext(g_zenv.ppu, g_spotlight_ext_active ? g_spotlight_ext_left : NULL,
                    g_spotlight_ext_active ? g_spotlight_ext_right : NULL);
@@ -1158,6 +1375,16 @@ bool ZeldaRunFrame(int inputs) {
   }
 
   ZeldaPushApuState();
+
+#ifdef ZELDA_CAMERA_TEST
+  if (is_replay && !state_recorder.replay_mode) {
+    SaveLoadSlot(kSaveLoad_Save, 19);
+    SDL_Event event = { .type = SDL_QUIT };
+    SDL_PushEvent(&event);
+    fprintf(stderr, "camera replay completed after %u frames\n",
+            state_recorder.replay_frame_counter);
+  }
+#endif
 
   return is_replay;
 }
