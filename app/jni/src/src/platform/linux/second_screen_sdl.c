@@ -307,6 +307,13 @@ static void draw_cell(SDL_Texture *tex, int cell, int cellpx, int cols, float x,
 static void draw_icon(int cell, float x, float y, float s)  { draw_cell(tex_icons, cell, 16, SS_ICON_COLS, x, y, s); }
 static void draw_glyph(int cell, float x, float y, float s) { draw_cell(tex_glyphs, cell, 8, SS_GLYPH_COLS, x, y, s); }
 
+static void draw_icon_inner(int cell, float x, float y, float size) {
+  if (cell < 0 || !tex_icons) return;
+  SDL_Rect src = {(cell % SS_ICON_COLS) * 16 + 1, (cell / SS_ICON_COLS) * 16 + 1, 14, 14};
+  SDL_FRect dst = {x, y, size, size};
+  SDL_RenderCopyF(ss_r, tex_icons, &src, &dst);
+}
+
 static float text_width(const char *s, float sc) {
   float w = 0;
   for (; *s; s++) w += (*s == ' ' ? 5 : 8) * sc;
@@ -324,6 +331,49 @@ static void draw_text(const char *s, float x, float y, float sc) {
     if (ch >= '0' && ch <= '9') draw_glyph(kDigitGlyph[ch - '0'], cx, y, sc);
     else if (ch >= 'A' && ch <= 'Z') draw_cell(tex_letters, kSS_LetterCell[ch - 'A'], 8, SS_LETTER_COLS, cx, y, sc);
     cx += 8 * sc;
+  }
+}
+
+static const uint8_t *tiny_letter(char ch) {
+  static const uint8_t letters[26][7] = {
+    {14,17,17,31,17,17,17}, {30,17,17,30,17,17,30},
+    {14,17,16,16,16,17,14}, {30,17,17,17,17,17,30},
+    {31,16,16,30,16,16,31}, {31,16,16,30,16,16,16},
+    {14,17,16,23,17,17,14}, {17,17,17,31,17,17,17},
+    {14,4,4,4,4,4,14}, {7,2,2,2,18,18,12},
+    {17,18,20,24,20,18,17}, {16,16,16,16,16,16,31},
+    {17,27,21,21,17,17,17}, {17,25,21,19,17,17,17},
+    {14,17,17,17,17,17,14}, {30,17,17,30,16,16,16},
+    {14,17,17,17,21,18,13}, {30,17,17,30,20,18,17},
+    {15,16,16,14,1,1,30}, {31,4,4,4,4,4,4},
+    {17,17,17,17,17,17,14}, {17,17,17,17,17,10,4},
+    {17,17,17,21,21,21,10}, {17,17,10,4,10,17,17},
+    {17,17,10,4,4,4,4}, {31,1,2,4,8,16,31},
+  };
+  if (ch >= 'A' && ch <= 'Z')
+    return letters[ch - 'A'];
+  return NULL;
+}
+
+static float tiny_text_width(const char *s, float sc) {
+  float w = 0;
+  for (; *s; s++)
+    w += (*s == ' ' ? 4 : 6) * sc;
+  return w;
+}
+
+static void draw_tiny_text(const char *s, float x, float y, float sc, uint32_t c) {
+  float cx = floorf(x + 0.5f);
+  float cy = floorf(y + 0.5f);
+  for (; *s; s++) {
+    const uint8_t *rows = tiny_letter(*s);
+    if (rows) {
+      for (int yy = 0; yy < 7; yy++)
+        for (int xx = 0; xx < 5; xx++)
+          if (rows[yy] & (1 << (4 - xx)))
+            fill_rect(cx + xx * sc, cy + yy * sc, sc, sc, c);
+    }
+    cx += (*s == ' ' ? 4 : 6) * sc;
   }
 }
 static void draw_number(int value, int digits, float x, float y, float s, bool yellow) {
@@ -636,15 +686,17 @@ static void draw_items(RectFS r) {
     if (lv > kSS_ItemMaxLevel[i]) lv = kSS_ItemMaxLevel[i];
     float is = (cellW - 24 * u) / 16.0f;
     is = clampf(is, 3 * u, 6 * u);
-    draw_icon(kSS_ItemCell[i][lv], x + (cellW - 16 * is) / 2, y + (cellW - 16 * is) / 2, is);
+    float icon_size = 16 * is;
+    draw_icon_inner(kSS_ItemCell[i][lv], x + (cellW - icon_size) / 2,
+                    y + (cellW - icon_size) / 2, icon_size);
   }
   (void)kItemNames;
 }
 
 static void draw_gear(RectFS r) {
   menu_box(r, COL_BOX_BORDER2);
-  draw_text("GEAR", r.x + r.w / 2 - text_width("GEAR", 2.2f * u) / 2,
-            r.y + 13 * u, 2.2f * u);
+  draw_tiny_text("GEAR", r.x + r.w / 2 - tiny_text_width("GEAR", 2.0f) / 2,
+                 r.y + 12.0f, 2.0f, COL(250, 250, 250));
 
   int sword = sram8(0x59), shield = sram8(0x5A);
   int gear_cells[7];
@@ -679,7 +731,7 @@ static void draw_gear(RectFS r) {
   float y1 = y0 + cell + 24.0f;
   float bottle_cell = 25.0f;
   float bottle_gap = 7.0f;
-  draw_text("BOTTLES", x0, y1 - 12.0f, 1.25f * u);
+  draw_tiny_text("BOTTLES", x0, y1 - 12.0f, 1.0f, COL(250, 250, 250));
   for (int i = 0; i < 4; i++) {
     float x = x0 + i * (bottle_cell + bottle_gap);
     slot_bg(x, y1, bottle_cell);
@@ -693,7 +745,7 @@ static void draw_gear(RectFS r) {
     }
   }
   float pend_x = r.x + r.w - 108.0f;
-  draw_text("PENDANTS", pend_x, y1 - 12.0f, 1.25f * u);
+  draw_tiny_text("PENDANTS", pend_x, y1 - 12.0f, 1.0f, COL(250, 250, 250));
   int pend = sram8(0x74);
   static const int pbit[3] = {4, 2, 1};
   static const uint32_t pcol[3] = {COL(64, 200, 88), COL(70, 110, 240), COL(230, 60, 60)};
@@ -705,7 +757,7 @@ static void draw_gear(RectFS r) {
   }
 
   float cyC = y1 + 49.0f;
-  draw_text("CRYSTALS", x0, cyC - 12.0f, 1.25f * u);
+  draw_tiny_text("CRYSTALS", x0, cyC - 12.0f, 1.0f, COL(250, 250, 250));
   float crystal_start = x0 + 78.0f;
   float crystal_step = 23.0f;
   int owned7 = sram8(0x7A) & 0x7F, n_owned = 0;
@@ -752,20 +804,23 @@ static void draw_sidebar(float x, float y, float w, float h, bool dungeon_mode) 
     draw_number(sram8(0x6F), 1, ne - 8 * s, ry, s, false);
   }
 
-  // magic bar + larger hearts anchored at the bottom; ring centered above them
-  float bar_h = 18 * u;
+  // Magic and hearts use integer pixel sizes on 3DS; fractional scaling made
+  // the HUD look uneven in real bottom-screen dumps.
+  float bar_h = 10.0f;
   bool half_magic = sram8(0x7B) >= 1;
-  float my = y + h - bar_h - 6 * u;
+  float my = floorf(y + h - bar_h - 5.0f + 0.5f);
   int cap = sram8(0x6C) >> 3; if (cap > 20) cap = 20;
   int cur = sram8(0x6D);
-  int heart_cols = cap <= 8 ? cap : 8;
+  int heart_cols = cap <= 5 ? cap : 5;
   if (heart_cols <= 0) heart_cols = 1;
   int heart_rows = (cap + heart_cols - 1) / heart_cols;
-  float hs = 22 * u;
-  float hy = my - heart_rows * hs - 16 * u - (half_magic ? 18 * u : 0);
+  float heart_s = 2.0f;
+  float heart_px = 8.0f * heart_s;
+  float hs = 18.0f;
+  float hy = floorf(my - heart_rows * hs - 9.0f - (half_magic ? 14.0f : 0.0f) + 0.5f);
 
   // equipped item ring: tap cycles to the next owned item
-  float ring_r = 66 * u;
+  float ring_r = 32.0f;
   float rcx = x + w / 2, rcy = ((y + chip_h) + hy) / 2;
   y_ring_r = (RectFS){rcx - ring_r, rcy - ring_r, ring_r * 2, ring_r * 2};
   fill_circle(rcx, rcy, ring_r, COL(12, 12, 12));
@@ -777,31 +832,38 @@ static void draw_sidebar(float x, float y, float w, float h, bool dungeon_mode) 
     int lv = (i == 15) ? bottle_level() : sram8(0x40 + i);
     if (lv < 0) lv = 0;
     if (lv > kSS_ItemMaxLevel[i]) lv = kSS_ItemMaxLevel[i];
-    if (lv > 0) draw_icon(kSS_ItemCell[i][lv], rcx - 40 * u, rcy - 40 * u, 5 * u);
+    if (lv > 0) {
+      float item_size = 38.0f;
+      draw_icon_inner(kSS_ItemCell[i][lv], rcx - item_size / 2,
+                      rcy - item_size / 2, item_size);
+    }
   }
-  draw_text("Y", rcx + ring_r - 20 * u, rcy - ring_r + 4 * u, 2 * u);
+  draw_text("Y", rcx + ring_r - 11.0f, rcy - ring_r + 4.0f, 1.0f);
 
   // hearts (live health)
-  float hx0 = x + (w - heart_cols * hs) / 2;
+  float hx0 = floorf(x + (w - (heart_cols - 1) * hs - heart_px) / 2 + 0.5f);
   for (int i = 0; i < cap; i++) {
     int g = i < (cur >> 3) ? SS_GLYPH_HEART_FULL
           : (i == (cur >> 3) && (cur & 7) >= 4 ? SS_GLYPH_HEART_HALF : SS_GLYPH_HEART_EMPTY);
-    draw_glyph(g, hx0 + (i % heart_cols) * hs, hy + (i / heart_cols) * hs, 2.7f * u);
+    draw_glyph(g, hx0 + (i % heart_cols) * hs, hy + (i / heart_cols) * hs, heart_s);
   }
 
   // magic bar (with the HUD's 1/2 marker when the upgrade is owned)
   if (half_magic) {
-    float gx = x + (w - 48 * u) / 2;
-    draw_glyph(SS_GLYPH_HALF0, gx, my - 20 * u, 2 * u);
-    draw_glyph(SS_GLYPH_HALF1, gx + 16 * u, my - 20 * u, 2 * u);
-    draw_glyph(SS_GLYPH_HALF2, gx + 32 * u, my - 20 * u, 2 * u);
+    float gx = floorf(x + (w - 24.0f) / 2 + 0.5f);
+    draw_glyph(SS_GLYPH_HALF0, gx, my - 13.0f, 1.0f);
+    draw_glyph(SS_GLYPH_HALF1, gx + 8.0f, my - 13.0f, 1.0f);
+    draw_glyph(SS_GLYPH_HALF2, gx + 16.0f, my - 13.0f, 1.0f);
   }
   int magic = sram8(0x6E); if (magic > 128) magic = 128;
-  fill_round(x + 16 * u, my, w - 32 * u, bar_h, 5 * u, COL_GOLD_DARK);
-  fill_round(x + 18 * u, my + 2 * u, w - 36 * u, bar_h - 4 * u, 4 * u, COL_BOX);
+  float bar_x = floorf(x + 8.0f + 0.5f);
+  float bar_w = floorf(w - 16.0f + 0.5f);
+  fill_rect(bar_x, my, bar_w, bar_h, COL_GOLD_DARK);
+  fill_rect(bar_x + 2.0f, my + 2.0f, bar_w - 4.0f, bar_h - 4.0f, COL_BOX);
   float frac = magic / 128.0f;
   if (frac > 0)
-    fill_round(x + 19 * u, my + 3 * u, (w - 38 * u) * frac, bar_h - 6 * u, 3 * u, COL(72, 208, 72));
+    fill_rect(bar_x + 3.0f, my + 3.0f, floorf((bar_w - 6.0f) * frac + 0.5f),
+              bar_h - 6.0f, COL(72, 208, 72));
 }
 
 // Rewrite one `key = value` line inside a section of zelda3.ini

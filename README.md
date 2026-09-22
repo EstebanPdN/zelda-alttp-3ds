@@ -1,12 +1,67 @@
-# zelda3-android
-A port of Zelda3 to Android with a second screen mod for dual screen devices like the AYN Thor.
+# Zelda A Link to the Past 3DS
 
-Original Repository: https://github.com/snesrev/zelda3 <br>
-Based on: https://github.com/Waterdish/zelda3-android
+This repository contains a Nintendo 3DS dual-screen port of Zelda3, based on
+the open-source `zelda3-android` dual-screen branch.
+
+Original engine: https://github.com/snesrev/zelda3  
+Android port base: https://github.com/Waterdish/zelda3-android  
+3DS source base: https://github.com/samyost1/zelda3-android
+
+No ROM or extracted game asset package is distributed in this repository. Each
+user must provide their own legally obtained USA, unheadered ROM on their own
+3DS SD card.
+
+## Nintendo 3DS Features
+
+- Top screen: 400x240 gameplay.
+- Bottom screen: 320x240 live map, dungeon map, gear view, item selection and
+  touch settings.
+- First launch extracts `zelda3_assets.dat` locally from the user's ROM.
+- Display modes: wide mod, stretched original and original aspect.
+- Turbo speed: off, x2, x3, x4 or x5.
+- New 3DS: ZL or C-stick can hold turbo when turbo is enabled.
+- Quick diagnostics: press `L + R + A` to create a dump with memory files plus
+  top and bottom screenshots.
+- HOME Menu metadata is versioned for each build. v1.5 appears as
+  `Zelda ALttP 3DS` / `Zelda A Link to the Past 3DS v1.5`.
+
+## 3DS Installation
+
+Install the CIA, then create this directory on the SD card:
+
+```text
+sdmc:/3ds/Zelda 3DS/
+```
+
+Place a legally obtained USA, unheadered ROM there. The preferred filename is
+`zelda3.sfc`, but the setup also accepts other `.sfc` or `.smc` filenames.
+On first launch, press A to validate the ROM and extract the assets. Audio
+requires `sdmc:/3ds/dspfirm.cdc`.
+
+## 3DS Build
+
+Requirements:
+
+- devkitARM, libctru and 3ds-cmake under `DEVKITPRO`
+- `makerom` and `bannertool` for CIA packaging
+- the vendored SDL2 source in `app/jni/SDL2`
+
+Build:
+
+```sh
+chmod +x platform/3ds/build.sh
+platform/3ds/build.sh
+```
+
+The script builds the 3DSX and CIA under `build-3ds/game/`.
+
+## Original Android/Dual-Screen Notes
 
 The dual-screen mod was made with the help of Claude Code and opencode.
 
-The bottom screen shows a live world map, a dungeon map with the rooms you visited, and a touch inventory where you can tap an item to equip it. On the title screen and during cutscenes it just shows a triforce.
+The bottom screen shows a live world map, a dungeon map with the rooms you
+visited, and a touch inventory where you can tap an item to equip it. On the
+title screen and during cutscenes it just shows a triforce.
 
 The second screen graphics are made from your ROM while the game runs, so there is no extra setup and the app contains no game assets.
 

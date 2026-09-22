@@ -24,10 +24,18 @@ console's own firmware through Rosalina's `Dump DSP firmware` command.
 - Bottom screen: 320x240 live map, gear, touch inventory and settings.
 - D-Pad or Circle Pad: movement.
 - A/B/X/Y, L/R, Start and Select: corresponding game buttons.
-- ZL on New 3DS: hold for turbo.
+- ZL or C-stick on New 3DS: hold for turbo when `TURBO SPEED` is not `OFF`.
+- L + R + A: create a quick dump under `sdmc:/3ds/Zelda 3DS/dumps/`.
 
 The CIA metadata uses the Legacy memory mode for Old 3DS compatibility and
 requests the New 3DS 804 MHz/L2 configuration when that hardware is available.
+
+The HOME Menu metadata is versioned for every release. v1.5 uses:
+
+```text
+Short name: Zelda ALttP 3DS
+Long name:  Zelda A Link to the Past 3DS v1.5
+```
 
 ## Requirements
 
