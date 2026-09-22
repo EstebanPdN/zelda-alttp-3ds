@@ -31,6 +31,11 @@ typedef struct ZeldaEnv {
 extern ZeldaEnv g_zenv;
 extern int frame_ctr_dbg;
 
+enum ZeldaWidescreenEdgeMode {
+  kZeldaWidescreenEdgePreload,
+  kZeldaWidescreenEdgeFixedCamera,
+};
+
 typedef void PlayerHandlerFunc();
 typedef void HandlerFuncK(int k);
 
@@ -49,6 +54,9 @@ void HdmaSetup(uint32 addr6, uint32 addr7, uint8 transfer_unit, uint8 reg6, uint
 void ZeldaInitialize();
 void ZeldaReset(bool preserve_sram);
 void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags);
+void ZeldaSetWidescreenEdgeMode(int mode);
+int ZeldaGetWidescreenEdgeMode(void);
+int ZeldaGetWidescreenFixedCameraMargin(void);
 void ZeldaShutdownPpuWorker(void);
 bool ZeldaGetPpuWorkerStats(int *split_line,
                             uint32 *main_time_us,

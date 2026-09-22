@@ -9,6 +9,7 @@
 #include "misc.h"
 #include "messaging.h"
 #include "player_oam.h"
+#include "zelda_rtl.h"
 #include "snes/snes_regs.h"
 #include "assets.h"
 
@@ -1635,7 +1636,12 @@ int OverworldCameraBoundaryCheck(int xa, int ya, int vd, int r8) {  // 82bd62
 
   uint16 *xp = (xa ? &BG2VOFS_copy2 : &BG2HOFS_copy2);
   uint16 *yp = &(&ow_scroll_vars0.ystart)[ya];
-  if (*xp == *yp) {
+  uint16 camera_limit = *yp;
+  if (!xa) {
+    int margin = ZeldaGetWidescreenFixedCameraMargin();
+    camera_limit += (ya & 1) ? -margin : margin;
+  }
+  if (*xp == camera_limit) {
     (&overworld_unk1)[ya] = 0;
     (&overworld_unk1)[ya ^ 1] = 0;
     return 0;

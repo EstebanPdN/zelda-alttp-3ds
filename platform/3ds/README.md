@@ -26,19 +26,22 @@ console's own firmware through Rosalina's `Dump DSP firmware` command.
 - A/B/X/Y, L/R, Start and Select: corresponding game buttons.
 - ZL or C-stick on New 3DS: hold for turbo when `TURBO SPEED` is not `OFF`.
 - L + R + A: create a quick dump under `sdmc:/3ds/Zelda 3DS/dumps/`.
+- Settings > Screen > Display Mode: original, stretch or wide mod.
+- Settings > Screen > Edge Mode: fixed camera or preload. Both strategies
+  apply to horizontal boundaries outdoors and inside rooms or dungeons.
 
 The CIA metadata uses the Legacy memory mode for Old 3DS compatibility and
 requests the New 3DS 804 MHz/L2 configuration when that hardware is available.
-The 3DSX also requests New 3DS speedup at runtime. Normal gameplay advances
-once per VBlank, while the bottom UI redraws at 30 FPS. Quick-dump `info.txt`
-files include average/max frame work time and the number of frames that exceed
-the 16.67 ms budget.
+The 3DSX also requests New 3DS speedup at runtime. Normal gameplay uses a
+fixed-step 60 Hz accumulator independent of the presentation VBlank, while the
+bottom UI redraws at 30 FPS. Quick-dump `info.txt` files include average/max
+frame work time and the number of frames that exceed the 16.67 ms budget.
 
-The HOME Menu metadata is versioned for every release. v1.8 uses:
+The HOME Menu metadata is versioned for every release. v1.9 uses:
 
 ```text
 Short name: Zelda ALttP 3DS
-Long name:  Zelda A Link to the Past 3DS v1.8
+Long name:  Zelda A Link to the Past 3DS v1.9
 ```
 
 The CIA banner prefers `assets/banner.cgfx` when present. v1.6 uses a real

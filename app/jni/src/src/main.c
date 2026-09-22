@@ -591,6 +591,7 @@ int main(int argc, char** argv) {
 
   ZeldaInitialize();
 #ifdef __3DS__
+  ZeldaSetWidescreenEdgeMode(Platform3DS_GetWideEdgeMode());
   Platform3DS_LogRuntime("Game engine initialized");
 #endif
   g_zenv.ppu->extraLeftRight = UintMin(g_config.extended_aspect_ratio, kPpuExtraLeftRight);
