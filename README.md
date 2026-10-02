@@ -115,7 +115,12 @@ platform/3ds/build.sh
 
 The script builds the 3DSX and CIA under `build-3ds/game/`.
 
-## Legal
+## License and legal notice
+
+The Zelda3 engine retains the **MIT license** and copyright notices in
+[app/jni/src/LICENSE.txt](app/jni/src/LICENSE.txt), which also contains the Opus notice.
+SDL2, SDL2_mixer and other dependencies retain their own licenses. These
+component licenses do not grant rights to Nintendo game content.
 
 This repository contains only source code, build scripts, redistributable port
 assets and patch/extraction logic. It does not include a ROM, extracted game
