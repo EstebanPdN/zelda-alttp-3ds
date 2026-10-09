@@ -16,7 +16,7 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 3DS SD card.
 
 ## Discord
-https://discord.gg/SMW49UMkw
+https://discord.gg/zy8BqH5ss
 
 ## Features
 
