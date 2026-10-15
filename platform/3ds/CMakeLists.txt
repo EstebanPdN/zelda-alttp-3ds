@@ -93,6 +93,7 @@ target_link_libraries(zelda3-3ds PRIVATE
   mbedtls
   mbedx509
   mbedcrypto
+  z
   ctru
   m
 )

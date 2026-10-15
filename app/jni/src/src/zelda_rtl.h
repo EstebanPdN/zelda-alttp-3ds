@@ -48,6 +48,13 @@ void zelda_ppu_write_word(uint32_t adr, uint16_t val);
 void HdmaSetup(uint32 addr6, uint32 addr7, uint8 transfer_unit, uint8 reg6, uint8 reg7, uint8 indirect_bank);
 
 void ZeldaInitialize();
+// Some translations carry their own copy of tables that are built into the game
+// (menu item names, file select screen layout...). They live in the language
+// data; this overwrites `dst` with table `id` if the active language has one of
+// exactly `size` bytes, and leaves the built-in table alone otherwise.
+void ZeldaApplyLanguageTable(int id, void *dst, size_t size);
+#define ZELDA_APPLY_LANGUAGE_TABLE(id, table) do { static bool applied_; if (!applied_) { applied_ = true; ZeldaApplyLanguageTable(id, table, sizeof(table)); } } while (0)
+
 void ZeldaReset(bool preserve_sram);
 void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags);
 void ZeldaShutdownPpuWorker(void);

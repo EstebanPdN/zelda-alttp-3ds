@@ -1760,6 +1760,15 @@ void ZeldaSetLanguage(const char *language) {
   g_zenv.dialogue_flags = found.ptr[2];
 }
 
+void ZeldaApplyLanguageTable(int id, void *dst, size_t size) {
+  MemBlk tables = FindIndexInMemblk(g_zenv.dialogue_font_blk, 2);
+  if (!tables.ptr)
+    return;
+  MemBlk table = FindIndexInMemblk(tables, id);
+  if (table.ptr && table.size == size)
+    memcpy(dst, table.ptr, size);
+}
+
 
 static const char *const kReferenceSaves[] = {
   "Chapter 1 - Zelda's Rescue.sav",

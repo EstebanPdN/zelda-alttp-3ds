@@ -2328,6 +2328,10 @@ static bool UnpackBlocks(const uint8 *data, size_t size,
   return true;
 }
 
+static bool RomHasKnownGraphicsTranslation(const uint8 *rom, size_t rom_size);
+static bool BuildTranslatedTablesBlock(const uint8 *rom, size_t rom_size,
+                                       OwnedBlock *out);
+
 static bool ExtractTranslationLanguage(const uint8 *rom, size_t rom_size,
                                        OwnedBlock *dialogue_block,
                                        OwnedBlock *font_block) {
@@ -2438,7 +2442,8 @@ static bool ExtractTranslationLanguage(const uint8 *rom, size_t rom_size,
   OwnedBlock packed_dictionary = {0};
   OwnedBlock packed_messages = {0};
   OwnedBlock dialogue_parts[2] = {0};
-  OwnedBlock font_parts[2] = {0};
+  OwnedBlock font_parts[3] = {0};
+  int font_part_count = 2;
   ok = PackBlocks(dictionary, dict_count, &packed_dictionary) &&
        PackBlocks(messages, message_count, &packed_messages);
   FreeBlocks(dictionary, dict_count);
@@ -2456,9 +2461,15 @@ static bool ExtractTranslationLanguage(const uint8 *rom, size_t rom_size,
     return false;
 
   ok = CopyBlock(&font_parts[0], rom + kFontGfx, kFontGfxSize) &&
-       CopyBlock(&font_parts[1], rom + kFontWidths, kFontWidthsCount) &&
-       PackBlocks(font_parts, 2, font_block);
-  FreeBlocks(font_parts, 2);
+       CopyBlock(&font_parts[1], rom + kFontWidths, kFontWidthsCount);
+  // Translations we know the layout of also bring their own copy of tables
+  // that are built into the game (menu item names, file select screens).
+  if (ok && RomHasKnownGraphicsTranslation(rom, rom_size)) {
+    ok = BuildTranslatedTablesBlock(rom, rom_size, &font_parts[2]);
+    font_part_count = 3;
+  }
+  ok = ok && PackBlocks(font_parts, font_part_count, font_block);
+  FreeBlocks(font_parts, 3);
   if (!ok) {
     free(dialogue_block->data);
     dialogue_block->data = NULL;
@@ -2466,6 +2477,362 @@ static bool ExtractTranslationLanguage(const uint8 *rom, size_t rom_size,
     return false;
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Translated graphics.
+//
+// ExtractTranslationLanguage only brings over text (dialogue, dictionary and
+// font). Translation hacks also redraw some graphics sheets and move a few
+// data tables, so a translated profile would otherwise keep the English art.
+// For ROMs listed in kKnownGraphicsTranslations the changed graphics are read
+// from the translated ROM and replace the ones taken from the base ROM.
+// ---------------------------------------------------------------------------
+enum {
+  kGfxPointerBankTable = 0x4f80,   // 223 entries each: bank, high and low
+  kGfxPointerHighTable = 0x505f,   // bytes of the compressed sheet address
+  kGfxPointerLowTable = 0x513e,
+  kGfxTotalSheets = 223,
+  kGfxBgSheets = 115,              // asset 65, table entries 0..114
+  kGfxSprSheets = 108,             // asset 64, table entries 115..222
+  kGfxRawSprSheets = 12,           // first sprite sheets are stored raw
+  kGfxRawSheetSize = 0x600,
+  kGfxMaxDecodedSize = 0x4000,
+  kAssetSprGfx = 64,
+  kAssetBgGfx = 65,
+};
+
+// Asset arrays that a translation keeps at the same size and address, but with
+// different contents (map16 tile definitions and the ending / credits text).
+// The background tilemaps (stripe image format) keep their size but the hack
+// moves them; their new addresses come from the pointer table at 0x137b.
+static const struct {
+  int asset;
+  uint32 rom_offset;
+  bool stripes;
+} kTranslatedFixedAssets[] = {
+  { 70, 0x78000, false },  // kMap16ToMap8
+  { 74, 0x73178, false },  // kEnding_Credits_Text
+  { 76, 0x73038, false },  // kEnding_MapData
+  { 77, 0x742e1, false },  // kEnding0_Offs
+  { 78, 0x73f4c, false },  // kEnding0_Data
+  { 99, 0x66179, true },   // kBgTilemap_0
+  { 100, 0x667bf, true },  // kBgTilemap_1
+  { 101, 0x665d4, true },  // kBgTilemap_2
+  { 102, 0x6676e, true },  // kBgTilemap_3
+  { 103, 0x66685, true },  // kBgTilemap_4
+};
+
+// Tables that are compiled into the game, in the order of the ids used by
+// ZELDA_APPLY_LANGUAGE_TABLE (hud.c and select_file.c). Offsets are where the
+// translated ROM keeps its version of each one.
+static const struct {
+  uint32 rom_offset;
+  uint32 size;
+} kTranslatedLanguageTables[] = {
+  { 0x6f959, 160 },  //  0 kHudAbilityText
+  { 0x6f931, 40 },   //  1 kHudGlovesText
+  { 0x6f449, 256 },  //  2 kHudBottlesItemText
+  { 0x6f549, 32 },   //  3 kHudMushroomItemText
+  { 0x6f569, 64 },   //  4 kHudFluteItemText
+  { 0x6f5a9, 32 },   //  5 kHudMirrorItemText
+  { 0x6f5c9, 96 },   //  6 kHudBowItemText
+  { 0x6f1c9, 640 },  //  7 kHudItemText
+  { 0x65e6a, 224 },  //  8 kSelectFile_Gfx0
+  { 0x65d6d, 253 },  //  9 kSelectFile_Func3_Data
+  { 0x66047, 173 },  // 10 kCopyFile_SelectionAndBlinker_Tab
+  { 0x660f4, 133 },  // 11 kCopyFile_TargetSelectionAndBlink_Tab0
+  { 0x6523a, 49 },   // 12 kCopyFile_TargetSelectionAndBlink_Tab2
+  { 0x65f4a, 253 },  // 13 kKILLFile_ChooseTarget_Tab
+  { 0x6541e, 101 },  // 14 kKILLFile_ChooseTarget_Tab2
+};
+
+static bool BuildTranslatedTablesBlock(const uint8 *rom, size_t rom_size,
+                                       OwnedBlock *out) {
+  OwnedBlock tables[countof(kTranslatedLanguageTables)] = {0};
+  bool ok = true;
+  for (size_t i = 0; ok && i < countof(tables); i++) {
+    size_t offset = kTranslatedLanguageTables[i].rom_offset;
+    size_t size = kTranslatedLanguageTables[i].size;
+    ok = offset + size <= rom_size &&
+         CopyBlock(&tables[i], rom + offset, size);
+  }
+  ok = ok && PackBlocks(tables, (int)countof(tables), out);
+  FreeBlocks(tables, (int)countof(tables));
+  return ok;
+}
+
+// Length in bytes (terminator included) of a stripe image: runs of
+// [vram addr hi, lo, flags|length hi, length lo, data...] ending in a byte
+// with bit 7 set. Returns 0 if it does not end inside the ROM.
+static size_t GfxStripeLength(const uint8 *rom, size_t rom_size, size_t offset) {
+  size_t p = offset;
+  for (;;) {
+    if (p >= rom_size)
+      return 0;
+    if (rom[p] & 0x80)
+      return p + 1 - offset;
+    if (p + 4 > rom_size)
+      return 0;
+    bool is_memset = (rom[p + 2] & 0x40) != 0;
+    size_t length = ((((size_t)rom[p + 2] << 8) | rom[p + 3]) & 0x3fff) + 1;
+    p += 4 + (is_memset ? 2 : length);
+  }
+}
+
+// CRC32 of translated ROMs whose layout has been verified against the US ROM.
+static const uint32 kKnownGraphicsTranslations[] = {
+  0x86de4b5du,  // Spanish translation, SHA-1 461FCBD7...
+};
+
+static uint32 SetupCrc32(const uint8 *data, size_t size) {
+  uint32 crc = 0xffffffffu;
+  for (size_t i = 0; i < size; i++) {
+    crc ^= data[i];
+    for (int bit = 0; bit < 8; bit++)
+      crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0);
+  }
+  return ~crc;
+}
+
+static bool RomHasKnownGraphicsTranslation(const uint8 *rom, size_t rom_size) {
+  if (rom_size != 1048576)
+    return false;
+  uint32 crc = SetupCrc32(rom, rom_size);
+  for (size_t i = 0; i < countof(kKnownGraphicsTranslations); i++) {
+    if (kKnownGraphicsTranslations[i] == crc)
+      return true;
+  }
+  return false;
+}
+
+// Same format as Decompress() in load_gfx.c, with bounds checks. Returns the
+// decoded size, or -1 if the data is malformed. *used receives the number of
+// source bytes read, including the 0xff terminator.
+static int GfxDecompressChecked(const uint8 *src, size_t src_size,
+                                uint8 *dst, size_t dst_size, size_t *used) {
+  size_t in = 0, out = 0;
+  for (;;) {
+    if (in >= src_size)
+      return -1;
+    uint8 cmd = src[in++];
+    if (cmd == 0xff) {
+      *used = in;
+      return (int)out;
+    }
+    size_t len;
+    if ((cmd & 0xe0) != 0xe0) {
+      len = (cmd & 0x1f) + 1;
+      cmd &= 0xe0;
+    } else {
+      if (in >= src_size)
+        return -1;
+      len = src[in++];
+      len += ((size_t)(cmd & 3) << 8) + 1;
+      cmd = (cmd << 3) & 0xe0;
+    }
+    if (len > dst_size - out)
+      return -1;
+    if (cmd == 0) {
+      if (len > src_size - in)
+        return -1;
+      memcpy(dst + out, src + in, len);
+      in += len;
+      out += len;
+    } else if (cmd & 0x80) {
+      if (src_size - in < 2)
+        return -1;
+      size_t offs = src[in] | ((size_t)src[in + 1] << 8);
+      in += 2;
+      for (size_t i = 0; i < len; i++) {
+        if (offs >= out)
+          return -1;
+        dst[out++] = dst[offs++];
+      }
+    } else if (!(cmd & 0x40)) {
+      if (in >= src_size)
+        return -1;
+      memset(dst + out, src[in++], len);
+      out += len;
+    } else if (!(cmd & 0x20)) {
+      if (src_size - in < 2)
+        return -1;
+      uint8 lo = src[in], hi = src[in + 1];
+      in += 2;
+      for (size_t i = 0; i < len; i++)
+        dst[out++] = (i & 1) ? hi : lo;
+    } else {
+      if (in >= src_size)
+        return -1;
+      uint8 value = src[in++];
+      for (size_t i = 0; i < len; i++)
+        dst[out++] = (uint8)(value + i);
+    }
+  }
+}
+
+// File offset of a sheet in the translated ROM (LoROM), or SIZE_MAX.
+static size_t GfxSheetRomOffset(const uint8 *rom, size_t rom_size, int entry) {
+  uint8 bank = rom[kGfxPointerBankTable + entry];
+  uint16 address = (uint16)((rom[kGfxPointerHighTable + entry] << 8) |
+                            rom[kGfxPointerLowTable + entry]);
+  if (address < 0x8000)
+    return (size_t)-1;
+  size_t offset = ((size_t)(bank & 0x7f) << 15) | (address & 0x7fff);
+  return offset < rom_size ? offset : (size_t)-1;
+}
+
+// Looks at one sheet of the translated ROM. Sets *replacement to the ROM bytes
+// that should replace `current` (or NULL when the picture is identical).
+// Returns false if the sheet cannot be understood.
+static bool GfxCheckSheet(const uint8 *rom, size_t rom_size, int entry,
+                          bool raw, const OwnedBlock *current,
+                          const uint8 **replacement, size_t *replacement_size) {
+  *replacement = NULL;
+  *replacement_size = 0;
+  size_t offset = GfxSheetRomOffset(rom, rom_size, entry);
+  if (offset == (size_t)-1)
+    return false;
+  if (raw) {
+    if (current->size != kGfxRawSheetSize ||
+        offset + kGfxRawSheetSize > rom_size)
+      return false;
+    if (memcmp(rom + offset, current->data, kGfxRawSheetSize) != 0) {
+      *replacement = rom + offset;
+      *replacement_size = kGfxRawSheetSize;
+    }
+    return true;
+  }
+  static uint8 current_pixels[kGfxMaxDecodedSize];
+  static uint8 new_pixels[kGfxMaxDecodedSize];
+  size_t used_current = 0, used_new = 0;
+  int current_size = GfxDecompressChecked(current->data, current->size,
+                                          current_pixels, sizeof(current_pixels),
+                                          &used_current);
+  int new_size = GfxDecompressChecked(rom + offset, rom_size - offset,
+                                      new_pixels, sizeof(new_pixels), &used_new);
+  if (current_size < 0 || new_size < 0 || current_size != new_size)
+    return false;
+  if (memcmp(current_pixels, new_pixels, (size_t)new_size) != 0) {
+    *replacement = rom + offset;
+    *replacement_size = used_new;
+  }
+  return true;
+}
+
+static bool GfxReplaceBlock(OwnedBlock *block, const uint8 *data, size_t size) {
+  OwnedBlock copy;
+  if (!CopyBlock(&copy, data, size))
+    return false;
+  free(block->data);
+  *block = copy;
+  return true;
+}
+
+// Replaces the changed graphics in the asset array with the ones from the
+// translated ROM. `assets` is left untouched unless everything succeeds.
+static bool ApplyTranslatedGraphics(OwnedBlock *assets, uint32 asset_count,
+                                    const uint8 *rom, size_t rom_size) {
+  if (!RomHasKnownGraphicsTranslation(rom, rom_size))
+    return true;  // nothing to do for this ROM
+  if (asset_count != kNumberOfAssets)
+    return false;
+
+  OwnedBlock *spr = NULL, *bg = NULL;
+  int spr_count = 0, bg_count = 0;
+  bool ok = UnpackBlocks(assets[kAssetSprGfx].data, assets[kAssetSprGfx].size,
+                         &spr, &spr_count) &&
+            UnpackBlocks(assets[kAssetBgGfx].data, assets[kAssetBgGfx].size,
+                         &bg, &bg_count);
+  if (ok && (spr_count != kGfxSprSheets || bg_count != kGfxBgSheets))
+    ok = false;
+
+  const uint8 *spr_new[kGfxSprSheets] = {0};
+  size_t spr_new_size[kGfxSprSheets] = {0};
+  const uint8 *bg_new[kGfxBgSheets] = {0};
+  size_t bg_new_size[kGfxBgSheets] = {0};
+  const uint8 *fixed_new[countof(kTranslatedFixedAssets)] = {0};
+  size_t fixed_new_size[countof(kTranslatedFixedAssets)] = {0};
+  int replaced = 0;
+
+  for (int i = 0; ok && i < kGfxBgSheets; i++) {
+    ok = GfxCheckSheet(rom, rom_size, i, false, &bg[i],
+                       &bg_new[i], &bg_new_size[i]);
+    replaced += bg_new[i] != NULL;
+  }
+  for (int i = 0; ok && i < kGfxSprSheets; i++) {
+    ok = GfxCheckSheet(rom, rom_size, kGfxBgSheets + i, i < kGfxRawSprSheets,
+                       &spr[i], &spr_new[i], &spr_new_size[i]);
+    replaced += spr_new[i] != NULL;
+  }
+  for (size_t i = 0; ok && i < countof(kTranslatedFixedAssets); i++) {
+    const OwnedBlock *block = &assets[kTranslatedFixedAssets[i].asset];
+    size_t offset = kTranslatedFixedAssets[i].rom_offset;
+    size_t length = block->size;
+    if (kTranslatedFixedAssets[i].stripes && offset < rom_size)
+      length = GfxStripeLength(rom, rom_size, offset);
+    if (block->size == 0 || length == 0 || offset + length > rom_size) {
+      ok = false;
+    } else if (length != block->size ||
+               memcmp(rom + offset, block->data, length) != 0) {
+      fixed_new[i] = rom + offset;
+      fixed_new_size[i] = length;
+      replaced++;
+    }
+  }
+
+  OwnedBlock packed_spr = {0}, packed_bg = {0};
+  OwnedBlock *new_fixed = NULL;
+  if (ok) {
+    new_fixed = calloc(countof(kTranslatedFixedAssets), sizeof(*new_fixed));
+    ok = new_fixed != NULL;
+  }
+  for (int i = 0; ok && i < kGfxBgSheets; i++)
+    if (bg_new[i])
+      ok = GfxReplaceBlock(&bg[i], bg_new[i], bg_new_size[i]);
+  for (int i = 0; ok && i < kGfxSprSheets; i++)
+    if (spr_new[i])
+      ok = GfxReplaceBlock(&spr[i], spr_new[i], spr_new_size[i]);
+  for (size_t i = 0; ok && i < countof(kTranslatedFixedAssets); i++)
+    if (fixed_new[i])
+      ok = CopyBlock(&new_fixed[i], fixed_new[i], fixed_new_size[i]);
+  if (ok)
+    ok = PackBlocks(spr, spr_count, &packed_spr) &&
+         PackBlocks(bg, bg_count, &packed_bg);
+  if (ok) {
+    free(assets[kAssetSprGfx].data);
+    free(assets[kAssetBgGfx].data);
+    assets[kAssetSprGfx] = packed_spr;
+    assets[kAssetBgGfx] = packed_bg;
+    packed_spr.data = packed_bg.data = NULL;
+    for (size_t i = 0; i < countof(kTranslatedFixedAssets); i++) {
+      if (new_fixed[i].data) {
+        OwnedBlock *block = &assets[kTranslatedFixedAssets[i].asset];
+        free(block->data);
+        *block = new_fixed[i];
+        new_fixed[i].data = NULL;
+      }
+    }
+    LogSetup("Translated graphics applied: %d changed items", replaced);
+  } else {
+    LogSetup("Translated graphics skipped: unsupported layout");
+  }
+
+  if (new_fixed) {
+    FreeBlocks(new_fixed, (int)countof(kTranslatedFixedAssets));
+    free(new_fixed);
+  }
+  FreeBlocks(&packed_spr, 1);
+  FreeBlocks(&packed_bg, 1);
+  if (spr) {
+    FreeBlocks(spr, spr_count);
+    free(spr);
+  }
+  if (bg) {
+    FreeBlocks(bg, bg_count);
+    free(bg);
+  }
+  return ok;
 }
 
 static const char *DetectTranslatedRomLanguage(const uint8 *rom,
@@ -2591,6 +2958,8 @@ static bool AddTranslatedLanguageToAssets(const uint8 *assets_data,
       }
     }
   }
+  if (ok && !ApplyTranslatedGraphics(assets, asset_count, rom, rom_size))
+    LogSetup("Translated graphics not applied; keeping base graphics");
   OwnedBlock packed_dialogues = {0};
   OwnedBlock packed_fonts = {0};
   OwnedBlock packed_map = {0};

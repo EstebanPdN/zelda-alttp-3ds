@@ -940,7 +940,13 @@ void Graphics_LoadChrHalfSlot() {  // 80e3fa
 }
 
 void TransferFontToVRAM() {  // 80e556
-  memcpy(&g_zenv.vram[0x7000], FindIndexInMemblk(kDialogueFont(0), 0).ptr, 0x800 * sizeof(uint16));
+  // The file select screen and the HUD draw with the font of the selected
+  // language (translations change some of its letters). Fall back to the
+  // built-in one if the language has none.
+  MemBlk font = FindIndexInMemblk(g_zenv.dialogue_font_blk, 0);
+  if (font.ptr == NULL || font.size < 0x800 * sizeof(uint16))
+    font = FindIndexInMemblk(kDialogueFont(0), 0);
+  memcpy(&g_zenv.vram[0x7000], font.ptr, 0x800 * sizeof(uint16));
 }
 
 void Do3To4High(uint16 *vram_ptr, const uint8 *decomp_addr) {  // 80e5af
