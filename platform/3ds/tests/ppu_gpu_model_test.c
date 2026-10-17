@@ -133,6 +133,9 @@ static uint16_t Unpack(uint32_t c) {return ((c>>27)&31)|(((c>>19)&31)<<5)|(((c>>
 static uint16_t RefRgb(uint32_t c) {return ((c>>19)&31)|(((c>>11)&31)<<5)|(((c>>3)&31)<<10);}
 static bool Raster(void *ctx,unsigned group,const PicaQuad *q) {
  (void)ctx;
+ // Stereo parallax by layer (depth identifies it): BG1/BG2 tiles 2, BG3 tiles and backdrop 0, OBJ 1, compose 0.
+ unsigned z=q->depth;
+ assert(q->parallax==(group>=4?0:(group&1)?1:(z==0xc000||z==0x8000||z==0xb100||z==0x7100)?2:0));
  for(int y=q->y0;y<q->y1;y++) for(int x=q->x0;x<q->x1;x++) {
   assert(x>=0 && x<(int)width && y>=0 && y<240);
   unsigned i=y*512+x;

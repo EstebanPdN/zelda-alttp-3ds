@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.2-S1 (fork, experimental)
+
+- Added stereoscopic 3D depth setting.
+
 ## v3.2
 
 - Optimized update downloads and installation.

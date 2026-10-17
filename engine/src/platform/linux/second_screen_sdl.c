@@ -215,7 +215,7 @@ static RectFS update_release_r, update_prev_r, update_next_r;
 static RectFS update_back_r, update_channel_r, update_action_r;
 static RectFS settings_row_r[5], remap_row_r[6], remap_back_r;
 static RectFS remap_page_r;
-static RectFS screen_row_r[4], screen_back_r;
+static RectFS screen_row_r[5], screen_back_r;
 static RectFS cinema_back_r;
 static RectFS developer_row_r[4], developer_back_r;
 static RectFS load_cancel_r, load_confirm_r;
@@ -1223,24 +1223,32 @@ static void draw_screen_panel(RectFS r) {
 #endif
   bool hud_hidden = SS_IsHudHidden();
   bool wide = false;
+  // 3D DEPTH is the last row, shown only on 3DS models with a 3D screen.
+  bool stereo = false;
+  const char *stereo_value = "OFF";
 #ifdef __3DS__
   wide = Platform3DS_GetDisplayMode() == kPlatform3DSDisplayUltraWideMod;
+  static const char *const stereo_labels[4] = {"OFF", "LOW", "MID", "HIGH"};
+  stereo = Platform3DS_StereoSupported();
+  stereo_value = stereo_labels[Platform3DS_GetStereoLevel()];
 #else
   wide = SS_IsWidescreen();
 #endif
-  static const char *const labels[4] = {
-    "DISPLAY MODE", "EDGE MODE", "ZOOM", "TOP HUD",
+  static const char *const labels[5] = {
+    "DISPLAY MODE", "EDGE MODE", "ZOOM", "TOP HUD", "3D DEPTH",
   };
-  const char *values[4] = {
+  const char *values[5] = {
     display_mode_label(), edge_value, wide_zoom_label(),
-    hud_hidden ? "OFF" : "ON",
+    hud_hidden ? "OFF" : "ON", stereo_value,
   };
-  int rows = wide ? 4 : 3;
+  int rows = (wide ? 4 : 3) + (stereo ? 1 : 0);
   screen_row_r[2] = (RectFS){0};
-  float row_h = 58 * u, gap = 14 * u;
+  // Five rows only fit the settings area (r.h = 382u on the 3DS) when
+  // compacted: 82u + 5 * 48u + 4 * 10u = 362u leaves the usual 20u margin.
+  float row_h = (rows > 4 ? 48 : 58) * u, gap = (rows > 4 ? 10 : 14) * u;
   float y0 = r.y + 82 * u;
   for (int visible = 0; visible < rows; visible++) {
-    int item = !wide && visible == 2 ? 3 : visible;
+    int item = !wide && visible >= 2 ? visible + 1 : visible;
     RectFS *row = &screen_row_r[item];
     *row = (RectFS){
       r.x + 28 * u, y0 + visible * (row_h + gap),
@@ -2199,6 +2207,13 @@ settings_tap:
         SS_SetHudHidden(hide);
         if (hide) { FILE *f = fopen(".ss_hidehud", "wb"); if (f) fclose(f); }
         else remove(".ss_hidehud");
+#ifdef __3DS__
+      } else if (in_rect(&screen_row_r[4], x, y)) {
+        int level = (Platform3DS_GetStereoLevel() + 1) % 4;
+        Platform3DS_SetStereoLevel(level);
+        update_ini("[General]", "Stereo3D",
+                   level == 0 ? "Off" : level == 1 ? "1" : level == 2 ? "2" : "3");
+#endif
       }
     } else if (developer_mode) {
       if (developer_overlay_mode) {

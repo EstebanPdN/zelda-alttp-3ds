@@ -37,6 +37,8 @@ static void Platform3DS_SetWideZoomIndex(int v){}
 static void Platform3DS_SetTurboMultiplier(int v){}
 static bool Platform3DS_GetShowFps(void){return false;}
 static void Platform3DS_SetShowFps(bool v){}
+static int Platform3DS_GetStereoLevel(void){return 0;}
+static void Platform3DS_SetStereoLevel(int v){}
 static void Platform3DS_RequestRomSelection(void){restarts++;}
 static unsigned Platform3DS_UpdateNotesPages(void){return 3;}
 #define KEY_TOUCH (1u<<20)

@@ -15,5 +15,8 @@ bool PpuGpuPrepared(void);
 bool PpuGpuOutputActive(void);
 bool PpuGpuDraw(void);
 void *PpuGpuOutput(void);
+// Stereo: 0 = mono; latched for the next PpuGpuDraw. Right image is NULL unless that frame was stereo.
+void PpuGpuSetStereo(float pixelsPerUnit);
+void *PpuGpuOutputRight(void);
 void PpuGpuWriteDiagnostics(FILE *file);
 const uint32_t *PpuGpuReadback(void);

@@ -1,7 +1,10 @@
-; Packed pixel-edge x/y/depth/w, UV and RGBA: 16 bytes per vertex.
+; Packed pixel-edge x/y/depth/parallax, UV and RGBA: 16 bytes per vertex.
 ; Move coordinate conversion to PICA rather than repeating CPU float work.
 .fvec positionScale
-.constf positionOffset(-1.0, 1.0, 0.0, 0.0)
+; Stereo: x = NDC shift per parallax unit (inpos.w) for the eye being drawn.
+.fvec eyeShift
+; positionScale.w is 0, so outpos.w = 1 whatever parallax inpos.w carries.
+.constf positionOffset(-1.0, 1.0, 0.0, 1.0)
 .constf scale(0.000244140625, 0.000244140625, 0.003921568627451, 1.0)
 .out outpos position
 .out outcolor color
@@ -12,7 +15,9 @@
 .alias incolor v2
 .proc main
     mul r0, positionScale, inpos
-    add outpos, positionOffset, r0
+    add r0, positionOffset, r0
+    mul r1, eyeShift, inpos.wwww
+    add outpos, r0, r1
     mul outtc0, scale, intex
     mul outtc1, scale, intex
     mul outcolor, scale.zzzz, incolor

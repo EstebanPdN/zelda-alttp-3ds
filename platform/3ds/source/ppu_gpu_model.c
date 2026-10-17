@@ -11,6 +11,8 @@ static const uint8_t morton[64] = {
 static const uint8_t sizes[8][2] = {
   {8,16},{8,32},{8,64},{16,32},{16,64},{32,64},{16,32},{16,32}
 };
+// ponytail: per-layer parallax units; ALttP BG3 is HUD/text so it stays on the screen plane. Tune here.
+static const uint8_t kLayerParallax[4] = {2, 2, 0, 1};
 static uint32_t Hash(uint32_t key) { return (key * 2654435761u) >> 18; }
 static uint32_t Encode(uint16_t rgb, unsigned alpha) {
   // Bias by one BEFORE arithmetic. This makes half-add interpolation robust
@@ -104,11 +106,11 @@ static PicaQuad Solid(int x0,int y0,int x1,int y1,uint16_t rgb,unsigned alpha) {
     (rgb&31)*8+1,((rgb>>5)&31)*8+1,((rgb>>10)&31)*8+1,alpha};
 }
 static bool TileQuad(PicaFrame *f,unsigned group,unsigned slot,int x,int y,
-                     int w,int h,int sx,int sy,bool hf,bool vf,unsigned z,unsigned alpha) {
+                     int w,int h,int sx,int sy,bool hf,bool vf,unsigned z,unsigned alpha,unsigned parallax) {
   unsigned col=slot%(PICA_ATLAS_W/8),row=slot/(PICA_ATLAS_W/8);
   int u0=col*8+(hf?8-sx:sx),u1=u0+(hf?-w:w);
   int v0=row*8+(vf?8-sy:sy),v1=v0+(vf?-h:h);
-  PicaQuad q={x,y,x+w,y+h,u0*4,4096-v0*8,u1*4,4096-v1*8,z,255,255,255,alpha};
+  PicaQuad q={x,y,x+w,y+h,u0*4,4096-v0*8,u1*4,4096-v1*8,z,255,255,255,alpha,parallax};
   return Emit(f,group,q);
 }
 static unsigned Band(PicaFrame *f,unsigned y,unsigned max) {
@@ -172,7 +174,7 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
         unsigned w=IntMin(8-(wx&7),end-x);
         unsigned z=layer==0?((tile&0x2000)?0xc000:0x8000):layer==1?((tile&0x2000)?0xb100:0x7100):((tile&0x2000)?0xf200:0x1200);
         if(slot>=0 && !TileQuad(f,group,slot,x+p->extraLeftRight,y,w,h,wx&7,wy&7,
-            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127))) return false;
+            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127),kLayerParallax[layer])) return false;
         x+=w;
       }
     }
@@ -252,7 +254,7 @@ static bool Objects(PicaFrame *f,unsigned sub) {
         int l=IntMax(left,win.edges[i]),r=IntMin(left+8,win.edges[i+1]);
         if(l>=r)continue;
         if(!TileQuad(f,sub*2+1,slot,l+p->extraLeftRight,y,r-l,h,l-left,vf?7-(row&7):row&7,
-          attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127)))return false;
+          attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127),kLayerParallax[3]))return false;
       }
     }
     y+=h;

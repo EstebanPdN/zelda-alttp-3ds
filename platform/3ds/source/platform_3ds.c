@@ -12,6 +12,7 @@ static uint32_t *g_update_pixels;
 #include <citro2d.h>
 #include <dirent.h>
 #include <errno.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,6 +55,7 @@ static bool g_runtime_wide_edge_seen;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_show_fps;
+static int g_stereo_level; /* 0 = off, 1..3 = 3D depth strength */
 static unsigned g_current_fps;
 static uint64_t g_dump_saved_overlay_until_ms;
 static bool g_quick_dump_requested;
@@ -65,6 +67,7 @@ static volatile bool g_system_suspended;
 static char g_active_save_directory[512] = "saves";
 static uint32_t g_active_profile_id;
 static bool g_is_new_3ds;
+static bool g_has_stereo_screen = true; /* false on 2DS and New 2DS XL */
 const Platform3DSHardwareProfile *Platform3DS_GetHardwareProfile(void) {
   return Platform3DS_ProfileForModel(g_is_new_3ds);
 }
@@ -145,6 +148,7 @@ static bool g_gpu_presenter_initialized;
 static bool g_gpu_frame_active;
 static bool g_setup_console_active;
 static C3D_RenderTarget *g_top_target;
+static C3D_RenderTarget *g_top_target_right;
 static C3D_RenderTarget *g_bottom_target;
 static C3D_Tex g_top_texture;
 static const uint8_t *g_last_top_source;
@@ -224,6 +228,15 @@ static void Platform3DS_DetectModel(void) {
     g_is_new_3ds = is_new_3ds;
   else
     g_is_new_3ds = false;
+  // 2DS models have no stereoscopic screen. If CFG cannot be queried,
+  // assume one: the 3D setting is then merely ineffective.
+  u8 system_model = 0;
+  if (R_SUCCEEDED(cfguInit())) {
+    if (R_SUCCEEDED(CFGU_GetSystemModel(&system_model)))
+      g_has_stereo_screen = system_model != CFG_MODEL_2DS &&
+                            system_model != CFG_MODEL_N2DSXL;
+    cfguExit();
+  }
   g_model_detected = true;
 }
 
@@ -457,6 +470,15 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
     bool show = false;
     if (ParseBool(value, &show))
       g_show_fps = show;
+  } else if (strcasecmp(key, "Stereo3D") == 0) {
+    int level = 0;
+    if (strcasecmp(value, "1") == 0 || strcasecmp(value, "Low") == 0)
+      level = 1;
+    else if (strcasecmp(value, "2") == 0 || strcasecmp(value, "Mid") == 0)
+      level = 2;
+    else if (strcasecmp(value, "3") == 0 || strcasecmp(value, "High") == 0)
+      level = 3;
+    g_stereo_level = level;
   }
 }
 
@@ -466,6 +488,7 @@ void Platform3DS_LoadRuntimeSettings(void) {
   g_display_mode_legacy_stretch = false;
   g_runtime_wide_edge_seen = false;
   g_show_fps = false;
+  g_stereo_level = 0;
   FILE *file = fopen("zelda3.ini", "rb");
   if (!file) {
     Platform3DS_ApplyAutoDisplayDefaults();
@@ -598,6 +621,10 @@ bool Platform3DS_ShouldExit(void) {
 void Platform3DS_BlankScreens(void) {
   if (!g_gpu_presenter_initialized)
     return;
+  // Only the left target is cleared below; leave stereo so the right eye
+  // cannot keep showing the last game frame while the left is black.
+  if (gfxIs3D())
+    gfxSet3D(false);
   if (g_gpu_frame_active) {
     Platform3DS_EndGpuFrame();
     g_gpu_frame_active = false;
@@ -648,6 +675,25 @@ bool Platform3DS_GetShowFps(void) {
 
 void Platform3DS_SetShowFps(bool show) {
   g_show_fps = show;
+}
+
+int Platform3DS_GetStereoLevel(void) {
+  return g_stereo_level;
+}
+
+void Platform3DS_SetStereoLevel(int level) {
+  if (level < 0)
+    level = 0;
+  if (level > 3)
+    level = 3;
+  g_stereo_level = level;
+  Platform3DS_LogRuntime("Stereo 3D level set: %d", g_stereo_level);
+}
+
+// Stereo needs the Old 3DS GPU renderer and a 3D-capable screen (no 2DS).
+bool Platform3DS_StereoSupported(void) {
+  Platform3DS_DetectModel();
+  return !g_is_new_3ds && g_has_stereo_screen;
 }
 
 void Platform3DS_SetCurrentFps(int fps) {
@@ -855,6 +901,25 @@ bool Platform3DS_InitTopPresenter(void) {
       GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565) |
       GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+  // Right-eye top target, drawn only while stereo is enabled. Optional: if
+  // it cannot be allocated the game stays mono instead of failing to start.
+  if (Platform3DS_StereoSupported()) {
+    g_top_target_right = C3D_RenderTargetCreate(
+      GSP_SCREEN_WIDTH, GSP_SCREEN_HEIGHT_TOP,
+      GPU_RB_RGB565, -1);
+    if (g_top_target_right) {
+      C3D_RenderTargetSetOutput(
+        g_top_target_right, GFX_TOP, GFX_RIGHT,
+        GX_TRANSFER_FLIP_VERT(0) |
+          GX_TRANSFER_OUT_TILED(0) |
+          GX_TRANSFER_RAW_COPY(0) |
+          GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565) |
+          GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
+          GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    } else {
+      Platform3DS_LogRuntime("Stereo 3D unavailable: right-eye target allocation failed");
+    }
+  }
   g_gpu_presenter_initialized = true;
 
   memset(g_recent_frames, 0, sizeof(g_recent_frames));
@@ -912,6 +977,9 @@ void Platform3DS_ShutdownTopPresenter(void) {
   g_bottom_target = NULL;
   C3D_RenderTargetDelete(g_top_target);
   g_top_target = NULL;
+  if (g_top_target_right)
+    C3D_RenderTargetDelete(g_top_target_right);
+  g_top_target_right = NULL;
   C3D_TexDelete(&g_bottom_texture);
   C3D_TexDelete(&g_top_texture);
   C2D_Fini();
@@ -993,10 +1061,18 @@ static float StatusTextWidth(const char *text, float scale) {
   return length ? ((float)length * 6.0f - 1.0f) * scale : 0.0f;
 }
 
+// Switch the top screen's stereo mode only on change. gfxInit resets it to
+// off, so query libctru instead of caching the state here.
+static void SetStereoOutput(bool want) {
+  if (gfxIs3D() != want)
+    gfxSet3D(want);
+}
+
 static unsigned g_update_note_pages = 1;
 unsigned Platform3DS_UpdateNotesPages(void) { return g_update_note_pages; }
 void Platform3DS_PresentUpdatePage(bool show_notes, unsigned page) {
   if (!g_gpu_presenter_initialized) return;
+  SetStereoOutput(false);
   if (!g_update_pixels) g_update_pixels = linearMemAlign(512*256*4, 64);
   if (!g_update_pixels) return;
   static uint32_t letters[128*16], glyphs[kGlyphCols*8*((kGlyphCount+kGlyphCols-1)/kGlyphCols)*8];
@@ -1039,6 +1115,32 @@ void Platform3DS_PresentUpdatePage(bool show_notes, unsigned page) {
   Platform3DS_DrawMappedImage(image, &params, ConfigureArgbTextureEnv);
 }
 
+// FPS and DUMP SAVED overlays. Drawn identically into each eye, so they
+// sit on the screen plane in stereo.
+static void DrawTopOverlays(C3D_RenderTarget *target) {
+  C2D_SceneBegin(target);
+  if (g_show_fps) {
+    char label[28];
+    snprintf(label, sizeof(label), "FPS %u", g_current_fps);
+    float box_width = StatusTextWidth(label, 2.0f) + 10.0f;
+    C2D_DrawRectSolid(5.0f, 216.0f, 0.7f, box_width, 20.0f,
+                      C2D_Color32(0, 0, 0, 210));
+    DrawStatusText(10.0f, 219.0f, 2.0f, label);
+  }
+  uint64_t now_ms = osGetTime();
+  if (now_ms < g_dump_saved_overlay_until_ms) {
+    static const char kDumpSavedText[] = "DUMP SAVED";
+    float text_width = StatusTextWidth(kDumpSavedText, 2.0f);
+    float box_width = text_width + 18.0f;
+    float box_x = (400.0f - box_width) * 0.5f;
+    C2D_DrawRectSolid(box_x, 12.0f, 0.7f, box_width, 24.0f,
+                      C2D_Color32(0, 0, 0, 220));
+    DrawStatusText(box_x + 9.0f, 17.0f, 2.0f, kDumpSavedText);
+  } else {
+    g_dump_saved_overlay_until_ms = 0;
+  }
+}
+
 void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
                                  int width, int height,
                                  int focus_x, int focus_y) {
@@ -1048,6 +1150,11 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
       height <= 0 || height > kTopTextureHeight)
     return;
 
+  // Stereo: Old 3DS / 3DS XL GPU renderer only; g_top_target_right exists
+  // only when Platform3DS_StereoSupported() held at presenter init.
+  const bool stereo = g_stereo_level > 0 && g_top_target_right != NULL;
+  SetStereoOutput(stereo);
+
   g_last_top_transfer_us = g_last_gpu_end_us = 0;
   uint64_t begin_start = svcGetSystemTick();
   bool began = C3D_FrameBegin(0);
@@ -1056,6 +1163,11 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   bool gpu_image = !g_is_new_3ds && PpuGpuOutputActive();
   g_gpu_frame_active = true;
   if (gpu_image) {
+    // Whole pixels per parallax unit: nearest-texel sampling then matches
+    // the verified mono path (a half-pixel shift samples the neighbouring
+    // atlas tile at the edge of horizontally flipped tiles).
+    float slider = stereo ? osGet3DSliderState() : 0.0f;
+    PpuGpuSetStereo(slider > 0.0f ? roundf(g_stereo_level * slider) : 0.0f);
     if (PpuGpuPrepared() && !PpuGpuDraw()) {
       Platform3DS_LogRuntime("PICA200 submission failed; software resumes next frame");
       return;
@@ -1140,25 +1252,16 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   Platform3DS_ClearBlackTarget(g_top_target);
   C2D_SceneBegin(g_top_target);
   Platform3DS_DrawMappedImage(image, &params, gpu_image ? ConfigureRgb565TextureEnv : ConfigureArgbTextureEnv);
-  if (g_show_fps) {
-    char label[28];
-    snprintf(label, sizeof(label), "FPS %u", g_current_fps);
-    float box_width = StatusTextWidth(label, 2.0f) + 10.0f;
-    C2D_DrawRectSolid(5.0f, 216.0f, 0.7f, box_width, 20.0f,
-                      C2D_Color32(0, 0, 0, 210));
-    DrawStatusText(10.0f, 219.0f, 2.0f, label);
-  }
-  uint64_t now_ms = osGetTime();
-  if (now_ms < g_dump_saved_overlay_until_ms) {
-    static const char kDumpSavedText[] = "DUMP SAVED";
-    float text_width = StatusTextWidth(kDumpSavedText, 2.0f);
-    float box_width = text_width + 18.0f;
-    float box_x = (400.0f - box_width) * 0.5f;
-    C2D_DrawRectSolid(box_x, 12.0f, 0.7f, box_width, 24.0f,
-                      C2D_Color32(0, 0, 0, 220));
-    DrawStatusText(box_x + 9.0f, 17.0f, 2.0f, kDumpSavedText);
-  } else {
-    g_dump_saved_overlay_until_ms = 0;
+  DrawTopOverlays(g_top_target);
+  if (stereo) {
+    // ponytail: CPU-fallback frames render mono to both eyes; a second CPU pass would double a 26-36 ms cost.
+    C3D_Tex *right = gpu_image ? (C3D_Tex*)PpuGpuOutputRight() : NULL;
+    if (right)
+      image.tex = right;
+    Platform3DS_ClearBlackTarget(g_top_target_right);
+    C2D_SceneBegin(g_top_target_right);
+    Platform3DS_DrawMappedImage(image, &params, gpu_image ? ConfigureRgb565TextureEnv : ConfigureArgbTextureEnv);
+    DrawTopOverlays(g_top_target_right);
   }
 }
 
@@ -1633,6 +1736,7 @@ static void BeginSetupConsole(void) {
 }
 
 static void PresentSetupConsole(void) {
+  SetStereoOutput(false);
   u16 fb_w = 0, fb_h = 0;
   uint16_t *top =
     (uint16_t *)gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &fb_w, &fb_h);
@@ -3430,10 +3534,11 @@ void Platform3DS_ApplyConfig(struct Config *config) {
   config->audio_samples = 1024;
   config->enable_msu = 0;
   config->disable_frame_delay = true;
-  Platform3DS_LogRuntime("Runtime settings: display=%d, wide_edge=%d, turbo=%d",
+  Platform3DS_LogRuntime("Runtime settings: display=%d, wide_edge=%d, turbo=%d, stereo=%d",
                          (int)g_display_mode,
                          (int)g_wide_edge_mode,
-                         g_turbo_multiplier);
+                         g_turbo_multiplier,
+                         g_stereo_level);
 }
 
 static bool WriteBlob(const char *path, const void *data, size_t size) {
