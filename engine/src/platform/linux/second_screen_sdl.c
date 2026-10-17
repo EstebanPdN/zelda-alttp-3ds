@@ -249,7 +249,7 @@ static RectFS update_release_r, update_prev_r, update_next_r;
 static RectFS update_back_r, update_channel_r, update_action_r;
 static RectFS settings_row_r[5], language_chip_r, remap_row_r[6], remap_back_r;
 static RectFS remap_page_r;
-static RectFS screen_row_r[4], screen_back_r;
+static RectFS screen_row_r[5], screen_back_r;
 static RectFS cinema_back_r;
 static RectFS developer_row_r[6], developer_back_r, developer_tests_r;
 // Test scenarios: the developer menu's list, opened with Start or its chip.
@@ -1350,22 +1350,28 @@ static void draw_screen_panel(RectFS r) {
 #endif
   bool hud_hidden = SS_IsHudHidden();
   bool wide = false;
+  // 3D DEPTH is the last row, shown only on 3DS models with a 3D screen.
+  bool stereo = false;
+  const char *stereo_value = UI_Text(kUi_Off);
 #if defined(__3DS__) || defined(ZELDA3_TEST_NATIVE_MENUS)
   wide = Platform3DS_GetDisplayMode() == kPlatform3DSDisplayUltraWideMod;
+  static const enum UiString stereo_labels[4] = {kUi_Off, kUi_Low, kUi_Mid, kUi_High};
+  stereo = Platform3DS_StereoSupported();
+  stereo_value = UI_Text(stereo_labels[Platform3DS_GetStereoLevel()]);
 #else
   wide = SS_IsWidescreen();
 #endif
-  const char *labels[4] = {
-    UI_Text(kUi_DisplayMode), UI_Text(kUi_EdgeMode), UI_Text(kUi_Zoom), UI_Text(kUi_TopHud),
+  const char *labels[5] = {
+    UI_Text(kUi_DisplayMode), UI_Text(kUi_EdgeMode), UI_Text(kUi_Zoom), UI_Text(kUi_TopHud), UI_Text(kUi_Depth3D),
   };
-  const char *values[4] = {
+  const char *values[5] = {
     display_mode_label(), edge_value, wide_zoom_label(),
-    hud_hidden ? UI_Text(kUi_Off) : UI_Text(kUi_On),
+    hud_hidden ? UI_Text(kUi_Off) : UI_Text(kUi_On), stereo_value,
   };
-  int rows = wide ? 4 : 3;
+  int rows = (wide ? 4 : 3) + (stereo ? 1 : 0);
   screen_row_r[2] = (RectFS){0};
   for (int visible = 0; visible < rows; visible++) {
-    int item = !wide && visible == 2 ? 3 : visible;
+    int item = !wide && visible >= 2 ? visible + 1 : visible;
     RectFS *row = &screen_row_r[item];
     *row=settings_option_row(r,visible,rows);
     draw_option(row, labels[item], values[item]);
@@ -2875,6 +2881,13 @@ settings_tap:
         SS_SetHudHidden(hide);
         if (hide) { FILE *f = fopen(".ss_hidehud", "wb"); if (f) fclose(f); }
         else remove(".ss_hidehud");
+#ifdef __3DS__
+      } else if (in_rect(&screen_row_r[4], x, y)) {
+        int level = (Platform3DS_GetStereoLevel() + 1) % 4;
+        Platform3DS_SetStereoLevel(level);
+        update_ini("[General]", "Stereo3D",
+                   level == 0 ? "Off" : level == 1 ? "1" : level == 2 ? "2" : "3");
+#endif
       }
     } else if (developer_mode) {
       if (scenario_mode) {

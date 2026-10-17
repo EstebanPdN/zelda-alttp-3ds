@@ -43,7 +43,7 @@ static int g_turbo_control;
 enum {kTurboControlAuto,kTurboControlX,kTurboControlZL,kTurboControlCStick};
 static bool g_is_new_3ds,g_display_mode_auto,g_wide_edge_mode_auto;
 static bool g_display_mode_legacy_stretch,g_runtime_wide_edge_seen,g_show_fps,g_menu_language_seen;
-static int g_display_mode,g_wide_edge_mode,g_wide_zoom_index,g_cstick_mode,g_turbo_multiplier;
+static int g_display_mode,g_wide_edge_mode,g_wide_zoom_index,g_cstick_mode,g_turbo_multiplier,g_stereo_level;
 static const char *kBundledConfig="bundled.ini";
 static bool ProfileSetupFailure(const char *status,const char *path){return false;}
 static const char *kProfilesDirectory="profiles", *g_active_save_directory="saves/test-rom";
@@ -98,9 +98,10 @@ int main(int argc,char **argv) {
   update_ini("[General]","CStickTurboMultiplier","2");
   update_ini("[General]","Autosave","0");
   update_ini("[General]","TurboControl","ZL");
+  update_ini("[General]","Stereo3D","2");
  } else {
   assert(g_display_mode==0);assert(g_wide_edge_mode==0);
-  assert(g_wide_zoom_index==2);assert(g_turbo_multiplier==2);
+  assert(g_wide_zoom_index==2);assert(g_turbo_multiplier==2);assert(g_stereo_level==2);
   assert(!g_autosave);assert(g_turbo_control==kTurboControlZL);
  }
  return 0;
@@ -116,4 +117,4 @@ with tempfile.TemporaryDirectory(prefix='alttp-settings-') as t:
    subprocess.run([str(p/'test'),str(model%2),action],cwd=cwd,check=True)
   assert (profile/'zelda3.ini.wide-defaults-v1').read_text()=='1\n'
   assert 'EnableAudio = 1' in (profile/'zelda3.ini').read_text()
- print('PASS one-time migration for fresh and existing Old/New profiles; subsequent Original/Standard/zoom/turbo menu writes survive two fresh process restarts; marker and unrelated keys retained')
+ print('PASS one-time migration for fresh and existing Old/New profiles; subsequent Original/Standard/zoom/turbo/3D menu writes survive two fresh process restarts; marker and unrelated keys retained')

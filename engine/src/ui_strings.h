@@ -26,6 +26,7 @@ enum UiString {
   kUi_Restart, kUi_Language, kUi_Back, kUi_Off, kUi_On, kUi_Open, kUi_Cancel,
   // screen settings
   kUi_DisplayMode, kUi_EdgeMode, kUi_Zoom, kUi_TopHud,
+  kUi_Depth3D, kUi_Low, kUi_Mid, kUi_High,
   kUi_Wide, kUi_Original, kUi_Stretch, kUi_FixedCamera, kUi_Standard,
   // developer settings
   kUi_MemDump, kUi_LoadState, kUi_ShowFps, kUi_Overlay,

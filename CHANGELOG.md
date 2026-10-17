@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Stereoscopic 3D on Old 3DS and Old 3DS XL with the GPU renderer: the 3D slider
+  sets the depth, Settings > Screen > 3D DEPTH picks OFF, LOW, MID or HIGH.
+
 ## v4.2-E2
 
 Experimental pre-release.
