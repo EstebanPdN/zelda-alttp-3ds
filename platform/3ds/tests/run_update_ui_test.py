@@ -1,9 +1,9 @@
 from pathlib import Path
 import subprocess,shlex,argparse
 args=argparse.ArgumentParser();args.add_argument('--sdl-root',type=Path,required=True);args.add_argument('--out',type=Path,required=True);args.add_argument('--touch-source',type=Path);args=args.parse_args()
-r=Path(__file__).resolve().parents[3];out=args.out.resolve();out.mkdir(parents=True,exist_ok=True);src=r/'app/jni/src/src/platform/linux/second_screen_sdl.c'
+r=Path(__file__).resolve().parents[3];out=args.out.resolve();out.mkdir(parents=True,exist_ok=True);src=r/'engine/src/platform/linux/second_screen_sdl.c'
 s=src.read_text()
-touch_source = args.touch_source or r/'app/jni/SDL2/src/video/n3ds/SDL_n3dstouch.c'
+touch_source = args.touch_source or r/'third_party/SDL2/src/video/n3ds/SDL_n3dstouch.c'
 touch_source = touch_source.read_text()
 native_poll = touch_source[touch_source.index('void N3DS_PollTouch(void)'):touch_source.index('#endif /* SDL_VIDEO_DRIVER_N3DS */')]
 
@@ -12,7 +12,7 @@ a=s.index('static void draw_update_panel(');b=s.index('static void draw_settings
 s=s[:a]+s[a:b].replace('#ifdef __3DS__','#if 1')+s[b:]
 a=s.index('static void apply_tap(');b=s.index('static void draw_second_screen(int logic_frames) {',a)
 s=s[:a]+s[a:b].replace('#ifdef __3DS__','#if 1')+s[b:]
-s=s.replace('#include "../../', '#include "'+str(r/'app/jni/src/src')+'/')
+s=s.replace('#include "../../', '#include "'+str(r/'engine/src')+'/')
 code='''#include <assert.h>
 #include <SDL.h>
 #include "updater.h"
@@ -185,6 +185,6 @@ int main(int argc,char**argv){
 '''
 (out/'ui-test.c').write_text(code)
 sdk=args.sdl_root.resolve();flags=shlex.split(subprocess.check_output(['bash',str(sdk/'sdl2-config'),'--static-libs'],text=True));flags=[x for x in flags if x.startswith('-Wl,') or x in ['-lm','-liconv']]
-cmd=['cc','-O1','-fsanitize=address,undefined','-ffunction-sections','-fdata-sections','-Wl,-dead_strip','-I'+str(r/'app/jni/src'),'-I'+str(src.parent),'-I'+str(r/'platform/3ds/source'),'-I'+str(sdk/'include/SDL2'),'-I'+str(sdk/'include-config-release/SDL2'),str(out/'ui-test.c'),str(sdk/'libSDL2.a'),*flags,'-o',str(out/'ui-test')]
+cmd=['cc','-O1','-fsanitize=address,undefined','-ffunction-sections','-fdata-sections','-Wl,-dead_strip','-I'+str(r/'engine'),'-I'+str(src.parent),'-I'+str(r/'platform/3ds/source'),'-I'+str(sdk/'include/SDL2'),'-I'+str(sdk/'include-config-release/SDL2'),str(out/'ui-test.c'),str(sdk/'libSDL2.a'),*flags,'-o',str(out/'ui-test')]
 with (out/'ui-test.log').open('w') as log:
  subprocess.run(cmd,stdout=log,stderr=subprocess.STDOUT,check=True);subprocess.run([str(out/'ui-test'),str(out)],stdout=log,stderr=subprocess.STDOUT,check=True)

@@ -19,7 +19,6 @@ QR-*-release.png
 # Local Codex/process notes. Keep these on Esteban's machine only.
 GITHUB_RELEASE_WORKFLOW.md
 OPTIMIZATION_PROCESS_SUMMARY.md
-Docs/
 
 # Local native build outputs.
 *.o
@@ -55,3 +54,10 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Maintained repository organization check.
+!scripts/check-repository.py
+
+# Maintained repository layout manifest.
+!docs/repository-layout.json
+!docs/REPOSITORY.md

@@ -4,7 +4,7 @@ from pathlib import Path
 import argparse, subprocess, tempfile, struct
 r=Path(__file__).resolve().parents[3]
 a=argparse.ArgumentParser();a.add_argument('--assets',type=Path);a.add_argument('--dumps',type=Path,nargs='*',default=[]);a.add_argument('--output',type=Path);args=a.parse_args()
-s=(r/'app/jni/src/src/zelda_rtl.c').read_text();model=(r/'platform/3ds/tests/ppu_gpu_model_test.c').read_text()
+s=(r/'engine/src/zelda_rtl.c').read_text();model=(r/'platform/3ds/tests/ppu_gpu_model_test.c').read_text()
 def fn(sig):
  i=s.index(sig);j=s.index('{',i)+1;n=1
  while n:n+=(s[j]=='{')-(s[j]=='}');j+=1
@@ -137,6 +137,6 @@ with tempfile.TemporaryDirectory(prefix='alttp-wide-columns-') as t:
    if i==70:table=d/'map.bin';table.write_bytes(data[offset:offset+size]);break
    offset+=size
  if args.dumps and table=='-':raise SystemExit('--assets is required for actual dump world-map definitions')
- subprocess.run(['cc','-O1','-D__3DS__','-fsanitize=address,undefined','-fno-sanitize=shift-base','-fno-sanitize-recover=all','-I'+str(r/'app/jni/src'),'-I'+str(r/'platform/3ds/source'),str(d/'test.c'),str(r/'app/jni/src/snes/ppu.c'),str(r/'app/jni/src/src/wide_camera.c'),str(r/'platform/3ds/source/ppu_gpu_model.c'),'-o',str(d/'test')],check=True)
+ subprocess.run(['cc','-O1','-D__3DS__','-fsanitize=address,undefined','-fno-sanitize=shift-base','-fno-sanitize-recover=all','-I'+str(r/'engine'),'-I'+str(r/'platform/3ds/source'),str(d/'test.c'),str(r/'engine/snes/ppu.c'),str(r/'engine/src/wide_camera.c'),str(r/'platform/3ds/source/ppu_gpu_model.c'),'-o',str(d/'test')],check=True)
  if args.output:args.output.mkdir(parents=True,exist_ok=True)
  subprocess.run([str(d/'test'),str(table),str(args.output.resolve()) if args.output else '-',*[str(x.resolve()) for x in args.dumps]],check=True)

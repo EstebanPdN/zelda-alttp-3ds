@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess,tempfile,argparse
 r=Path(__file__).resolve().parents[3]
 p=argparse.ArgumentParser();p.add_argument('--profile',type=Path);p.add_argument('--dump',type=Path,required=True);args=p.parse_args()
-s=(r/'app/jni/src/src/nmi.c').read_text();a=s.index('  if (flag_update_cgram_in_nmi)');b=s.index('  flag_update_hud_in_nmi = 0;',a)
+s=(r/'engine/src/nmi.c').read_text();a=s.index('  if (flag_update_cgram_in_nmi)');b=s.index('  flag_update_hud_in_nmi = 0;',a)
 code='''#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,5 +42,5 @@ int main(int argc,char**argv){
 with tempfile.TemporaryDirectory() as td:
  t=Path(td);(t/'test.c').write_text(code)
  profile=args.profile or r/'platform/3ds/source/hardware_profile.h';(t/'hardware_profile.h').write_bytes(profile.read_bytes())
- subprocess.run(['cc','-O1','-D__3DS__','-fsanitize=address,undefined','-fno-sanitize=shift-base','-I'+str(t),'-I'+str(r/'app/jni/src'),str(t/'test.c'),str(r/'app/jni/src/snes/ppu.c'),'-o',str(t/'test')],check=True)
+ subprocess.run(['cc','-O1','-D__3DS__','-fsanitize=address,undefined','-fno-sanitize=shift-base','-I'+str(t),'-I'+str(r/'engine'),str(t/'test.c'),str(r/'engine/snes/ppu.c'),'-o',str(t/'test')],check=True)
  subprocess.run([str(t/'test'),str(args.dump/'cgram.bin')],check=True)

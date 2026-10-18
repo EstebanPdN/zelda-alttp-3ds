@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='e7-arm-span-') as td:
     source = '\n'.join(line for line in source.splitlines() if 'puts(' not in line)
     (tmp / 'test.c').write_text(source)
     subprocess.run([str(toolchain / 'arm-none-eabi-gcc'), '-O3', '-fno-strict-aliasing',
-        '-mcpu=mpcore', '-marm', '-D__3DS__', '-I' + str(root / 'app/jni/src'),
+        '-mcpu=mpcore', '-marm', '-D__3DS__', '-I' + str(root / 'engine'),
         '-nostdlib', '-Wl,-Ttext=0x10000', '-Wl,-e,run', str(tmp / 'test.c'), '-o', str(tmp / 'test.elf')], check=True)
     subprocess.run([str(toolchain / 'arm-none-eabi-objcopy'), '-O', 'binary', str(tmp / 'test.elf'), str(tmp / 'test.bin')], check=True)
     symbols = subprocess.check_output([str(toolchain / 'arm-none-eabi-nm'), str(tmp / 'test.elf')], text=True)

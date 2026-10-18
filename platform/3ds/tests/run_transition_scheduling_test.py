@@ -2,7 +2,7 @@
 """Exercise actual bottom invalidation/priority policy through door modules."""
 from pathlib import Path
 import subprocess,tempfile
-r=Path(__file__).resolve().parents[3];s=(r/'app/jni/src/src/platform/linux/second_screen_sdl.c').read_text()
+r=Path(__file__).resolve().parents[3];s=(r/'engine/src/platform/linux/second_screen_sdl.c').read_text()
 def fn(sig):
  a=s.index(sig);i=s.index('{',a)+1;n=1
  while n:n+=(s[i]=='{')-(s[i]=='}');i+=1

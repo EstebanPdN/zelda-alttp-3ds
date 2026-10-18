@@ -3,8 +3,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
-#include "../../../app/jni/src/src/platform/linux/ss_sheets.h"
-#include "../../../app/jni/src/src/platform/linux/ss_textures.h"
+#include "../../../engine/src/platform/linux/ss_sheets.h"
+#include "../../../engine/src/platform/linux/ss_textures.h"
 
 // Native-size ALttP letters and the same menu palette/frame as the touch UI.
 static void UpdateView_Box(uint32_t *p, int x, int y, int w, int h, int radius, uint32_t color) {

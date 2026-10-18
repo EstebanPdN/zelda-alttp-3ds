@@ -33,5 +33,5 @@ out.append("static const uint16 kGlyphTiles[kGlyphCount] = {")
 out.append("  " + ", ".join("0x%04x" % v for v in glyph_entries))
 out.append("};")
 
-open('/home/sam/sync/code/zelda3-android/app/jni/src/src/second_screen_tables.h', 'w').write("\n".join(out) + "\n")
+open('/home/sam/sync/code/zelda3-android/engine/src/second_screen_tables.h', 'w').write("\n".join(out) + "\n")
 print("icons", len(icon_entries), "glyphs", len(glyph_entries))

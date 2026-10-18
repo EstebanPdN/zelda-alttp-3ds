@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 project(zelda3_3ds VERSION 3.2 LANGUAGES C)
 
 set(ZELDA3_ROOT "${CMAKE_CURRENT_LIST_DIR}/../..")
-set(ZELDA3_NATIVE "${ZELDA3_ROOT}/app/jni/src")
+set(ZELDA3_NATIVE "${ZELDA3_ROOT}/engine")
 set(SDL2_ROOT "" CACHE PATH "Local SDL2 installation built for Nintendo 3DS")
 
 if(NOT SDL2_ROOT)
@@ -100,7 +100,7 @@ target_link_libraries(zelda3-3ds PRIVATE
 set(ZELDA3_ROMFS "${CMAKE_CURRENT_BINARY_DIR}/romfs")
 file(MAKE_DIRECTORY "${ZELDA3_ROMFS}")
 configure_file(
-  "${ZELDA3_ROOT}/app/src/main/assets/zelda3_assets.bps"
+  "${ZELDA3_ROOT}/platform/3ds/romfs/zelda3_assets.bps"
   "${ZELDA3_ROMFS}/zelda3_assets.bps"
   COPYONLY
 )

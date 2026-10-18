@@ -2,7 +2,7 @@ from pathlib import Path
 import subprocess,argparse
 args=argparse.ArgumentParser();args.add_argument('--out',type=Path,required=True);args=args.parse_args()
 r=Path(__file__).resolve().parents[3];t=args.out.resolve();t.mkdir(parents=True,exist_ok=True)
-s=(r/'app/jni/src/src/platform/linux/second_screen_sdl.c').read_text();a=s.index('static const uint8_t *tiny_letter(');b=s.index('static float tiny_text_width',a)
+s=(r/'engine/src/platform/linux/second_screen_sdl.c').read_text();a=s.index('static const uint8_t *tiny_letter(');b=s.index('static float tiny_text_width',a)
 code='#include <assert.h>\n#include "update_view.h"\n'+s[a:b]+r'''
 int main(int argc,char **argv){
  static uint32_t guarded[512*256+2],letters[128*16],glyphs[96*32];

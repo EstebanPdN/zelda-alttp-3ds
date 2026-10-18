@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible problem in this port.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Port version
+      description: Include the release tag or source commit.
+    validations:
+      required: true
+  - type: dropdown
+    id: console
+    attributes:
+      label: Environment
+      options:
+        - Old Nintendo 3DS family
+        - New Nintendo 3DS family
+        - Emulator
+        - Host build or build tools
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Describe the scene, settings and exact actions.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Use the diagnostic instructions in the README when available. Review captures before sharing. Do not upload ROMs, extracted game data, credentials or personal saves.

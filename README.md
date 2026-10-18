@@ -144,6 +144,9 @@ Press `L + R + A` while the issue is visible and attach the resulting dump from:
 
 ## Documentation
 
+- [Repository map and maintenance conventions](docs/REPOSITORY.md)
+
+
 | Guide | Purpose |
 | --- | --- |
 | [3DS controls and diagnostics](platform/3ds/README.md) | Platform setup, input and bug-report captures. |
@@ -157,7 +160,7 @@ Requirements:
 
 - devkitARM, libctru and 3ds-cmake under `DEVKITPRO`
 - `makerom` and `bannertool` for CIA packaging
-- the vendored SDL2 source in `app/jni/SDL2`
+- the vendored SDL2 source in `third_party/SDL2`
 - `banner.cgfx` is prebuilt in `platform/3ds/assets`; it was generated from
   the supplied 2.0 Blender logo model.
 
@@ -173,7 +176,7 @@ The script builds the 3DSX and CIA under `build-3ds/game/`.
 ## License and legal notice
 
 The Zelda3 engine retains the **MIT license** and copyright notices in
-[app/jni/src/LICENSE.txt](app/jni/src/LICENSE.txt), which also contains the Opus notice.
+[engine/LICENSE.txt](engine/LICENSE.txt), which also contains the Opus notice.
 SDL2, SDL2_mixer and other dependencies retain their own licenses. These
 component licenses do not grant rights to Nintendo game content.
 

@@ -3,7 +3,7 @@
 from pathlib import Path
 import tempfile,subprocess,argparse
 r=Path(__file__).resolve().parents[3]
-a=argparse.ArgumentParser();a.add_argument('--source',type=Path,default=r/'app/jni/src/src/platform/linux/second_screen_sdl.c');args=a.parse_args();s=args.source.read_text()
+a=argparse.ArgumentParser();a.add_argument('--source',type=Path,default=r/'engine/src/platform/linux/second_screen_sdl.c');args=a.parse_args();s=args.source.read_text()
 def fn(sig):
  a=s.index(sig);i=s.index('{',a)+1;n=1
  while n:n+=(s[i]=='{')-(s[i]=='}');i+=1
@@ -72,7 +72,7 @@ static int SDL_RenderReadPixels(void *r, const SDL_Rect *rect, int fmt, void *ds
 #define SDL_PIXELFORMAT_RGB565 0
 typedef void SDL_Renderer;
 '''
-code+='#include "'+str(r/'app/jni/src/src/platform/linux/bottom_hearts.h')+'"\n'
+code+='#include "'+str(r/'engine/src/platform/linux/bottom_hearts.h')+'"\n'
 code+=r'''
 static BottomHearts ss_worker_hearts[2],ss_display_hearts;
 static uint8_t display[512*256*2],worker0[512*256*2],worker1[512*256*2];

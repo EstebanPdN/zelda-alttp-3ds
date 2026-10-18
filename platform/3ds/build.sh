@@ -13,7 +13,7 @@ export DEVKITPRO DEVKITARM
 
 if [[ ! -f "${SDL_PREFIX}/lib/cmake/SDL2/SDL2Config.cmake" ]]; then
   cmake \
-    -S "${ROOT}/app/jni/SDL2" \
+    -S "${ROOT}/third_party/SDL2" \
     -B "${SDL_BUILD}" \
     -DCMAKE_TOOLCHAIN_FILE="${DEVKITPRO}/cmake/3DS.cmake" \
     -DCMAKE_INSTALL_PREFIX="${SDL_PREFIX}" \
@@ -39,7 +39,7 @@ cmake --build "${GAME_BUILD}" --parallel
 MAKEROM="${MAKEROM:-${TOOLS_ROOT}/makerom}"
 BANNERTOOL="${BANNERTOOL:-${TOOLS_ROOT}/bannertool}"
 if [[ ! -x "${MAKEROM}" || ! -x "${BANNERTOOL}" ]]; then
-  printf '3DSX listo. Para crear la CIA define MAKEROM y BANNERTOOL.\n'
+  printf '3DSX ready. Set MAKEROM and BANNERTOOL to package the CIA.\n'
   exit 0
 fi
 
@@ -70,6 +70,6 @@ fi
     -banner build-3ds/game/zelda3-3ds.bnr
 )
 
-printf 'Listos:\n'
+printf 'Ready:\n'
 printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.2.3dsx"
 printf '  %s\n' "${GAME_BUILD}/zelda3-3ds-v3.2.cia"

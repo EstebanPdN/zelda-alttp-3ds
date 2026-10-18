@@ -1,0 +1,17 @@
+name: Repository organization
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  repository:
+    name: Layout, documentation and source boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Validate repository organization
+        run: |
+          python3 scripts/check-repository.py
+          git diff --check

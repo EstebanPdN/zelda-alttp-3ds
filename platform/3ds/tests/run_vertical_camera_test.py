@@ -4,7 +4,7 @@ from pathlib import Path
 import argparse,subprocess,tempfile
 r=Path(__file__).resolve().parents[3]
 p=argparse.ArgumentParser();p.add_argument('--dumps',nargs='*',type=Path,default=[]);p.add_argument('--output',type=Path);a=p.parse_args()
-s=(r/'app/jni/src/src/zelda_rtl.c').read_text();model=(r/'platform/3ds/tests/ppu_gpu_model_test.c').read_text()
+s=(r/'engine/src/zelda_rtl.c').read_text();model=(r/'platform/3ds/tests/ppu_gpu_model_test.c').read_text()
 def fn(sig):
  start=s.index(sig);i=s.index('{',start)+1;n=1
  while n:n+=(s[i]=='{')-(s[i]=='}');i+=1
@@ -66,6 +66,6 @@ int main(int argc,char **argv) {
 '''
 with tempfile.TemporaryDirectory() as t:
  d=Path(t);(d/'test.c').write_text(code)
- subprocess.run(['cc','-O1','-D__3DS__','-fsanitize=address,undefined','-fno-sanitize=shift-base','-fno-sanitize-recover=all','-I'+str(r/'app/jni/src'),'-I'+str(r/'platform/3ds/source'),str(d/'test.c'),str(r/'app/jni/src/snes/ppu.c'),str(r/'app/jni/src/src/wide_camera.c'),str(r/'platform/3ds/source/ppu_gpu_model.c'),'-o',str(d/'test')],check=True)
+ subprocess.run(['cc','-O1','-D__3DS__','-fsanitize=address,undefined','-fno-sanitize=shift-base','-fno-sanitize-recover=all','-I'+str(r/'engine'),'-I'+str(r/'platform/3ds/source'),str(d/'test.c'),str(r/'engine/snes/ppu.c'),str(r/'engine/src/wide_camera.c'),str(r/'platform/3ds/source/ppu_gpu_model.c'),'-o',str(d/'test')],check=True)
  if a.output:a.output.mkdir(parents=True,exist_ok=True)
  subprocess.run([str(d/'test'),str(a.output.resolve()) if a.output else '-',*[str(p.resolve()) for p in a.dumps]],check=True)

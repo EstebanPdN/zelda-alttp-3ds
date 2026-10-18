@@ -5,7 +5,7 @@ Desktop lifecycle test; it does not emulate NDSP or prove console startup.
 from pathlib import Path
 import os, subprocess, tempfile
 root=Path(__file__).resolve().parents[3]
-source=(root/'app/jni/src/src/main.c').read_text()
+source=(root/'engine/src/main.c').read_text()
 def function(name):
     start=source.index(name)
     begin=source.index('{',start)

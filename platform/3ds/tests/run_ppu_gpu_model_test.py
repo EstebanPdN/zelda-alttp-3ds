@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory(prefix='alttp-pica-parity-') as t:
   copy=Path(t)/'general.c';copy.write_text(model.read_text().replace('f->sharedWindow=SharedBlackWindow(f);','f->sharedWindow=false;'));model=copy
  subprocess.run(['cc','-std=c11','-O1','-g','-fsanitize=address,undefined',
   '-fno-sanitize=shift-base','-fno-sanitize-recover=all',
-  '-I'+str(r/'app/jni/src'),'-I'+str(r/'platform/3ds/source'),
+  '-I'+str(r/'engine'),'-I'+str(r/'platform/3ds/source'),
   str(r/'platform/3ds/tests/ppu_gpu_model_test.c'),str(model),
-  str(r/'app/jni/src/snes/ppu.c'),'-o',str(out)],check=True)
+  str(r/'engine/snes/ppu.c'),'-o',str(out)],check=True)
  subprocess.run([str(out),str(a.scenes),*[str(d.resolve()) for d in a.dumps]],check=True)

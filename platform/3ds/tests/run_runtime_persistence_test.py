@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess,tempfile
 r=Path(__file__).resolve().parents[3]
 s=(r/'platform/3ds/source/platform_3ds.c').read_text()
-u=(r/'app/jni/src/src/platform/linux/second_screen_sdl.c').read_text()
+u=(r/'engine/src/platform/linux/second_screen_sdl.c').read_text()
 def function(text, signature):
  a=text.index(signature); b=text.index('{',a); level=1; end=b+1
  while level:

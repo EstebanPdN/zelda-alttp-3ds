@@ -3,7 +3,7 @@
 from pathlib import Path
 import subprocess,tempfile
 r=Path(__file__).resolve().parents[3]
-s=(r/'platform/3ds/source/platform_3ds.c').read_text();m=(r/'app/jni/src/src/main.c').read_text()
+s=(r/'platform/3ds/source/platform_3ds.c').read_text();m=(r/'engine/src/main.c').read_text()
 def function(text,signature):
  a=text.index(signature);b=text.index('{',a);n=1;e=b+1
  while n:n+=(text[e]=='{')-(text[e]=='}');e+=1
@@ -64,5 +64,5 @@ int main(void) {
 '''
 with tempfile.TemporaryDirectory() as t:
  p=Path(t);(p/'test.c').write_text(code)
- subprocess.run(['cc','-O1','-fsanitize=address,undefined','-I'+str(r/'app/jni/src'),'-I'+str(r/'app/jni/SDL2/include'),'-I'+str(r/'platform/3ds/source'),str(p/'test.c'),'-o',str(p/'test')],check=True)
+ subprocess.run(['cc','-O1','-fsanitize=address,undefined','-I'+str(r/'engine'),'-I'+str(r/'third_party/SDL2/include'),'-I'+str(r/'platform/3ds/source'),str(p/'test.c'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)

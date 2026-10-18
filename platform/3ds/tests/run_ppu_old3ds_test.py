@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix='lttp-e7-parity-') as directory:
     (tmp / 'reference.c').write_text(reference)
     exports = re.findall(r'^(?:Ppu\*|void|int|uint8_t)\s+((?:ppu_|Ppu)[A-Za-z0-9_]+)\(', reference, re.M)
     common = [os.environ.get('CC', 'cc'), '-std=c11', '-O2' if args.sanitize else '-O3',
-              '-fno-strict-aliasing', '-I' + str(root / 'app/jni/src'), '-I' + str(root / 'app/jni/src/snes')]
+              '-fno-strict-aliasing', '-I' + str(root / 'engine'), '-I' + str(root / 'engine/snes')]
     # E6 relies on signed bit-plane/Mode 7 shifts. Keep all other UB and
     # address checks enabled, while preserving the reference implementation.
     if args.sanitize:
@@ -32,6 +32,6 @@ with tempfile.TemporaryDirectory(prefix='lttp-e7-parity-') as directory:
     subprocess.run(common + ['-D' + n + '=ref_' + n for n in exports] +
                    ['-c', str(tmp / 'reference.c'), '-o', str(tmp / 'reference.o')], check=True)
     subprocess.run(common + [str(tmp / 'test.c'),
-                   str(root / 'app/jni/src/snes/ppu.c'), str(tmp / 'reference.o'),
+                   str(root / 'engine/snes/ppu.c'), str(tmp / 'reference.o'),
                    '-o', str(tmp / 'test')], check=True)
     subprocess.run([str(tmp / 'test'), str(args.scenes)] + [str(d.resolve()) for d in args.dumps], check=True)

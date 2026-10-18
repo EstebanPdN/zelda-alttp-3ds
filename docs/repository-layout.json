@@ -1,0 +1,25 @@
+{
+  "root_entries": [
+    ".github",
+    ".gitignore",
+    "CHANGELOG.md",
+    "README.md",
+    "docs",
+    "engine",
+    "platform",
+    "scripts",
+    "third_party",
+    "tools"
+  ],
+  "current_documents": [
+    "README.md",
+    "docs/REPOSITORY.md",
+    "docs/CONTRIBUTING.md"
+  ],
+  "required_paths": [
+    "README.md",
+    "docs/REPOSITORY.md",
+    "scripts/check-repository.py",
+    "platform/3ds/build.sh"
+  ]
+}

@@ -18,6 +18,6 @@ with tempfile.TemporaryDirectory(prefix='alttp-hearts-') as tmp:
     subprocess.run(['cc', '-O1', '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
         '-ffunction-sections', '-fdata-sections',
         '-Wl,-dead_strip' if sys.platform == 'darwin' else '-Wl,--gc-sections',
-        '-I' + str(root / 'app/jni/src'), '-I' + str(root / 'platform/3ds/source'),
+        '-I' + str(root / 'engine'), '-I' + str(root / 'platform/3ds/source'),
         str(root / 'platform/3ds/tests/bottom_hearts_test.c'), *flags, '-o', exe], check=True)
     subprocess.run([exe], check=True)

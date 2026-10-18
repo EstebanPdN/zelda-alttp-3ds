@@ -7,7 +7,7 @@ from pathlib import Path
 import argparse, subprocess, tempfile
 r=Path(__file__).resolve().parents[3]
 p=argparse.ArgumentParser();p.add_argument('--source',type=Path);p.add_argument('--dump',type=Path,required=True);a=p.parse_args()
-s=(a.source or r/'app/jni/src/src/zelda_rtl.c').read_text()
+s=(a.source or r/'engine/src/zelda_rtl.c').read_text()
 def fn(sig):
  start=s.index(sig);i=s.index('{',start)+1;depth=1
  while depth:
@@ -71,5 +71,5 @@ int main(int argc,char**argv){
 '''
 with tempfile.TemporaryDirectory() as td:
  t=Path(td);(t/'test.c').write_text(code)
- subprocess.run(['cc','-O1','-fsanitize=address,undefined','-I'+str(r/'app/jni/src'),str(t/'test.c'),'-o',str(t/'test')],check=True)
+ subprocess.run(['cc','-O1','-fsanitize=address,undefined','-I'+str(r/'engine'),str(t/'test.c'),'-o',str(t/'test')],check=True)
  subprocess.run([str(t/'test'),str(a.dump/'ram.bin'),str(a.dump/'sram.bin')],check=True)

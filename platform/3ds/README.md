@@ -59,7 +59,7 @@ Timing spans include preemption and may overlap; they are not CPU-cycle counts.
 ## Building
 
 Requirements: devkitARM, libctru, 3ds-cmake, makerom and bannertool. SDL2 is
-vendored in `app/jni/SDL2`.
+vendored in `third_party/SDL2`.
 
 ```sh
 bash platform/3ds/build.sh

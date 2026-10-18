@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Bakes the Linux-only second-screen tables (ss_sheets.h, ss_textures.h) in
-# app/jni/src/src/platform/linux from the committed assets in
+# engine/src/platform/linux from the committed assets in
 # app/src/main/assets/secondscreen. (render_*.py generate those assets from a
 # ROM; gen_tables.py emits the shared second_screen_tables.h.) Run from repo root:
 #   python tools/secondscreen/gen_linux_tables.py
