@@ -193,8 +193,8 @@ work, [arth78](https://github.com/arth78) for the WIDE display contribution,
 and [Archaistic](https://github.com/Archaistic) for the WIDE height and
 Triforce improvements.
 
-Logo work by [Phibonacci](https://github.com/Phibonacci), based on the original
-3D model by [TiraArt](https://sketchfab.com/TiraArt).
+3D Banner work by [Phibonacci](https://github.com/Phibonacci), based on the 3D
+model by [TiraArt](https://sketchfab.com/TiraArt).
 
 See [3DS controls and diagnostics](platform/3ds/README.md).
 
