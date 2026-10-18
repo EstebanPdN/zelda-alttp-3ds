@@ -133,9 +133,13 @@ static uint16_t Unpack(uint32_t c) {return ((c>>27)&31)|(((c>>19)&31)<<5)|(((c>>
 static uint16_t RefRgb(uint32_t c) {return ((c>>19)&31)|(((c>>11)&31)<<5)|(((c>>3)&31)<<10);}
 static bool Raster(void *ctx,unsigned group,const PicaQuad *q) {
  (void)ctx;
- // Stereo parallax by layer (depth identifies it): BG1/BG2 tiles 2, BG3 tiles and backdrop 0, OBJ 1, compose 0.
- unsigned z=q->depth;
- assert(q->parallax==(group>=4?0:(group&1)?1:(z==0xc000||z==0x8000||z==0xb100||z==0x7100)?2:0));
+ // Stereo parallax (depth identifies the layer): HUD 0, priority-1 tiles and OBJ priority 3 = 1,
+ // floor tiles, backdrop and OBJ priority 2 = 2, BG3 low and OBJ priority 0/1 = 3, compose 0.
+ // Sub-screen tiles depend on the line's OBJ colour math (1 or 3), not known here.
+ unsigned z=q->depth,zh=z>>8;
+ unsigned expect=group>=4?0:(group&1)?(zh>=0xe4?1:zh>=0xa4?2:3):group==2?(z==1?2:99)
+   :z==0xf200?0:z==0x1200?3:(z==0xc000||z==0xb100)?1:2;
+ if(expect==99) assert(q->parallax==1||q->parallax==3); else assert(q->parallax==expect);
  for(int y=q->y0;y<q->y1;y++) for(int x=q->x0;x<q->x1;x++) {
   assert(x>=0 && x<(int)width && y>=0 && y<240);
   unsigned i=y*512+x;

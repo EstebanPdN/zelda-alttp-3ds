@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.2-S2 (fork, experimental)
+
+- 3D depth now follows the SNES layer order: sprites sit on their floor plane,
+  priority tiles (tree tops, wall tops, upper floors) stand nearer, lower floors
+  and overlays take their own levels.
+
 ## v3.2-S1 (fork, experimental)
 
 - Added stereoscopic 3D depth setting.
