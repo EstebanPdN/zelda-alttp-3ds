@@ -16,6 +16,9 @@ static const uint8_t sizes[8][2] = {
 // Link on his floor. Sub-screen BG1 is an overlay above Link when OBJ colour math is on
 // (fog, rain, translucent layer) and the lower floor below everything when it is off.
 // ponytail: tune the four levels here; 0 = screen plane, larger = further back.
+// Quads carry eighths of a unit per edge so a priority tile (tree top, statue head,
+// wall top) can lean: its bottom edge stays on the floor it stands on, its top edge
+// is at the tall depth, and tiles stacked above it stay flat at the tall depth.
 enum { kParallaxHud=0, kParallaxTall=1, kParallaxFloor=2, kParallaxBelow=3 };
 static unsigned BgParallax(const Ppu *p,unsigned layer,unsigned sub,bool prio) {
   if(sub) return (p->mathEnabled&16)?kParallaxTall:kParallaxBelow;
@@ -113,14 +116,17 @@ static bool Emit(PicaFrame *f,unsigned group,PicaQuad q) {
 }
 static PicaQuad Solid(int x0,int y0,int x1,int y1,uint16_t rgb,unsigned alpha) {
   return (PicaQuad){x0,y0,x1,y1,2,4092,2,4092,1,
-    (rgb&31)*8+1,((rgb>>5)&31)*8+1,((rgb>>10)&31)*8+1,alpha,kParallaxFloor};
+    (rgb&31)*8+1,((rgb>>5)&31)*8+1,((rgb>>10)&31)*8+1,alpha,kParallaxFloor*8,kParallaxFloor*8};
 }
 static bool TileQuad(PicaFrame *f,unsigned group,unsigned slot,int x,int y,
-                     int w,int h,int sx,int sy,bool hf,bool vf,unsigned z,unsigned alpha,unsigned parallax) {
+                     int w,int h,int sx,int sy,bool hf,bool vf,unsigned z,unsigned alpha,unsigned parallaxBottom,unsigned parallaxTop) {
   unsigned col=slot%(PICA_ATLAS_W/8),row=slot/(PICA_ATLAS_W/8);
   int u0=col*8+(hf?8-sx:sx),u1=u0+(hf?-w:w);
   int v0=row*8+(vf?8-sy:sy),v1=v0+(vf?-h:h);
-  PicaQuad q={x,y,x+w,y+h,u0*4,4096-v0*8,u1*4,4096-v1*8,z,255,255,255,alpha,parallax};
+  // UVs sit a quarter texel inside the tile so a sheared (leaning) quad never samples the
+  // neighbouring atlas tile at its edge; integer-aligned quads still hit the same texels.
+  int du=hf?-1:1;
+  PicaQuad q={x,y,x+w,y+h,u0*4+du,4096-v0*8,u1*4-du,4096-v1*8,z,255,255,255,alpha,parallaxBottom,parallaxTop};
   return Emit(f,group,q);
 }
 static unsigned Band(PicaFrame *f,unsigned y,unsigned max) {
@@ -183,8 +189,20 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
         if(slot==-1) return false;
         unsigned w=IntMin(8-(wx&7),end-x);
         unsigned z=layer==0?((tile&0x2000)?0xc000:0x8000):layer==1?((tile&0x2000)?0xb100:0x7100):((tile&0x2000)?0xf200:0x1200);
+        bool prio=(tile&0x2000)!=0;
+        unsigned top=BgParallax(p,layer,sub,prio),bottom=top;
+        if(prio && layer<2 && !sub) {
+          // Lean only the lowest priority tile of a column: if the tile below is also
+          // priority this one is part of the same tall object and stays flat.
+          unsigned wyb=(wy+8)&(bg->tilemapHigher?511:255);
+          unsigned mapb=(bg->tilemapAdr+((wyb>>3)&31)*32+((wx>>3)&31)+
+            (wx>=256?0x400:0)+(wyb>=256?(bg->tilemapWider?0x800:0x400):0))&0x7fff;
+          if(!(f->memory->vram[mapb]&0x2000)) bottom=BgParallax(p,layer,sub,false);
+        }
+        unsigned sy=wy&7;
+        unsigned pt=top*8+(bottom-top)*sy,pb=top*8+(bottom-top)*(sy+h);
         if(slot>=0 && !TileQuad(f,group,slot,x+p->extraLeftRight,y,w,h,wx&7,wy&7,
-            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127),BgParallax(p,layer,sub,(tile&0x2000)!=0))) return false;
+            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127),pb,pt)) return false;
         x+=w;
       }
     }
@@ -264,7 +282,7 @@ static bool Objects(PicaFrame *f,unsigned sub) {
         int l=IntMax(left,win.edges[i]),r=IntMin(left+8,win.edges[i+1]);
         if(l>=r)continue;
         if(!TileQuad(f,sub*2+1,slot,l+p->extraLeftRight,y,r-l,h,l-left,vf?7-(row&7):row&7,
-          attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127),ObjParallax((attr>>12)&3)))return false;
+          attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127),ObjParallax((attr>>12)&3)*8,ObjParallax((attr>>12)&3)*8))return false;
       }
     }
     y+=h;

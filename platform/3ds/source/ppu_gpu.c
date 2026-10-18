@@ -65,10 +65,11 @@ static bool Emit(void *ctx,unsigned group,const PicaQuad *q) {
   if(range->first+range->count!=g.count) return false;
   int16_t depth=q->depth>>1;
   if(!depth) depth=1;
-  Vertex a={q->x0,q->y0,depth,q->parallax,q->u0,q->v0,q->r,q->g,q->b,q->a};
+  // y0 is the top edge: a and b carry the top parallax, c and d the bottom one.
+  Vertex a={q->x0,q->y0,depth,q->parallaxTop,q->u0,q->v0,q->r,q->g,q->b,q->a};
   Vertex b=a,c=a,d=a;
   b.x=d.x=q->x1;b.u=d.u=q->u1;
-  c.y=d.y=q->y1;c.v=d.v=q->v1;
+  c.y=d.y=q->y1;c.v=d.v=q->v1;c.w=d.w=q->parallax;
   Vertex *v=&g.vertices[g.count];
   v[0]=a;v[1]=b;v[2]=c;v[3]=c;v[4]=b;v[5]=d;
   g.count+=6;
@@ -464,7 +465,8 @@ bool PpuGpuDraw(void) {
   uint64_t start=svcGetSystemTick();
   // Left eye shifts layers left, right eye right: positive parallax recedes behind the screen.
   // Queue order lets the left composition consume main/sub before the right pass clears them.
-  float k=g.resultTargetRight && g.stereoPixels>0?g.stereoPixels*g.invWidth:0;
+  // Vertex parallax is in eighths of a unit.
+  float k=g.resultTargetRight && g.stereoPixels>0?g.stereoPixels*g.invWidth/8.f:0;
   bool ok=DrawEye(-k,g.resultTarget);
   if(ok && k>0) ok=DrawEye(k,g.resultTargetRight);
   g.stereo=ok && k>0;

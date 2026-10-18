@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.2-S3 (fork, experimental)
+
+- Tall tiles (tree tops, statue heads, wall tops) now lean from the floor they
+  stand on to their raised depth instead of stepping, so objects no longer split.
+
 ## v3.2-S2 (fork, experimental)
 
 - 3D depth now follows the SNES layer order: sprites sit on their floor plane,
