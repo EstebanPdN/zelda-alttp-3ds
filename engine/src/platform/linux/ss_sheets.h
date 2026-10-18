@@ -95,3 +95,33 @@ static const unsigned char kSS_ItemMaxLevel[20] = {4,2,1,1,2,1,1,1,1,1,1,1,3,1,1
 #define SS_GLYPH_MBAR_EMPTY 37
 
 static const unsigned char kSS_LetterCell[26] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25};
+
+#define SS_UI_ICON_CELL 24
+#define SS_UI_HEART 0
+#define SS_UI_HEART_HALF 1
+#define SS_UI_HEART_OFF 2
+#define SS_UI_FLASK 3
+#define SS_UI_BOMB 4
+#define SS_UI_ARROW 5
+#define SS_UI_KEY 6
+#define SS_UI_RUPEE 7
+#define SS_UI_COG 8
+#define SS_UI_SWORD 9
+
+static const char kSS_FontChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-/:x%";
+#define SS_FONT_LARGE_CELL_W 14
+#define SS_FONT_LARGE_CELL_H 12
+#define SS_FONT_LARGE_COLS 16
+#define SS_FONT_LARGE_CAP 8
+#define SS_FONT_LARGE_CAP_TOP 1
+#define SS_FONT_LARGE_PAD 1
+#define SS_FONT_LARGE_SPACE 3
+static const unsigned char kSS_FontLargeAdvance[42] = {8,8,8,9,7,6,9,9,3,4,8,6,10,8,9,8,9,8,8,7,8,8,12,8,7,8,7,7,7,7,7,7,7,7,7,7,3,6,4,3,6,12};
+#define SS_FONT_SMALL_CELL_W 11
+#define SS_FONT_SMALL_CELL_H 8
+#define SS_FONT_SMALL_COLS 16
+#define SS_FONT_SMALL_CAP 6
+#define SS_FONT_SMALL_CAP_TOP 0
+#define SS_FONT_SMALL_PAD 1
+#define SS_FONT_SMALL_SPACE 2
+static const unsigned char kSS_FontSmallAdvance[42] = {6,6,6,7,5,5,7,7,3,3,6,5,8,7,7,6,7,6,6,5,7,6,9,5,5,5,5,5,5,5,5,5,5,5,5,5,2,4,3,2,4,9};

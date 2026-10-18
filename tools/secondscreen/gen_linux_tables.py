@@ -2,7 +2,8 @@
 # Bakes the Linux-only second-screen tables (ss_sheets.h, ss_textures.h) in
 # engine/src/platform/linux from the committed assets in
 # app/src/main/assets/secondscreen. (render_*.py generate those assets from a
-# ROM; gen_tables.py emits the shared second_screen_tables.h.) Run from repo root:
+# ROM; gen_tables.py emits the shared second_screen_tables.h; gen_ui_icons.py
+# and bake_ui_font.py make the ui_icons/ui_font sheets.) Run from repo root:
 #   python tools/secondscreen/gen_linux_tables.py
 # Needs Pillow (for the texture PNGs). The generated headers are committed, so
 # a normal `make` build does not need to run this -- only re-run it if the
@@ -57,24 +58,43 @@ def gen_sheets():
     letter_cells = [lt[chr(ord('A') + i)] for i in range(26)]
     out.append("static const unsigned char kSS_LetterCell[26] = {" +
                ",".join(map(str, letter_cells)) + "};")
+
+    # UI chrome icons (ui_icons.json): column = icon, row 0 = 24 px, row 1 = 12 px.
+    ui = json.load(open(os.path.join(ASSETS, "ui_icons.json")))
+    out += ["", f"#define SS_UI_ICON_CELL {ui['cell']}"]
+    for k, (col, row) in ui["map"].items():
+        if k.endswith("_24"):
+            out.append(f"#define SS_UI_{k[:-3].upper()} {col}")
+
+    # Label font (ui_font.json): per-glyph advances for both baked sizes.
+    font = json.load(open(os.path.join(ASSETS, "ui_font.json")))
+    out += ["", 'static const char kSS_FontChars[] = "' + font["chars"] + '";']
+    for size in ("large", "small"):
+        m = font[size]
+        for key in ("cell_w", "cell_h", "cols", "cap", "cap_top", "pad", "space"):
+            out.append(f"#define SS_FONT_{size.upper()}_{key.upper()} {m[key]}")
+        out.append(f"static const unsigned char kSS_Font{size.capitalize()}Advance"
+                   f"[{len(m['advance'])}] = {{" + ",".join(map(str, m["advance"])) + "};")
     open(os.path.join(SRC, "ss_sheets.h"), "w", newline="\n").write("\n".join(out) + "\n")
     print("wrote src/ss_sheets.h")
 
 
 def gen_textures():
     from PIL import Image
-    out = ["// Theme background textures from secondscreen/*.png, baked to ARGB",
-           "// arrays by gen_secondscreen.py so no image loader is needed at runtime.",
-           "// (tex_wood.png is unused by the UI and not embedded.)",
+    out = ["// Theme background textures, UI icons and label font sheets from",
+           "// secondscreen/*.png, baked to ARGB arrays by gen_linux_tables.py so no",
+           "// image loader is needed at runtime. The ui_* sheets keep their alpha.",
            "#pragma once", ""]
     for name, sym in [("tex_menu", "kSSTexMenu"), ("tex_parchment", "kSSTexParch"),
-                      ("tex_stone", "kSSTexStone")]:
-        im = Image.open(os.path.join(ASSETS, f"{name}.png")).convert("RGB")
+                      ("tex_stone", "kSSTexStone"), ("tex_wood", "kSSTexWood"),
+                      ("ui_icons", "kSSUiIcons"), ("ui_font_large", "kSSUiFontLarge"),
+                      ("ui_font_small", "kSSUiFontSmall")]:
+        im = Image.open(os.path.join(ASSETS, f"{name}.png")).convert("RGBA")
         w, h = im.size
         px = list(im.getdata())
         out.append(f"#define {sym}_W {w}")
         out.append(f"#define {sym}_H {h}")
-        vals = [f"0xff{r:02x}{g:02x}{b:02x}" for (r, g, b) in px]
+        vals = [f"0x{a:02x}{r:02x}{g:02x}{b:02x}" for (r, g, b, a) in px]
         rows = [",".join(vals[i:i + 12]) for i in range(0, len(vals), 12)]
         out.append(f"static const unsigned int {sym}[{w * h}] = {{")
         out.append(",\n".join(rows))
