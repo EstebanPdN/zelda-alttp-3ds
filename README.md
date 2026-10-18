@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img width="1200" alt="alttp" src="https://github.com/user-attachments/assets/6fc340f1-7d18-4e75-9a1a-bf8986d490dc" />
+  <img width="1200" alt="alttp" src="docs/images/showcase-rounded.svg" />
 </p>
 
 <p align="center">
