@@ -1,6 +1,33 @@
-# Zelda A Link to the Past 3DS
+<h1 align="center">A Link to the Past 3DS</h1>
 
-<img width="1672" height="941" alt="alttp" src="https://github.com/user-attachments/assets/6fc340f1-7d18-4e75-9a1a-bf8986d490dc" />
+<p align="center">
+  <strong>Return to Hyrule. Keep the map close.</strong><br>
+  A Link to the Past, adapted for two Nintendo 3DS screens.
+</p>
+
+<p align="center">
+  <a href="#download-and-installation">Download</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="#community-and-bug-reports">Community</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.2"><img src="docs/badges/version.svg" alt="Stable release: v3.2" height="22"></a>
+  <a href="#download-and-installation"><img src="docs/badges/platform.svg" alt="Nintendo 3DS" height="22"></a>
+  <a href="#updates"><img src="docs/badges/updater.svg" alt="Updates: built in" height="22"></a>
+  <a href="#license-and-legal-notice"><img src="docs/badges/license.svg" alt="Component-specific licenses" height="22"></a>
+</p>
+
+<p align="center">
+  <img width="1200" alt="alttp" src="https://github.com/user-attachments/assets/6fc340f1-7d18-4e75-9a1a-bf8986d490dc" />
+</p>
+
+<p align="center">
+  <a href="https://estebanpdn.github.io/"><img src="docs/images/website.svg" alt="Visit Esteban’s Forge" width="142" height="46"></a>
+  <a href="https://discord.gg/BjbzfRYpV"><img src="docs/images/discord-official.svg" alt="Join our Discord community" width="166" height="46"></a>
+</p>
 
 Nintendo 3DS dual-screen port of Zelda3, built with help from Codex.
 
@@ -15,10 +42,20 @@ No ROM or extracted game asset package is distributed in this repository. Each
 user must provide their own legally obtained USA, unheadered ROM on their own
 3DS SD card.
 
-## Discord
-https://discord.gg/zy8BqH5ss
-
 ## Features
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><strong>Return to Hyrule</strong><br>A native dual-screen adaptation based on Zelda3 and its Android ports.</td>
+    <td width="50%" valign="top"><strong>Made for two screens</strong><br>400×240 gameplay above; live maps, gear, items and touch settings below.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><strong>Choose your view</strong><br>Wide, stretched and original presentation, with persistent per-ROM settings and turbo options.</td>
+    <td width="50%" valign="top"><strong>Keep it current</strong><br>Stable / Pre-release updates, on-device ROM extraction and quick diagnostic checkpoints.</td>
+  </tr>
+</table>
+
+### Feature details
 
 - Top screen: 400x240 gameplay.
 - Bottom screen: 320x240 live map, dungeon map, gear view, item selection and
@@ -47,7 +84,16 @@ https://discord.gg/zy8BqH5ss
 - HOME Menu banner uses a lightweight custom CGFX 3D logo model with the
   supplied hover sound converted to a short PCM WAV.
 
-## Installation
+<a id="installation"></a>
+
+## Download and installation
+
+<p>
+  <a href="https://github.com/EstebanPdN/zelda-alttp-3ds/releases/download/v3.2/zelda3-3ds-v3.2.cia"><img src="docs/images/download-cia.svg" alt="Download A Link to the Past 3DS CIA" width="210" height="46"></a>
+  <a href="https://github.com/EstebanPdN/zelda-alttp-3ds/releases/download/v3.2/zelda3-3ds-v3.2.3dsx"><img src="docs/images/download-3dsx.svg" alt="Download Homebrew Launcher 3DSX" width="210" height="46"></a>
+</p>
+
+**Stable: [v3.2](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.2).**
 
 Install the CIA, then create this directory on the SD card:
 
@@ -86,7 +132,7 @@ GitHub supplies automatic source-code archives for each tag.
 The release page shows the QR code, a short changelog and bug-report instructions.
 Detailed development notes are preserved inside the source snapshot.
 
-Latest release: [v3.0](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.0)
+Latest stable release: [v3.2](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v3.2)
 
 See [CHANGELOG.md](CHANGELOG.md) for the changes since v2.8.
 
@@ -95,6 +141,15 @@ See [CHANGELOG.md](CHANGELOG.md) for the changes since v2.8.
 Press `L + R + A` while the issue is visible and attach the resulting dump from:
 
 `sdmc:/3ds/Zelda 3DS/dumps/`
+
+## Documentation
+
+| Guide | Purpose |
+| --- | --- |
+| [3DS controls and diagnostics](platform/3ds/README.md) | Platform setup, input and bug-report captures. |
+| [Updates](#updates) | Channels, release notes, installation and restart behavior. |
+| [Building](#building) | Toolchain, SDL2 source and CIA packaging. |
+| [Changelog](CHANGELOG.md) | Version history and changes. |
 
 ## Building
 
@@ -160,3 +215,20 @@ including startup and releases with residual coordinates. Physical coordinates
 remain protected from SDL viewport transforms. The last 32 touch selections
 are included in diagnostic dumps. Use the FBI QR if touch controls prevent
 opening Update.
+
+## Community and bug reports
+
+[Join the project Discord](https://discord.gg/BjbzfRYpV) for updates, testing,
+suggestions and support. Use [GitHub issues](https://github.com/EstebanPdN/zelda-alttp-3ds/issues)
+for reproducible reports, including your version, console model and steps to
+reproduce the problem. Review diagnostic captures before sharing them.
+
+---
+
+<p align="center">
+  <a href="https://estebanpdn.github.io/">Esteban’s Forge</a> ·
+  <a href="https://discord.gg/BjbzfRYpV">Discord</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="#license-and-legal-notice">License and notices</a><br>
+  <sub>An independent fan project. Game names and content belong to their respective owners.</sub>
+</p>
