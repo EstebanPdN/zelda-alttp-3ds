@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img width="1200" alt="alttp" src="docs/images/showcase-rounded.svg" />
+  <img width="1200" alt="alttp" src="docs/images/showcase-rounded.webp" />
 </p>
 
 <p align="center">
