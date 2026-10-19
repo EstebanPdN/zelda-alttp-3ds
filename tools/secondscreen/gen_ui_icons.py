@@ -4,7 +4,7 @@
 # small key, rupee, cog, sword. Each is drawn at 96 px and downsampled to 24 px
 # and 12 px with Lanczos, which gives the soft gloss at device size.
 # Original art (no Nintendo assets). Usage, from the repo root:
-#   python3 tools/secondscreen/gen_ui_icons.py app/src/main/assets/secondscreen
+#   python3 tools/secondscreen/gen_ui_icons.py tools/secondscreen/assets
 #   python3 tools/secondscreen/gen_linux_tables.py   # bake into ss_textures.h
 # -> OUTDIR/ui_icons.png (sheet) + ui_icons.json (cells)
 import math, sys, os, json

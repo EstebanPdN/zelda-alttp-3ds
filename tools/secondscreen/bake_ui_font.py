@@ -7,12 +7,12 @@
 # Usage, from the repo root (needs Pillow; downloads the TTF once unless --ttf):
 #   python3 tools/secondscreen/bake_ui_font.py [--ttf Nunito[wght].ttf]
 #   python3 tools/secondscreen/gen_linux_tables.py
-# Writes app/src/main/assets/secondscreen/ui_font_{large,small}.png + ui_font.json.
+# Writes tools/secondscreen/assets/ui_font_{large,small}.png + ui_font.json.
 import argparse, json, os, tempfile, urllib.request
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ASSETS = os.path.join(HERE, '..', '..', 'app', 'src', 'main', 'assets', 'secondscreen')
+ASSETS = os.path.join(HERE, 'assets')
 URL = 'https://github.com/google/fonts/raw/main/ofl/nunito/Nunito%5Bwght%5D.ttf'
 CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-/:x%'
 # Pixel sizes whose hinted cap height is exactly 8 and 6 px.

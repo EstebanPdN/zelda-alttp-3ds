@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Bakes the Linux-only second-screen tables (ss_sheets.h, ss_textures.h) in
 # engine/src/platform/linux from the committed assets in
-# app/src/main/assets/secondscreen. (render_*.py generate those assets from a
+# tools/secondscreen/assets. (render_*.py generate those assets from a
 # ROM; gen_tables.py emits the shared second_screen_tables.h; gen_ui_icons.py
 # and bake_ui_font.py make the ui_icons/ui_font sheets; bake_guide_font.py the
 # guide reading font.) Run from repo root:
@@ -12,8 +12,8 @@
 import json, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ASSETS = os.path.join(HERE, "..", "..", "app", "src", "main", "assets", "secondscreen")
-SRC = os.path.join(HERE, "..", "..", "app", "jni", "src", "src", "platform", "linux")
+ASSETS = os.path.join(HERE, "assets")
+SRC = os.path.join(HERE, "..", "..", "engine", "src", "platform", "linux")
 
 ITEM_NAMES = ["bow", "boomerang", "hookshot", "bombs", "mushroom", "firerod",
               "icerod", "bombos", "ether", "quake", "torch", "hammer", "flute",

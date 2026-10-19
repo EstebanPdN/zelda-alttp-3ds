@@ -3,13 +3,13 @@
 # misc-fixed 6x9 BDF ("Public domain font. Share and enjoy.") into a 16x6 grid
 # of 6x9 cells, white on transparent, tinted at draw time.
 #   python3 tools/secondscreen/bake_guide_font.py path/to/6x9.bdf
-# Writes app/src/main/assets/secondscreen/guide_font.png; then re-run
+# Writes tools/secondscreen/assets/guide_font.png; then re-run
 # gen_linux_tables.py to embed it.
 import os, sys
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "..", "..", "app", "src", "main", "assets", "secondscreen", "guide_font.png")
+OUT = os.path.join(HERE, "assets", "guide_font.png")
 CW, CH, COLS, ASCENT = 6, 9, 16, 7
 
 def glyphs(path):
