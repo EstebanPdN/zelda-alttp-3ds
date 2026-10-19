@@ -38,6 +38,70 @@ explicit touch keeps priority. The APT notification thread uses priority0x19
 so HOME/sleep requests can be received while gameplay is busy. Runtime logs
 report the selected priority; other thread priorities are retained.
 
+## MSU-1 audio
+
+MSU-1 tracks replace the SPC music with streamed audio. No tracks ship with this
+project; supply your own pack.
+
+Put the pack in `sdmc:/3ds/Zelda 3DS/msu/` using the naming stock packs ship
+with (`alttp_msu-1.pcm` … `alttp_msu-35.pcm`; `alttp_msu-0.pcm` is an optional
+menu track). No renaming is needed.
+
+`MSUPath` is a **prefix**, not a folder: the loader appends the track number and
+`.pcm`. Startup probes these prefixes in order and adopts the first whose
+`<prefix>1.pcm` exists:
+
+1. `msu/alttp_msu-` — stock MSU pack naming (Snes9x/bsnes)
+2. `msu/` — plain numbers in the subfolder
+3. `alttp_msu-` — loose files in the working directory
+4. (empty) — bare numbers
+
+Finding one turns MSU on, points `MSUPath` at that prefix, and switches the
+output to 44100 Hz. Nothing else is required.
+
+Format is MSU-1 PCM: 44100 Hz, 16-bit signed, stereo interleaved, with an 8-byte
+header (`"MSU1"` + `repeat_position` as little-endian uint32).
+
+`tools/check_msu_tracks.py` validates a pack before it reaches the SD card:
+
+```sh
+python3 tools/check_msu_tracks.py path/to/msu
+```
+
+It checks the header, the 44100/16-bit/stereo sizing, duration plausibility and
+gaps in the numbering, and exits non-zero on anything fatal.
+
+Settings live in `[Sound]` of `zelda3.ini`:
+
+| Key | Meaning |
+|---|---|
+| `EnableMSU` | `true`/`1` = PCM, `deluxe` = Deluxe variant. Detection fills this in when a track exists and it is not already set. |
+| `MSUPath` | Track directory relative to the working directory. A missing trailing slash is added for you. |
+| `MSUVolume` | Mix volume, `0%`–`100%`. |
+| `ResumeMSU` | `1` = resume a track when returning to an area instead of restarting it. |
+
+`AudioFreq` and `AudioChannels` are set by the platform layer at startup, so
+editing them here has no effect. Opuz is not used: it needs 48000 Hz and this port
+plays MSU at 44100 Hz, so an opuz flag is dropped with a log line.
+
+Sample rate follows MSU: 44100 Hz when MSU is active or on New 3DS, otherwise the
+previous 32000 Hz. The SPC700 interpreter's cost is fixed per frame, so the higher
+rate only adds DSP resampling — and while MSU owns the output that pass is skipped.
+
+Expected startup log:
+
+```
+Audio config: 44100 Hz stereo, MSU on (enable=0x01, tracks found)
+MSU: loading track 1 from msu/1.pcm
+```
+
+`MSU off (tracks not found)` means the probe found nothing: check the path and the
+file names. `MSU: track N not found` means the directory resolved but that track is
+missing, and playback falls back to SPC for it.
+
+Deluxe packs are not supported: they need an ASM patch applied to the ROM, and this
+port runs the engine directly rather than emulating a patched cartridge.
+
 ## Diagnostics
 
 Press `L + R + A` while the issue is visible and attach the dump from:
