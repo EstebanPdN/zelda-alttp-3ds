@@ -3,25 +3,23 @@
 
 // Tile classes from the engine's collision attributes (see tile_detect.c).
 enum { WALK, SOLID, LEDGE_N, LEDGE_S, LEDGE_EW, LEDGE_DN, LEDGE_DS, DEEP, PIT, STAIR };
-enum { N = kTerrainSize, NN = N * N, MAX_NB = 6 };
+enum { N = kTerrainSize, NN = kTerrainTiles, MAX_NB = 6 };
 // Depth scale: ground at height 0 sits at kFloor eighths (the floor of the
-// pre-terrain build); every tile row of rise comes kRise eighths nearer.
+// layer-based build); every tile row of rise comes kRise eighths nearer.
 enum { kFloor = 16, kRise = kTerrainRise, kCap = kTerrainCap };
-// Solver budget: a full solve after an area/room change, a few warm sweeps per frame.
-enum { kResetSweeps = 120, kChangeSweeps = 16, kWarmSweeps = 6, kFillPasses = 6 };
-// Cost control for the Old 3DS: the terrain only changes with the map, so the
-// heavy step runs every kTerrainEvery frames and a full solve is split into
-// kSweepsPerFrame chunks. Sprite feet update every frame.
-enum { kTerrainEvery = 4, kSweepsPerFrame = 15 };
+// Sweeps per solve: a new area or room restarts the field, a changed tilemap gets
+// a few more, otherwise a warm start converges over successive solves.
+enum { kResetSweeps = 120, kChangeSweeps = 16, kWarmSweeps = 10, kFillPasses = 6 };
 // The solve covers the visible tiles plus this margin, as a plain rectangle: the
 // tilemap wraps around, and off-screen rows hold stale data while streaming.
 enum { kMargin = 6 };
 static const float kLedgeStep = 2.0f, kHMin = -3.0f, kHMax = 6.0f;
-static const float kOmega = 1.6f, kAnchorRate = 0.12f, kHLimit = 64.0f;
+static const float kOmega = 1.6f, kAnchorRate = 0.25f, kHLimit = 64.0f;
 static const uint8_t kObjSizes[8][2] = {
   {8,16},{8,32},{8,64},{16,32},{16,64},{32,64},{16,32},{16,32}
 };
 
+// Solver state: owned by whichever thread calls StereoTerrain_Solve.
 static struct {
   float h[NN];                  // solved ground height, tile rows, unanchored
   uint8_t cls[NN], prio[NN];
@@ -36,7 +34,6 @@ static struct {
   unsigned nodeCount, compCount, gw, gh;
   float anchor;
   bool anchored, primed;
-  unsigned frameNo, pendingSweeps;
   float hb[NN], ht[NN];         // per-tile bottom/top heights, anchored
   uint8_t known[NN];
 } s;
@@ -60,13 +57,6 @@ static uint8_t Classify(unsigned a) {
 static bool IsGround(uint8_t c) { return c != SOLID && c != PIT; }
 // Ground tile inside the window (the only tiles the solve and the scans use).
 static bool G(unsigned i) { return s.inWin[i] && IsGround(s.cls[i]); }
-
-static uint16_t TileWord(const Ppu *p, unsigned tx, unsigned ty) {
-  const BgLayer *bg = &p->bgLayer[1];
-  unsigned adr = (bg->tilemapAdr + (ty & 31) * 32 + (tx & 31) + (tx >= 32 ? 0x400 : 0) +
-                  (ty >= 32 ? (bg->tilemapWider ? 0x800 : 0x400) : 0)) & 0x7fff;
-  return p->vram[adr];
-}
 
 // Desired h[a] - h[b] for ground tile a directly north of ground tile b.
 static float PairOffset(uint8_t a, uint8_t b) {
@@ -151,6 +141,18 @@ static void BuildGraph(void) {
   }
 }
 
+static void Sweep(unsigned count) {
+  for (unsigned k = 0; k < count; k++)
+    for (unsigned n = 0; n < s.nodeCount; n++) {
+      unsigned i = s.nodes[n], c = s.nbCount[i];
+      if (!c) continue;
+      float sum = 0.0f;
+      for (unsigned m = 0; m < c; m++) sum += s.h[s.nb[i][m]] + s.nbOff[i][m];
+      float v = s.h[i] + kOmega * (sum / (float)c - s.h[i]);
+      s.h[i] = v > kHLimit ? kHLimit : v < -kHLimit ? -kHLimit : v;
+    }
+}
+
 // Keep each patch's degree-weighted mean height at zero (the least-squares
 // solution's free constant), so separate patches do not drift apart.
 static void Recentre(void) {
@@ -167,18 +169,6 @@ static void Recentre(void) {
   }
 }
 
-static void Sweep(unsigned count) {
-  for (unsigned k = 0; k < count; k++)
-    for (unsigned n = 0; n < s.nodeCount; n++) {
-      unsigned i = s.nodes[n], c = s.nbCount[i];
-      if (!c) continue;
-      float sum = 0.0f;
-      for (unsigned m = 0; m < c; m++) sum += s.h[s.nb[i][m]] + s.nbOff[i][m];
-      float v = s.h[i] + kOmega * (sum / (float)c - s.h[i]);
-      s.h[i] = v > kHLimit ? kHLimit : v < -kHLimit ? -kHLimit : v;
-    }
-}
-
 static float Anchored(unsigned i) {
   float v = s.h[i] - s.anchor;
   return v < kHMin ? kHMin : v > kHMax ? kHMax : v;
@@ -190,21 +180,39 @@ static uint8_t Px(float hh) {
   return (uint8_t)(r < 1 ? 1 : r > 30 ? 30 : r);
 }
 
-void StereoTerrain_Reset(void) { s.primed = false; s.pendingSweeps = 0; }
-
-static void TerrainStep(PicaTerrain *t, const Ppu *p, const StereoTerrainSource *src) {
+void StereoTerrain_MakeJob(StereoTerrainJob *job, const Ppu *p, const StereoTerrainSource *src, bool reset) {
   const BgLayer *bg = &p->bgLayer[1];
-  unsigned gw = bg->tilemapWider ? 64 : 32, gh = bg->tilemapHigher ? 64 : 32;
-  bool reshaped = !s.primed || gw != s.gw || gh != s.gh;
+  for (unsigned ty = 0; ty < N; ty++)
+    for (unsigned tx = 0; tx < N; tx++) {
+      unsigned adr = (bg->tilemapAdr + (ty & 31) * 32 + (tx & 31) + (tx >= 32 ? 0x400 : 0) +
+                      (ty >= 32 ? (bg->tilemapWider ? 0x800 : 0x400) : 0)) & 0x7fff;
+      job->tilemap[ty * N + tx] = p->vram[adr];
+    }
+  job->indoors = src->dungeonAttr != NULL;
+  job->overworldAttr = src->overworldAttr;
+  if (job->indoors) memcpy(job->dungeonAttr, src->dungeonAttr, NN);
+  job->wider = bg->tilemapWider; job->higher = bg->tilemapHigher;
+  job->hScroll = bg->hScroll; job->vScroll = bg->vScroll;
+  job->extraLeftRight = p->extraLeftRight;
+  job->reset = reset;
+}
+
+void StereoTerrain_Solve(const StereoTerrainJob *job, StereoTerrainOut *out) {
+  out->valid = false;
+  if (!job->indoors && !job->overworldAttr) return;
+  unsigned gw = job->wider ? 64 : 32, gh = job->higher ? 64 : 32;
+  bool reshaped = job->reset || !s.primed || gw != s.gw || gh != s.gh;
   s.gw = gw; s.gh = gh;
 
   // 1. Solve window (visible tiles plus a margin), tile classes and BG priority.
-  int side = p->extraLeftRight;
-  int winX0 = (((int)bg->hScroll - side) >> 3) - kMargin, winY0 = (((int)bg->vScroll + 1) >> 3) - kMargin;
+  int side = job->extraLeftRight;
+  int winX0 = (((int)job->hScroll - side) >> 3) - kMargin, winY0 = (((int)job->vScroll + 1) >> 3) - kMargin;
   int winW = ((256 + 2 * side) >> 3) + 1 + 2 * kMargin, winH = (240 >> 3) + 1 + 2 * kMargin;
   if (winW > (int)gw - 1) winW = (int)gw - 1;
   if (winH > (int)gh - 1) winH = (int)gh - 1;
   bool moved = winX0 != s.winX0 || winY0 != s.winY0 || winW != s.winW || winH != s.winH;
+  static uint8_t wasInWin[NN];
+  memcpy(wasInWin, s.inWin, sizeof(wasInWin));
   if (moved || reshaped) {
     s.winX0 = winX0; s.winY0 = winY0; s.winW = winW; s.winH = winH;
     memset(s.inWin, 0, sizeof(s.inWin));
@@ -212,32 +220,32 @@ static void TerrainStep(PicaTerrain *t, const Ppu *p, const StereoTerrainSource 
       for (int lx = 0; lx < winW; lx++)
         s.inWin[((unsigned)(winY0 + ly) & (gh - 1)) * N + ((unsigned)(winX0 + lx) & (gw - 1))] = 1;
   }
-  unsigned changed = 0;
+  // Only tiles that were already in the window count as a change: tiles scrolling
+  // in are expected and the warm start handles them.
+  unsigned changed = 0, fresh = 0;
   for (unsigned ty = 0; ty < gh; ty++)
     for (unsigned tx = 0; tx < gw; tx++) {
       unsigned i = ty * N + tx;
       if (!s.inWin[i]) continue;
-      uint16_t w = TileWord(p, tx, ty);
-      unsigned a = src->dungeonAttr ? src->dungeonAttr[i] : src->overworldAttr[w & 0x1ff];
+      uint16_t w = job->tilemap[i];
+      unsigned a = job->indoors ? job->dungeonAttr[i] : job->overworldAttr[w & 0x1ff];
       uint8_t c = Classify(a), pr = (w & 0x2000) != 0;
-      if (c != s.cls[i] || pr != s.prio[i]) { changed++; s.cls[i] = c; s.prio[i] = pr; }
+      if (c != s.cls[i] || pr != s.prio[i]) {
+        if (wasInWin[i]) changed++; else fresh++;
+        s.cls[i] = c; s.prio[i] = pr;
+      }
     }
 
-  // 2. Height field, warm-started from the previous step. A new area or room
-  // restarts it; that solve is spread over the next few frames.
+  // 2. Height field, warm-started from the previous solve.
   unsigned sweeps = kWarmSweeps;
   if (reshaped || changed > (unsigned)(winW * winH) / 4) {
     memset(s.h, 0, sizeof(s.h));
     s.anchored = false;
-    s.pendingSweeps = kResetSweeps;
-  } else if (changed && s.pendingSweeps < kChangeSweeps) {
-    s.pendingSweeps = kChangeSweeps;
+    sweeps = kResetSweeps;
+  } else if (changed) {
+    sweeps = kChangeSweeps;
   }
-  if (s.pendingSweeps) {
-    sweeps = s.pendingSweeps < kSweepsPerFrame ? s.pendingSweeps : kSweepsPerFrame;
-    s.pendingSweeps -= sweeps;
-  }
-  if (changed || reshaped || moved) BuildGraph();
+  if (changed || fresh || reshaped || moved) BuildGraph();
   s.primed = true;
   Sweep(sweeps);
   Recentre();
@@ -248,8 +256,8 @@ static void TerrainStep(PicaTerrain *t, const Ppu *p, const StereoTerrainSource 
   float sum = 0.0f; unsigned cnt = 0;
   for (unsigned sy = 0; sy < 224; sy += 8)
     for (unsigned sx = 0; sx < width; sx += 8) {
-      unsigned wx = (unsigned)((int)sx - side + (int)bg->hScroll) & mx;
-      unsigned wy = (sy + 1 + bg->vScroll) & my;
+      unsigned wx = (unsigned)((int)sx - side + (int)job->hScroll) & mx;
+      unsigned wy = (sy + 1 + job->vScroll) & my;
       unsigned i = (wy >> 3) * N + (wx >> 3);
       if (G(i)) { sum += s.h[i]; cnt++; }
     }
@@ -317,22 +325,29 @@ static void TerrainStep(PicaTerrain *t, const Ppu *p, const StereoTerrainSource 
     if (!any) break;
     for (unsigned i = 0; i < NN; i++) if (s.known[i] == 2) s.known[i] = 1;
   }
+
+  // 5. Publish.
+  uint8_t floor = Px(0.0f);
+  memset(out->top, floor, NN); memset(out->bottom, floor, NN); memset(out->ground, floor, NN);
   for (unsigned i = 0; i < NN; i++) {
-    if (!s.inWin[i]) continue;
-    t->top[i] = Px(s.known[i] ? s.ht[i] : 0.0f);
-    t->bottom[i] = Px(s.known[i] ? s.hb[i] : 0.0f);
+    if (!s.inWin[i] || !s.known[i]) continue;
+    out->top[i] = Px(s.ht[i]);
+    out->bottom[i] = Px(s.hb[i]);
+    out->ground[i] = G(i) ? Px(Anchored(i)) : Px(s.hb[i]);
   }
-  t->changed = (uint16_t)changed;
-  t->sweeps = (uint16_t)sweeps;
+  out->gw = (uint16_t)gw; out->gh = (uint16_t)gh;
+  out->changed = (uint16_t)changed; out->sweeps = (uint16_t)sweeps;
+  out->valid = true;
 }
 
-// Sprites: touching OAM rects form one object; it stands on the ground under
-// its lowest edge. Runs every frame because sprites move every frame.
-static void SpriteStep(PicaTerrain *t, const Ppu *p) {
+// Sprites: touching OAM rects form one object; it stands on the ground under the
+// middle of its lowest edge, and every part of it uses that same ground.
+void StereoTerrain_Sprites(const StereoTerrainOut *in, const Ppu *p, PicaTerrain *t) {
+  t->valid = in->valid;
+  t->top = in->top; t->bottom = in->bottom;
   const BgLayer *bg = &p->bgLayer[1];
   int side = p->extraLeftRight;
-  unsigned mx = s.gw * 8 - 1, my = s.gh * 8 - 1;
-
+  unsigned mx = (in->gw ? in->gw : 64) * 8u - 1, my = (in->gh ? in->gh : 64) * 8u - 1;
   int x0[128], y0[128], x1[128], y1[128], par[128];
   bool vis[128];
   for (unsigned e = 0; e < 128; e++) {
@@ -360,37 +375,42 @@ static void SpriteStep(PicaTerrain *t, const Ppu *p) {
       }
     }
   }
-  int feet[128];
-  for (unsigned e = 0; e < 128; e++) feet[e] = -10000;
+  // Per object: lowest edge, and the horizontal extent at that edge.
+  int feet[128], fl[128], fr[128];
+  for (unsigned e = 0; e < 128; e++) { feet[e] = -10000; fl[e] = 10000; fr[e] = -10000; }
   for (unsigned e = 0; e < 128; e++) {
     if (!vis[e]) continue;
     int r = (int)e; while (par[r] != r) r = par[r];
-    if (y1[e] > feet[r]) feet[r] = y1[e];
+    if (y1[e] > feet[r]) { feet[r] = y1[e]; fl[r] = x0[e]; fr[r] = x1[e]; }
+    else if (y1[e] == feet[r]) { if (x0[e] < fl[r]) fl[r] = x0[e]; if (x1[e] > fr[r]) fr[r] = x1[e]; }
   }
+  uint8_t ground[128];
   for (unsigned e = 0; e < 128; e++) {
-    if (!vis[e]) continue;
-    int r = (int)e; while (par[r] != r) r = par[r];
-    int f = feet[r], sx = (x0[e] + x1[e]) / 2, sy = f - 2;
+    if (!vis[e] || par[e] != (int)e) continue;
+    int sx = (fl[e] + fr[e]) / 2, sy = feet[e] - 2;
     if (sy < 0) sy = 0;
     if (sy > 239) sy = 239;
     unsigned wx = (unsigned)(sx - side + (int)bg->hScroll) & mx;
     unsigned wy = (unsigned)(sy + 1 + (int)bg->vScroll) & my;
-    unsigned i = (wy >> 3) * N + (wx >> 3);
-    t->objFeet[e] = (int16_t)f;
-    t->objGround[e] = Px(G(i) ? Anchored(i) : s.known[i] ? s.hb[i] : 0.0f);
+    ground[e] = in->ground[(wy >> 3) * N + (wx >> 3)];
+  }
+  for (unsigned e = 0; e < 128; e++) {
+    if (!vis[e]) continue;
+    int r = (int)e; while (par[r] != r) r = par[r];
+    t->objFeet[e] = (int16_t)feet[r];
+    t->objGround[e] = ground[r];
   }
 }
 
+static bool g_resetRequested;
+void StereoTerrain_Reset(void) { g_resetRequested = true; }
+
 void StereoTerrain_Update(PicaTerrain *t, const Ppu *p, const StereoTerrainSource *src) {
+  static StereoTerrainJob job;
+  static StereoTerrainOut out;
   if (!src || (!src->overworldAttr && !src->dungeonAttr)) { t->valid = false; return; }
-  s.frameNo++;
-  if (!s.primed || s.pendingSweeps || s.frameNo % kTerrainEvery == 0) {
-    memset(t->top, Px(0.0f), sizeof(t->top));
-    memset(t->bottom, Px(0.0f), sizeof(t->bottom));
-    TerrainStep(t, p, src);
-  } else {
-    t->sweeps = 0;
-  }
-  SpriteStep(t, p);
-  t->valid = true;
+  StereoTerrain_MakeJob(&job, p, src, g_resetRequested);
+  g_resetRequested = false;
+  StereoTerrain_Solve(&job, &out);
+  StereoTerrain_Sprites(&out, p, t);
 }

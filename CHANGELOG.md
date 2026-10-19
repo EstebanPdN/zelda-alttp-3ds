@@ -6,8 +6,8 @@
   sets the depth, Settings > Screen > 3D DEPTH picks OFF, LOW, MID or HIGH.
 - 3D depth follows the terrain: ledges, cliff faces and stairs give the ground its
   height, statues, trees and walls stand up from their own base as one piece, and
-  sprites stand on the ground under their feet. `Stereo3DTerrain = 0` in zelda3.ini
-  switches to the simpler layer-based depth.
+  sprites stand on the ground under their feet. The solve runs on the system core.
+  `Stereo3DTerrain = 0` in zelda3.ini switches to the simpler layer-based depth.
 
 ## v4.2-E2
 
