@@ -1,47 +1,19 @@
 # Changelog
 
-## v3.2-G2 (fork, experimental)
+## Unreleased
 
-- GUIDE contents are large buttons: chapters first, then a chapter's places in a
-  two-column grid, with your current place highlighted.
-- Drag the text to scroll smoothly; a short tap still turns the page.
-- Wider scrollbar with a thumb you can drag; guide text wraps at 44 columns.
-
-## v3.2-G1 (fork, experimental)
-
-- GUIDE tab on the bottom screen: a walkthrough from guide.txt on the SD card,
-  with a contents page of chapters and places, tap paging, a scrollbar, and the
-  reading position remembered per profile.
-- tools/secondscreen/make_guide.py turns a GameFAQs text walkthrough into guide.txt.
-
-## v3.2-T2 (fork, experimental)
-
-- The terrain solve runs on the system core instead of the render thread.
-- Neighbouring tiles share their edge depth, so walls and cliffs no longer show
-  thin vertical cracks in 3D; every part of a sprite uses the same ground.
-
-## v3.2-T1 (fork, experimental)
-
-- 3D depth now follows the terrain: ledges, cliff faces and stairs give the ground
-  its height, so plateaus, ramps and terraces stand at different depths.
-- Statues, columns, trees and house walls stand up from their own base as one
-  piece, and sprites stand on the ground under their feet.
-- Settings > Developer > 3D TERRAIN switches back to the previous layer-based depth.
-
-## v3.2-S3 (fork, experimental)
-
-- Tall tiles (tree tops, statue heads, wall tops) now lean from the floor they
-  stand on to their raised depth instead of stepping, so objects no longer split.
-
-## v3.2-S2 (fork, experimental)
-
-- 3D depth now follows the SNES layer order: sprites sit on their floor plane,
-  priority tiles (tree tops, wall tops, upper floors) stand nearer, lower floors
-  and overlays take their own levels.
-
-## v3.2-S1 (fork, experimental)
-
-- Added stereoscopic 3D depth setting.
+- Stereoscopic 3D on Old 3DS and Old 3DS XL with the GPU renderer: the 3D slider
+  sets the depth, Settings > Screen > 3D DEPTH picks OFF, LOW, MID or HIGH.
+- 3D depth follows the terrain: ledges, cliff faces and stairs give the ground its
+  height, statues, trees and walls stand up from their own base as one piece, and
+  sprites stand on the ground under their feet. The solve runs on the system core.
+  Settings > Developer > 3D TERRAIN switches to the simpler layer-based depth.
+- Bottom screen restyled in the A Link Between Worlds look: wood frame, parchment
+  panels, gold item slots, stone tabs and redrawn icons.
+- GUIDE tab: reads a walkthrough from guide.txt on the SD card, with chapter and
+  place buttons, drag scrolling, a draggable scrollbar and the reading position
+  remembered per profile. tools/secondscreen/make_guide.py turns a GameFAQs text
+  walkthrough into guide.txt.
 
 ## v3.2
 
