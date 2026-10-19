@@ -46,6 +46,15 @@ typedef struct MsuPlayer {
 
 static MsuPlayer g_msu_player;
 
+#ifdef __3DS__
+/* Cap runtime.log MSU noise: music changes often and every line is an SD card
+ * open/append, so log the first few transitions only. */
+static int g_msu_log_budget = 24;
+#define g_msu_log (g_msu_log_budget-- > 0)
+#else
+#define g_msu_log 0
+#endif
+
 static void MsuPlayer_Open(MsuPlayer *mp, int orig_track, bool resume_from_snapshot);
 
 static const uint8 kMsuTracksWithRepeat[48] = {
@@ -205,9 +214,28 @@ static void MsuPlayer_Open(MsuPlayer *mp, int orig_track, bool resume_from_snaps
 #endif
   snprintf(fname, sizeof(fname), "%s%s%s%d.%s", base, *base ? "/" : "", msu_path, actual_track, mp->enabled & kMsuEnabled_Opuz ? "opuz" : "pcm");
   printf("Loading MSU %s\n", fname);
+#ifdef __3DS__
+  /* stdout/stderr are not visible in a CIA launch, so mirror MSU activity into
+   * the app's runtime.log.  This is the primary way to diagnose "MSU does not
+   * start" reports: it shows the exact path that was opened. */
+  if (g_msu_log) {
+    extern void Platform3DS_LogRuntime(const char *format, ...);
+    Platform3DS_LogRuntime("MSU: loading track %d from %s", (int)actual_track, fname);
+  }
+#endif
   mp->f = fopen(fname, "rb");
-  if (mp->f == NULL)
+  if (mp->f == NULL) {
+#ifdef __3DS__
+    /* Not budgeted: a run that plays 24 tracks fine must still be able to report
+     * the one that is missing, which is the whole reason this logging exists. */
+    {
+      extern void Platform3DS_LogRuntime(const char *format, ...);
+      Platform3DS_LogRuntime("MSU: track %d not found at %s (falling back to SPC)",
+                             (int)actual_track, fname);
+    }
+#endif
     goto READ_ERROR;
+  }
   setvbuf(mp->f, NULL, _IOFBF, 16384);
   if (fread(buf, 1, 8, mp->f) != 8) READ_ERROR: {
     fprintf(stderr, "Unable to read MSU file %s\n", fname);
@@ -247,17 +275,32 @@ static void MsuPlayer_Open(MsuPlayer *mp, int orig_track, bool resume_from_snaps
   }
 }
 
+/* MSU is mixed on top of the S-DSP output, and both are full-scale int16, so a
+ * plain += can wrap past 32767 and turn a loud moment into audible crackle.  The
+ * DSP clamps its own mix but cannot know about this second stage, so saturate
+ * here.  Cheap enough to sit in the audio callback: one compare and select. */
+static inline int16 MsuSaturate(int v) {
+  return v < -0x8000 ? -0x8000 : (v > 0x7fff ? 0x7fff : v);
+}
+
 static void MixToBufferWithVolume(int16 *dst, const int16 *src, size_t n, float volume) {
   if (volume == 1.0f) {
     for (size_t i = 0; i < n; i++) {
-      dst[i * 2 + 0] += src[i * 2 + 0];
-      dst[i * 2 + 1] += src[i * 2 + 1];
+      dst[i * 2 + 0] = MsuSaturate(dst[i * 2 + 0] + src[i * 2 + 0]);
+      dst[i * 2 + 1] = MsuSaturate(dst[i * 2 + 1] + src[i * 2 + 1]);
     }
   } else {
-    uint32 vol = (int32)(65536 * volume);
+    /* vol must stay signed.  As uint32, `src * vol` was promoted to unsigned, and
+     * adding that to a signed dst made the whole expression unsigned: a negative
+     * sample became a huge positive value and clamped to +32767, so the lower
+     * half of every waveform collapsed to full-scale DC -- violent crackle.  A
+     * plain `dst +=` hid this because assigning to int16 truncates modulo 2^16,
+     * which happens to restore the sign; clamping explicitly removed that
+     * accidental correction. */
+    int32 vol = (int32)(65536 * volume);
     for (size_t i = 0; i < n; i++) {
-      dst[i * 2 + 0] += src[i * 2 + 0] * vol >> 16;
-      dst[i * 2 + 1] += src[i * 2 + 1] * vol >> 16;
+      dst[i * 2 + 0] = MsuSaturate(dst[i * 2 + 0] + (src[i * 2 + 0] * vol >> 16));
+      dst[i * 2 + 1] = MsuSaturate(dst[i * 2 + 1] + (src[i * 2 + 1] * vol >> 16));
     }
   }
 }
@@ -266,9 +309,11 @@ static void MixToBufferWithVolumeRamp(int16 *dst, const int16 *src, size_t n, fl
   int64 vol = volume * 281474976710656.0f;
   int64 step = volume_step * 281474976710656.0f;
   for (size_t i = 0; i < n; i++) {
-    uint32 v = (vol >> 32);
-    dst[i * 2 + 0] += src[i * 2 + 0] * v >> 16;
-    dst[i * 2 + 1] += src[i * 2 + 1] * v >> 16;
+    /* Signed for the same reason as vol above: this is the fade-in path, so it
+     * is exactly what runs when a track starts. */
+    int32 v = (int32)(vol >> 32);
+    dst[i * 2 + 0] = MsuSaturate(dst[i * 2 + 0] + (src[i * 2 + 0] * v >> 16));
+    dst[i * 2 + 1] = MsuSaturate(dst[i * 2 + 1] + (src[i * 2 + 1] * v >> 16));
     vol += step;
   }
 }
@@ -460,9 +505,23 @@ uint8_t zelda_apu_read(uint32_t adr) {
 void ZeldaRenderAudio(int16 *audio_buffer, int samples, int channels) {
   ZeldaApuLock();
   ZeldaPopApuState();
+
+  /* MSU music is mixed over the SPC block, which stays in the path: pausing the
+   * SPC player (zelda_apu_write(APUI00, 0xf0) in ZeldaPlayMsuAudioTrack) only
+   * silences the *music* channels.  Sound effects are separate SPC700 voices fed
+   * through APUI01/02/03 every NMI (sound_effect_ambient / _1 / _2 in nmi.c), and
+   * the same S-DSP synthesizes them.  Skipping the resampling pass would throw
+   * away every pickup, footstep and splash along with the silent music block.
+   *
+   * MsuPlayer_Mix writes interleaved stereo (dst[i*2+0/1]) unconditionally, so it
+   * must only ever see a stereo buffer.  Keep the guard rather than trusting the
+   * requested channel count. */
+  const bool mix_msu = g_msu_player.f != NULL && channels == 2;
+
   SpcPlayer_GenerateSamples(g_zenv.player);
   dsp_getSamples(g_zenv.player->dsp, audio_buffer, samples, channels);
-  if (g_msu_player.f && channels == 2)
+
+  if (mix_msu)
     MsuPlayer_Mix(&g_msu_player, audio_buffer, samples);
   ZeldaApuUnlock();
 }

@@ -1579,7 +1579,15 @@ static void SetupAudioStart(void) {
   DSP_FlushDataCache(g_setup_music_buffer, music_size);
   DSP_FlushDataCache(g_setup_move_buffer, move_size);
 
-  ndspSetOutputMode(NDSP_OUTPUT_MONO);
+  /* NDSP's output mode is global state.  This setup jingle only needs it to not
+   * be left on something narrower than the game will want later, so ask for
+   * STEREO rather than MONO: if ndspExit() ever stops resetting the mode (it
+   * does today -- EndSetupConsole() tears NDSP down before SDL reopens it), the
+   * game's stereo mix would otherwise inherit MONO for the whole session.
+   *
+   * The jingle itself stays mono PCM (NDSP_FORMAT_MONO_PCM16 below); a mono
+   * source on a stereo output is legal and plays on both sides. */
+  ndspSetOutputMode(NDSP_OUTPUT_STEREO);
   ndspSetMasterVol(0.75f);
   for (int channel = 0; channel < 2; channel++) {
     float mix[12] = {0};
@@ -3429,10 +3437,74 @@ void Platform3DS_ApplyConfig(struct Config *config) {
     config->features0 |= kFeatures0_ExtendScreen64 |
                          kFeatures0_WidescreenVisualFixes;
   }
-  config->audio_freq = 32000;
-  config->audio_channels = 2;
-  config->audio_samples = 1024;
-  config->enable_msu = 0;
+  /* Audio: stereo, with the sample rate chosen by whether MSU is in use.
+   *
+   * MSU-1 PCM tracks are 44100 Hz 16-bit stereo and the mixer does no rate
+   * conversion, so the output must run at 44100 whenever MSU is in play.
+   *
+   * Cost model: the SPC700 interpreter's work is fixed at 534 samples per frame
+   * regardless of the output rate, so raising the rate only adds DSP resampling
+   * (534 -> 735 output samples, ~+38% on that one stage).  Old 3DS has the least
+   * headroom, so it keeps 32000 Hz unless MSU is actually present; New 3DS has
+   * the margin to always run 44100 Hz for the better resampling quality.
+   *
+   * Detection runs here because cwd is already the app folder
+   * (Platform3DS_PrepareStorage chdir'd into it earlier).  It only ADDS MSU when
+   * tracks are present: an explicit EnableMSU the user wrote into zelda3.ini is
+   * preserved so `deluxe` still works, and a missing probe file never silently
+   * disables a configured setup. */
+  {
+    /* MSUPath is a *prefix*, not a directory: the loader concatenates it with
+     * the track number, so "msu/alttp_msu-" + 1 + ".pcm" is how stock MSU packs
+     * are addressed (the engine's switch ini documents msu/alttp_msu-*.pcm).
+     * Probe the prefixes packs actually ship under, and remember which one hit
+     * so the loader opens the same file that detection found. */
+    static const char *kMsuPrefixes[] = {
+      "msu/alttp_msu-",   /* Snes9x/bsnes naming, what stock packs use */
+      "msu/",             /* plain numbers in a subfolder */
+      "alttp_msu-",       /* loose files in the working directory */
+      "",                 /* bare numbers, legacy layout */
+    };
+    const char *msu_prefix = NULL;
+    for (size_t i = 0; i < sizeof(kMsuPrefixes) / sizeof(kMsuPrefixes[0]); i++) {
+      char probe[512];
+      snprintf(probe, sizeof(probe), "%s1.pcm", kMsuPrefixes[i]);
+      if (IsRegularFile(probe)) {
+        msu_prefix = kMsuPrefixes[i];
+        break;
+      }
+    }
+    const bool msu_available = msu_prefix != NULL;
+    if (msu_available && config->enable_msu == 0) {
+      /* No explicit request, but tracks exist: turn plain PCM MSU on. */
+      config->enable_msu = kMsuEnabled_Msu;
+    }
+    if (msu_available && (config->msu_path == NULL || config->msu_path[0] == '\0')) {
+      /* No MSUPath in zelda3.ini (older installs predate the key): adopt the
+       * prefix the probe actually found, so loading matches detection. */
+      config->msu_path = msu_prefix;
+    }
+    /* Opuz needs 48000 Hz, which this port does not use for MSU (see below), so
+     * a leftover opuz flag from a desktop config is dropped rather than played
+     * at the wrong rate. */
+    if (config->enable_msu & kMsuEnabled_Opuz) {
+      config->enable_msu &= (uint8)~kMsuEnabled_Opuz;
+      Platform3DS_LogRuntime("Audio: dropping Opuz flag (3DS plays MSU as 44100 Hz PCM)");
+    }
+
+    const bool msu_active = config->enable_msu != 0;
+    /* Old 3DS without MSU keeps the shipped 32000 Hz rate; everything else runs
+     * 44100 Hz so MSU needs no resampling and plain SPC audio gets the slightly
+     * better ratio. */
+    config->audio_freq = (!msu_active && !g_is_new_3ds) ? 32000 : 44100;
+    config->audio_channels = 2;
+    config->audio_samples = 1024;
+    Platform3DS_LogRuntime("Audio config: %d Hz stereo, MSU %s (enable=0x%02X, tracks %s)",
+                           (int)config->audio_freq,
+                           msu_active ? "on" : "off",
+                           (unsigned)config->enable_msu,
+                           msu_available ? "found" : "not found");
+  }
   config->disable_frame_delay = true;
   Platform3DS_LogRuntime("Runtime settings: display=%d, wide_edge=%d, turbo=%d",
                          (int)g_display_mode,
