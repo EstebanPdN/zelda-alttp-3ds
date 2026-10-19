@@ -121,7 +121,7 @@ enum {
   COL_SHADOW      = COL(26, 16, 10),
 };
 
-enum { TAB_MAP, TAB_ITEMS, TAB_GEAR, TAB_SETTINGS };
+enum { TAB_MAP, TAB_ITEMS, TAB_GEAR, TAB_SETTINGS, TAB_GUIDE };
 enum { MODE_GAME, MODE_TITLE, MODE_CINEMA };
 
 typedef struct { float x, y, w, h; } RectFS;
@@ -182,6 +182,7 @@ static SDL_Texture *tex_map[2], *tex_icons, *tex_glyphs, *tex_letters, *tex_face
 static SDL_Texture *tex_mapicons;
 static SDL_Texture *tex_bg_parch, *tex_bg_wood;
 static SDL_Texture *tex_ui_icons, *tex_heart_scratch;  // chrome icons; Old hearts layer
+static SDL_Texture *tex_guide_font;                    // 6x9 reading font for the GUIDE tab
 #ifdef __3DS__
 #include "bottom_hearts.h"
 static BottomHearts ss_worker_hearts[2], ss_display_hearts;
@@ -220,7 +221,7 @@ static void rebuild_renderer(int w2, int h2);
 static bool ss_needs_rebuild;
 
 // touch rects recomputed every draw, used by the tap handler
-static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_ring_r;
+static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_guide_r, tab_settings_r, y_ring_r;
 static bool update_mode, update_confirm, update_show_notes;
 static unsigned update_page;
 static RectFS update_release_r, update_prev_r, update_next_r;
@@ -749,6 +750,7 @@ static bool try_load_art(void) {
     tex_bg_wood = make_tex(kSSTexWood_W, kSSTexWood_H, wood, false);
   }
   if (!tex_ui_icons) tex_ui_icons = make_tex(kSSUiIcons_W, kSSUiIcons_H, kSSUiIcons, true);
+  if (!tex_guide_font) tex_guide_font = make_tex(kSSGuideFont_W, kSSGuideFont_H, kSSGuideFont, true);
   if (!ui_font[FONT_LARGE].tex)
     ui_font[FONT_LARGE].tex = make_tex(kSSUiFontLarge_W, kSSUiFontLarge_H, kSSUiFontLarge, true);
   if (!ui_font[FONT_SMALL].tex)
@@ -1696,6 +1698,230 @@ static void draw_cinema_settings_overlay(void) {
   }
 }
 
+
+// GUIDE tab: a walkthrough read from guide.txt on the card (made from a GameFAQs
+// text by tools/secondscreen/make_guide.py; guides stay on the player's card).
+// Lines arrive wrapped to GUIDE_COLS. A line starting with 1 or 2 is a chapter or
+// section heading listed in the contents, 3 a heading that is only shown.
+// Navigation is by taps: upper half of the text = previous page, lower half =
+// next page, the scrollbar jumps, the contents list opens a chapter or place.
+#ifdef __3DS__
+#define GUIDE_PATH "sdmc:/3ds/Zelda 3DS/guide.txt"
+#else
+#define GUIDE_PATH "guide.txt"
+#endif
+enum { GUIDE_COLS = 46, GUIDE_ROWS = 16, GUIDE_LINE_H = 9, GUIDE_MAX_TOC = 256 };
+static const RectFS kGuidePanel = {6, 4, 308, 174};
+static const RectFS kGuideText = {22, 30, 278, GUIDE_ROWS * GUIDE_LINE_H};
+static const RectFS kGuideBar = {302, 30, 6, GUIDE_ROWS * GUIDE_LINE_H};
+static struct {
+  bool tried, ready;         // ready is published once by the loading thread
+  char *text;
+  int *line, lines;          // line i is text + line[i], NUL-terminated
+  int toc[GUIDE_MAX_TOC], tocCount;
+  char title[48], author[40];
+  int top, tocTop;           // first visible line / contents row
+  bool inToc, dirty;
+} guide;
+static RectFS guide_contents_r, guide_up_r, guide_down_r;
+
+static int guide_ini_int(const char *key, int fallback) {
+  FILE *f = fopen("zelda3.ini", "rb");
+  if (!f) return fallback;
+  char ln[160]; size_t klen = strlen(key); int v = fallback;
+  while (fgets(ln, sizeof(ln), f)) {
+    const char *t = ln;
+    while (*t == ' ' || *t == '\t') t++;
+    if (SDL_strncasecmp(t, key, klen)) continue;
+    t += klen;
+    while (*t == ' ' || *t == '\t') t++;
+    if (*t == '=') v = atoi(t + 1);
+  }
+  fclose(f);
+  return v;
+}
+
+static void guide_load(void) {
+  guide.tried = true;
+  FILE *f = fopen(GUIDE_PATH, "rb");
+  if (!f) return;
+  fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+  char *t = n > 8 && n < (4 << 20) ? malloc(n + 1) : NULL;
+  if (!t || fread(t, 1, n, f) != (size_t)n) { free(t); fclose(f); return; }
+  fclose(f);
+  t[n] = 0;
+  if (strncmp(t, "ZGUIDE 1", 8)) { free(t); return; }
+  int count = 1;
+  for (long i = 0; i < n; i++) count += t[i] == '\n';
+  int *ln = malloc(sizeof(int) * count);
+  if (!ln) { free(t); return; }
+  int lines = 0; bool header = true;
+  for (char *p = t; p && *p;) {
+    char *nl = strchr(p, '\n');
+    if (nl) *nl = 0;
+    size_t len = strlen(p);
+    if (len && p[len - 1] == '\r') p[--len] = 0;
+    if (header && (p == t || p[0] == '@')) {
+      if (!strncmp(p, "@T ", 3)) SDL_strlcpy(guide.title, p + 3, sizeof(guide.title));
+      if (!strncmp(p, "@A ", 3)) SDL_strlcpy(guide.author, p + 3, sizeof(guide.author));
+    } else {
+      header = false;
+      if ((p[0] == 1 || p[0] == 2) && guide.tocCount < GUIDE_MAX_TOC) guide.toc[guide.tocCount++] = lines;
+      ln[lines++] = (int)(p - t);
+    }
+    p = nl ? nl + 1 : NULL;
+  }
+  guide.text = t; guide.line = ln; guide.lines = lines;
+  int maxTop = lines > GUIDE_ROWS ? lines - GUIDE_ROWS : 0;
+  guide.top = guide_ini_int("GuideLine", 0);
+  if (guide.top < 0) guide.top = 0;
+  if (guide.top > maxTop) guide.top = maxTop;
+  guide.inToc = guide_ini_int("GuideView", 1) != 0;
+  __atomic_store_n(&guide.ready, lines > 0, __ATOMIC_RELEASE);
+}
+
+static void guide_save(void) {
+  if (!guide.dirty) return;
+  guide.dirty = false;
+  char v[16];
+  snprintf(v, sizeof(v), "%d", guide.top);
+  update_ini("[General]", "GuideLine", v);
+  update_ini("[General]", "GuideView", guide.inToc ? "1" : "0");
+}
+
+static const char *guide_line(int i) { return guide.text + guide.line[i]; }
+
+// Contents entry the reader is in: the last listed heading at or above the top line.
+static int guide_current_entry(void) {
+  int e = -1;
+  for (int k = 0; k < guide.tocCount && guide.toc[k] <= guide.top + 1; k++) e = k;
+  return e;
+}
+
+static void guide_text(const char *s, float x, float y, uint32_t color, int maxCols) {
+  if (!tex_guide_font) return;
+  SDL_SetTextureColorMod(tex_guide_font, (color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
+  for (int i = 0; s[i] && i < maxCols; i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (c <= 32 || c > 126) continue;
+    SDL_Rect src = {(c - 32) % 16 * 6, (c - 32) / 16 * 9, 6, 9};
+    SDL_FRect dst = {x + i * 6, y, 6, 9};
+    SDL_RenderCopyF(ss_r, tex_guide_font, &src, &dst);
+  }
+}
+
+// Small stone button with a pixel triangle.
+static void guide_arrow_button(RectFS r, bool up) {
+  draw_tablet(r, false, 3);
+  float cx = floorf(r.x + r.w / 2), cy = floorf(r.y + r.h / 2);
+  for (int i = 0; i < 4; i++) {
+    float row = up ? cy - 2 + i : cy + 1 - i;
+    fill_rect(cx - i, row, 1 + 2 * i, 1, COL_INK);
+  }
+}
+
+static void draw_guide(void) {
+  if (!__atomic_load_n(&guide.ready, __ATOMIC_ACQUIRE) && !guide.tried) guide_load();
+  draw_parchment(kGuidePanel);
+  if (!__atomic_load_n(&guide.ready, __ATOMIC_ACQUIRE)) {
+    draw_ribbon("GUIDE", kGuidePanel.x + kGuidePanel.w / 2, 8);
+    static const char *const msg[] = {
+      "No guide on the card yet.", "", "Copy guide.txt to", "sdmc:/3ds/Zelda 3DS/",
+      "", "Make it from a GameFAQs walkthrough", "with tools/secondscreen/make_guide.py",
+    };
+    for (int i = 0; i < 7; i++) guide_text(msg[i], kGuideText.x, kGuideText.y + 8 + i * 12, COL_PARCH_INK, GUIDE_COLS);
+    guide_contents_r = guide_up_r = guide_down_r = (RectFS){0};
+    return;
+  }
+  guide_up_r = (RectFS){262, 8, 20, 18};
+  guide_down_r = (RectFS){286, 8, 20, 18};
+  int total = guide.inToc ? guide.tocCount : guide.lines;
+  int first = guide.inToc ? guide.tocTop : guide.top;
+  char page[24];
+  snprintf(page, sizeof(page), "%d/%d", first / (GUIDE_ROWS - 1) + 1, (total + GUIDE_ROWS - 2) / (GUIDE_ROWS - 1));
+  if (guide.inToc) {
+    guide_contents_r = (RectFS){0};
+    draw_ribbon("CONTENTS", 140, 6);
+    int cur = guide_current_entry();
+    for (int r = 0; r < GUIDE_ROWS && guide.tocTop + r < guide.tocCount; r++) {
+      int e = guide.tocTop + r;
+      const char *s = guide_line(guide.toc[e]);
+      bool section = s[0] == 2;
+      float y = kGuideText.y + r * GUIDE_LINE_H;
+      if (e == cur) fill_rect(kGuideText.x - 2, y - 1, kGuideText.w, GUIDE_LINE_H, COL(214, 190, 132));
+      guide_text(s + 1, kGuideText.x + (section ? 12 : 0), y,
+                 section ? COL(92, 66, 30) : COL(122, 42, 16), GUIDE_COLS - (section ? 2 : 0));
+    }
+  } else {
+    guide_contents_r = (RectFS){22, 8, 70, 18};
+    draw_tablet(guide_contents_r, false, 3);
+    ui_text_center("CONTENTS", guide_contents_r.x + guide_contents_r.w / 2, guide_contents_r.y + 6,
+                   FONT_SMALL, COL_INK, COL_INK_LIT, 0);
+    int cur = guide_current_entry();
+    if (cur >= 0) guide_text(guide_line(guide.toc[cur]) + 1, 98, 12, COL(122, 42, 16), 18);
+    for (int r = 0; r < GUIDE_ROWS && guide.top + r < guide.lines; r++) {
+      const char *s = guide_line(guide.top + r);
+      bool heading = s[0] >= 1 && s[0] <= 3;
+      float y = kGuideText.y + r * GUIDE_LINE_H;
+      guide_text(heading ? s + 1 : s, kGuideText.x, y, heading ? COL(122, 42, 16) : COL(44, 32, 14), GUIDE_COLS);
+      if (heading && s[0] == 1) fill_rect(kGuideText.x, y + 9, kGuideText.w - 4, 1, COL(160, 120, 60));
+    }
+  }
+  ui_text(page, 210, 13, FONT_SMALL, COL_PARCH_INK, 0);
+  guide_arrow_button(guide_up_r, true);
+  guide_arrow_button(guide_down_r, false);
+  // scrollbar: track and thumb
+  fill_rect(kGuideBar.x + 2, kGuideBar.y, 2, kGuideBar.h, COL(190, 162, 104));
+  int span = total > GUIDE_ROWS ? total - GUIDE_ROWS : 0;
+  float th = span ? fmaxf(12.0f, kGuideBar.h * GUIDE_ROWS / (float)total) : kGuideBar.h;
+  float ty = kGuideBar.y + (span ? (kGuideBar.h - th) * first / (float)span : 0);
+  fill_round(kGuideBar.x, ty, kGuideBar.w, th, 2, COL(138, 106, 44));
+}
+
+static void guide_scroll(int rows) {
+  int *pos = guide.inToc ? &guide.tocTop : &guide.top;
+  int total = guide.inToc ? guide.tocCount : guide.lines;
+  int maxTop = total > GUIDE_ROWS ? total - GUIDE_ROWS : 0;
+  *pos += rows;
+  if (*pos > maxTop) *pos = maxTop;
+  if (*pos < 0) *pos = 0;
+  guide.dirty = true;
+}
+
+static void guide_tap(float x, float y) {
+  if (!__atomic_load_n(&guide.ready, __ATOMIC_ACQUIRE)) return;
+  int page = GUIDE_ROWS - 1;
+  RectFS bar = {kGuideBar.x - 6, kGuideBar.y, kGuideBar.w + 10, kGuideBar.h};   // generous touch target
+  if (in_rect(&guide_up_r, x, y)) { guide_scroll(-page); return; }
+  if (in_rect(&guide_down_r, x, y)) { guide_scroll(page); return; }
+  if (!guide.inToc && in_rect(&guide_contents_r, x, y)) {
+    guide.inToc = true;
+    int cur = guide_current_entry();
+    guide.tocTop = 0;
+    guide_scroll(cur > GUIDE_ROWS / 2 ? cur - GUIDE_ROWS / 2 : 0);
+    return;
+  }
+  if (in_rect(&bar, x, y)) {
+    int total = guide.inToc ? guide.tocCount : guide.lines;
+    int span = total > GUIDE_ROWS ? total - GUIDE_ROWS : 0;
+    int *pos = guide.inToc ? &guide.tocTop : &guide.top;
+    *pos = 0;
+    guide_scroll((int)((y - bar.y) / bar.h * span + 0.5f));
+    return;
+  }
+  if (!in_rect(&kGuideText, x, y)) return;
+  if (guide.inToc) {
+    int e = guide.tocTop + (int)((y - kGuideText.y) / GUIDE_LINE_H);
+    if (e >= 0 && e < guide.tocCount) {
+      guide.inToc = false;
+      guide.top = 0;
+      guide_scroll(guide.toc[e]);
+    }
+  } else {
+    guide_scroll(y < kGuideText.y + kGuideText.h / 2 ? -page : page);
+  }
+}
+
 static void draw_tab_button(RectFS r, const char *label, bool active) {
   draw_tablet(r, active, 4);
   if (label)
@@ -1704,7 +1930,7 @@ static void draw_tab_button(RectFS r, const char *label, bool active) {
                    active ? COL(255, 236, 170) : COL_INK_LIT, 1);
 }
 
-// Dark band of stone tablets at the bottom: GEAR | MAP | ITEMS | cog.
+// Dark band of stone tablets at the bottom: GEAR | MAP | ITEMS | GUIDE | cog.
 static void draw_tab_bar(float tab_h) {
   float top = H - tab_h;
   fill_rect(0, top, W, 1, COL(0, 0, 0));
@@ -1713,15 +1939,17 @@ static void draw_tab_bar(float tab_h) {
   float y = top + 3, bh = tab_h - 6;
   float sq = 30;   // the settings tablet on the right
   tab_settings_r = (RectFS){W - 4 - sq, y, sq, bh};
-  // three equal tablets left of the settings cog, 3 px apart
+  // four equal tablets left of the settings cog, 3 px apart
   float x0 = 4, xr = tab_settings_r.x - 3, tgap = 3;
-  float bw = (xr - x0 - 2 * tgap) / 3.0f;
+  float bw = (xr - x0 - 3 * tgap) / 4.0f;
   tab_gear_r  = (RectFS){x0, y, bw, bh};
   tab_map_r   = (RectFS){x0 + bw + tgap, y, bw, bh};
   tab_items_r = (RectFS){x0 + 2 * (bw + tgap), y, bw, bh};
+  tab_guide_r = (RectFS){x0 + 3 * (bw + tgap), y, bw, bh};
   draw_tab_button(tab_gear_r, "GEAR", tab == TAB_GEAR);
   draw_tab_button(tab_map_r, "MAP", tab == TAB_MAP);
   draw_tab_button(tab_items_r, "ITEMS", tab == TAB_ITEMS);
+  draw_tab_button(tab_guide_r, "GUIDE", tab == TAB_GUIDE);
   draw_tab_button(tab_settings_r, NULL, tab == TAB_SETTINGS);
   if (tex_ui_icons) {
     // the 24 px cog, smoothly scaled to fit inside the tablet's edges
@@ -2212,7 +2440,8 @@ static int tab_at_position(float x, float y) {
     return -1;
   if (x < (tab_gear_r.x + tab_gear_r.w + tab_map_r.x) * 0.5f) return TAB_GEAR;
   if (x < (tab_map_r.x + tab_map_r.w + tab_items_r.x) * 0.5f) return TAB_MAP;
-  if (x < (tab_items_r.x + tab_items_r.w + tab_settings_r.x) * 0.5f) return TAB_ITEMS;
+  if (x < (tab_items_r.x + tab_items_r.w + tab_guide_r.x) * 0.5f) return TAB_ITEMS;
+  if (x < (tab_guide_r.x + tab_guide_r.w + tab_settings_r.x) * 0.5f) return TAB_GUIDE;
   return TAB_SETTINGS;
 }
 
@@ -2224,6 +2453,7 @@ static void apply_tap(float x, float y) {
 #endif
   if (ui_mode != MODE_GAME) {
     if (tab != TAB_SETTINGS) {
+      if (tab == TAB_GUIDE) guide_save();
       tab = TAB_SETTINGS;
       leave_settings_submenu();
       return;
@@ -2242,10 +2472,13 @@ static void apply_tap(float x, float y) {
   if (requested_tab >= 0) {
     // Content tabs select their view; contact bounce/repeated taps must not
     // toggle Items or Gear back to Map. The settings cog retains its back action.
+    int previous = tab;
     tab = requested_tab == TAB_SETTINGS && tab == TAB_SETTINGS ? TAB_MAP : requested_tab;
+    if (previous == TAB_GUIDE && tab != TAB_GUIDE) guide_save();   // remember the page
     leave_settings_submenu();
     return;
   }
+  if (tab == TAB_GUIDE) { guide_tap(x, y); return; }
 
 settings_tap:
   if (tab == TAB_SETTINGS) {
@@ -2644,10 +2877,11 @@ static void draw_second_screen(int logic_frames) {
   if (tab == TAB_ITEMS)      draw_items(map_area_r);
   else if (tab == TAB_GEAR)  draw_gear(map_area_r);
   else if (tab == TAB_SETTINGS) draw_settings(map_area_r);
+  else if (tab == TAB_GUIDE) draw_guide();
   else if (dungeon_mode)     draw_dungeon(map_area_r, link_x, link_y, area & 0xFF, dungeon_info);
   else                       draw_overworld(map_area_r, link_x, link_y, area);
 
-  if (tab != TAB_SETTINGS)
+  if (tab != TAB_SETTINGS && tab != TAB_GUIDE)
     draw_quick_slots();
   draw_status_bar(dungeon_mode);
   draw_tab_bar(tab_h);

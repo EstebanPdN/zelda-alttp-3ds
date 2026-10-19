@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.2-G1 (fork, experimental)
+
+- GUIDE tab on the bottom screen: a walkthrough from guide.txt on the SD card,
+  with a contents page of chapters and places, tap paging, a scrollbar, and the
+  reading position remembered per profile.
+- tools/secondscreen/make_guide.py turns a GameFAQs text walkthrough into guide.txt.
+
 ## v3.2-T2 (fork, experimental)
 
 - The terrain solve runs on the system core instead of the render thread.

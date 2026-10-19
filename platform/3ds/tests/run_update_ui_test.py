@@ -39,6 +39,8 @@ static bool Platform3DS_GetShowFps(void){return false;}
 static void Platform3DS_SetShowFps(bool v){}
 static int Platform3DS_GetStereoLevel(void){return 0;}
 static void Platform3DS_SetStereoLevel(int v){}
+static bool test_stereo_terrain=true;static bool Platform3DS_GetStereoTerrain(void){return test_stereo_terrain;}
+static void Platform3DS_SetStereoTerrain(bool on){test_stereo_terrain=on;}
 static void Platform3DS_RequestRomSelection(void){restarts++;}
 static unsigned Platform3DS_UpdateNotesPages(void){return 3;}
 #define KEY_TOUCH (1u<<20)
@@ -155,11 +157,13 @@ int main(int argc,char**argv){
  touch(tab_items_r);assert(tab==TAB_ITEMS);touch_expect(tab_items_r,false);assert(tab==TAB_ITEMS);
  touch(tab_gear_r);assert(tab==TAB_GEAR);touch_expect(tab_gear_r,false);assert(tab==TAB_GEAR);
  touch(tab_map_r);touch_expect(tab_map_r,false);assert(tab==TAB_MAP);
+ touch(tab_guide_r);assert(tab==TAB_GUIDE);touch_expect(tab_guide_r,false);assert(tab==TAB_GUIDE);
+ touch(tab_map_r);assert(tab==TAB_MAP);
  // Visible borders/gaps and strip edges accept one touch, with no content-area leakage.
- // Tablets: GEAR 4-95, MAP 98-189, ITEMS 192-283, cog 286-316; band y 210-239.
- const float samples[]={0,96,97,98,190,191,284,285,300,319};
- const int targets[]={TAB_GEAR,TAB_GEAR,TAB_MAP,TAB_MAP,TAB_MAP,TAB_ITEMS,TAB_ITEMS,TAB_SETTINGS,TAB_SETTINGS,TAB_SETTINGS};
- for(int i=0;i<10;i++)for(int y=210;y<=239;y+=29){
+ // Tablets: GEAR 4-71.5, MAP 74.5-142, ITEMS 145-212.5, GUIDE 215.5-283, cog 286-316; band y 210-239.
+ const float samples[]={0,72,73,74,143,144,213,214,284,285,300,319};
+ const int targets[]={TAB_GEAR,TAB_GEAR,TAB_MAP,TAB_MAP,TAB_MAP,TAB_ITEMS,TAB_ITEMS,TAB_GUIDE,TAB_GUIDE,TAB_SETTINGS,TAB_SETTINGS,TAB_SETTINGS};
+ for(int i=0;i<12;i++)for(int y=210;y<=239;y+=29){
    tab=targets[i]==TAB_MAP?TAB_ITEMS:TAB_MAP;
    touch((RectFS){samples[i],y,0,0});assert(tab==targets[i]);
  }

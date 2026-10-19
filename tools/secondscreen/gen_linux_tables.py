@@ -3,7 +3,8 @@
 # engine/src/platform/linux from the committed assets in
 # app/src/main/assets/secondscreen. (render_*.py generate those assets from a
 # ROM; gen_tables.py emits the shared second_screen_tables.h; gen_ui_icons.py
-# and bake_ui_font.py make the ui_icons/ui_font sheets.) Run from repo root:
+# and bake_ui_font.py make the ui_icons/ui_font sheets; bake_guide_font.py the
+# guide reading font.) Run from repo root:
 #   python tools/secondscreen/gen_linux_tables.py
 # Needs Pillow (for the texture PNGs). The generated headers are committed, so
 # a normal `make` build does not need to run this -- only re-run it if the
@@ -88,7 +89,7 @@ def gen_textures():
     for name, sym in [("tex_menu", "kSSTexMenu"), ("tex_parchment", "kSSTexParch"),
                       ("tex_stone", "kSSTexStone"), ("tex_wood", "kSSTexWood"),
                       ("ui_icons", "kSSUiIcons"), ("ui_font_large", "kSSUiFontLarge"),
-                      ("ui_font_small", "kSSUiFontSmall")]:
+                      ("ui_font_small", "kSSUiFontSmall"), ("guide_font", "kSSGuideFont")]:
         im = Image.open(os.path.join(ASSETS, f"{name}.png")).convert("RGBA")
         w, h = im.size
         px = list(im.getdata())
