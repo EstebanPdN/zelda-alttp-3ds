@@ -78,6 +78,7 @@ void Platform3DS_SetShowFps(bool show);
 int Platform3DS_GetStereoLevel(void);
 void Platform3DS_SetStereoLevel(int level);
 bool Platform3DS_StereoSupported(void);
+bool Platform3DS_GetStereoTerrain(void);
 void Platform3DS_SetCurrentFps(int fps);
 void Platform3DS_PersistRuntimeSettings(void);
 void Platform3DS_ShowDumpSavedOverlay(void);

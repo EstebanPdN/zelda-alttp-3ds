@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "snes/ppu.h"
+struct PicaTerrain;
 
 enum { PICA_ATLAS_W=1024, PICA_ATLAS_H=512, PICA_SLOTS=8192,
        PICA_HASH=16384, PICA_MAX_LINES=240, PICA_MAX_VERTICES=262140,
@@ -46,6 +47,7 @@ typedef struct {
   uint32_t quads[PICA_GROUPS];
   uint16_t bandEnd[PICA_MAX_LINES],commonEnd[PICA_MAX_LINES],layerEnd[PICA_MAX_LINES];
   bool sharedWindow;
+  const struct PicaTerrain *terrain; // stereo depth from collision data; NULL = layer rules
 } PicaFrame;
 void PicaAtlasInit(PicaAtlas *cache, uint32_t *pixels);
 void PicaAtlasBegin(PicaAtlas *cache);
