@@ -138,6 +138,7 @@ static bool Raster(void *ctx,unsigned group,const PicaQuad *q) {
  // Main-screen priority tiles of BG1/BG2 lean between the tall (1) and floor (2) depths.
  // Sub-screen tiles depend on the line's OBJ colour math (1 or 3), not known here.
  unsigned z=q->depth,zh=z>>8;
+ if(group<4) assert(q->parallaxRight==q->parallax && q->parallaxTopRight==q->parallaxTop);  // no terrain: flat across
  unsigned expect=group>=4?0:(group&1)?(zh>=0xe4?1:zh>=0xa4?2:3):group==2?(z==1?2:99)
    :z==0xf200?0:z==0x1200?3:(z==0xc000||z==0xb100)?98:2;
  if(expect==99) { assert(q->parallax==8||q->parallax==24); assert(q->parallaxTop==q->parallax); }

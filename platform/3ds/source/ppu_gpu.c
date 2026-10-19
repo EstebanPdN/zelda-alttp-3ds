@@ -1,6 +1,7 @@
 #include "ppu_gpu.h"
 #include "ppu_gpu_model.h"
 #include "stereo_terrain.h"
+#include "stereo_terrain_worker.h"
 #include "ppu_gpu_c3d.h"
 #include "platform_3ds.h"
 #include "alttp_pica_shader_shbin.h"
@@ -41,6 +42,7 @@ static struct {
   PicaTerrain terrain;
   uint32_t terrainUs;
   int terrainMode;
+  bool terrainActive;
   uint64_t frames,gpuFrames,cpuFrames,probePixels,probeErrors;
   uint64_t geometryPixels,geometryErrors;
   uint32_t prepareUs,syncUs,buildUs,submitUs,uploadBytes,firstBad,expected,actual;
@@ -69,11 +71,11 @@ static bool Emit(void *ctx,unsigned group,const PicaQuad *q) {
   if(range->first+range->count!=g.count) return false;
   int16_t depth=q->depth>>1;
   if(!depth) depth=1;
-  // y0 is the top edge: a and b carry the top parallax, c and d the bottom one.
+  // Corner depths: a top-left, b top-right, c bottom-left, d bottom-right.
   Vertex a={q->x0,q->y0,depth,q->parallaxTop,q->u0,q->v0,q->r,q->g,q->b,q->a};
   Vertex b=a,c=a,d=a;
   b.x=d.x=q->x1;b.u=d.u=q->u1;
-  c.y=d.y=q->y1;c.v=d.v=q->v1;c.w=d.w=q->parallax;
+  c.y=d.y=q->y1;c.v=d.v=q->v1;b.w=q->parallaxTopRight;c.w=q->parallax;d.w=q->parallaxRight;
   Vertex *v=&g.vertices[g.count];
   v[0]=a;v[1]=b;v[2]=c;v[3]=c;v[4]=b;v[5]=d;
   g.count+=6;
@@ -392,6 +394,7 @@ bool PpuGpuInit(void) {
 }
 void PpuGpuShutdown(void) {
   if(!g.initialized) return;
+  TerrainWorker_Shutdown();
   if(PicaC3DCompatible()) PicaC3DWaitIdle();
   if(g.mainTarget) C3D_RenderTargetDelete(g.mainTarget);
   if(g.subTarget) C3D_RenderTargetDelete(g.subTarget);
@@ -425,14 +428,20 @@ bool PpuGpuBegin(Ppu *p,unsigned height) {
 void PpuGpuLine(Ppu *p,unsigned y) {if(y<g.height){PicaCaptureLine(&g.lines[y],p,y);g.captured++;}}
 bool PpuGpuFinish(Ppu *p) {
   p->gpuRecording=false;uint64_t start=svcGetSystemTick();
-  // Terrain depth only while the previous frame was drawn in stereo.
+  // Terrain depth only while the previous frame was drawn in stereo. The solve runs
+  // on core 1; this thread only posts jobs and places sprites on the latest result.
   const PicaTerrain *terrain=NULL;g.terrainUs=0;g.terrainMode=0;
-  if(g.stereoPixels>0 && Platform3DS_GetStereoTerrain()) {
+  bool terrainOn=g.stereoPixels>0 && Platform3DS_GetStereoTerrain();
+  if(terrainOn) {
+    if(!g.terrainActive) TerrainWorker_RequestReset();
     StereoTerrainSource src;g.terrainMode=StereoTerrain_GetSource(&src);
-    if(g.terrainMode==1) {uint64_t t0=svcGetSystemTick();StereoTerrain_Update(&g.terrain,g.saved,&src);g.terrainUs=Us(t0);}
-    if(!g.terrainMode) {g.terrain.valid=false;StereoTerrain_Reset();}
+    uint64_t t0=svcGetSystemTick();
+    if(g.terrainMode==1) TerrainWorker_Frame(&g.terrain,g.saved,&src);
+    else if(!g.terrainMode) {g.terrain.valid=false;TerrainWorker_RequestReset();}
+    g.terrainUs=Us(t0);   // mode 2 (menus over gameplay) keeps the last terrain as is
     if(g.terrain.valid) terrain=&g.terrain;
   }
+  g.terrainActive=terrainOn;
   PicaFrame frame={.memory=g.saved,.lines=g.lines,.scratch=g.scratch,.atlas=g.cache,
     .pixels=g.atlas.data,.width=g.width,.height=g.height,.emit=Emit,.terrain=terrain};
   bool ok=!p->gpuInvalidWrite && g.captured==g.height;
@@ -504,7 +513,8 @@ void PpuGpuWriteDiagnostics(FILE *f) {
   fputc('\n',f);
   fprintf(f,"PICA resource_slots=2 current_slot=%u last_submitted_slot=%u dump_readback=CPU-uncached-VRAM timeout_ms=1000\n",g.slot,g.lastSubmittedSlot);
   fprintf(f,"PICA stereo_pixels_per_unit=%.2f last_frame_stereo=%u\n",(double)g.stereoPixels,g.stereo);
-  fprintf(f,"PICA terrain mode=%d valid=%u update_us=%lu changed_tiles=%u sweeps=%u\n",g.terrainMode,g.terrain.valid,(unsigned long)g.terrainUs,g.terrain.changed,g.terrain.sweeps);
+  fprintf(f,"PICA terrain mode=%d valid=%u render_thread_us=%lu\n",g.terrainMode,g.terrain.valid,(unsigned long)g.terrainUs);
+  TerrainWorker_Diagnostics(f);
   fputs("PICA recent-frame history: GPU preparation/submit wall spans; CPU rows describe GPU preflight only, not CPU PPU time.\n",f);
   fputs("number,gpu,prepare_us,prior_gpu_wait_us,build_us,submit_us,upload_bytes,vertices,decodes,reason\n",f);
   for(unsigned i=0;i<g.historyCount;i++) {

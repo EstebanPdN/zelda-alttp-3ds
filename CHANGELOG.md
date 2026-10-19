@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.2-T2 (fork, experimental)
+
+- The terrain solve runs on the system core instead of the render thread.
+- Neighbouring tiles share their edge depth, so walls and cliffs no longer show
+  thin vertical cracks in 3D; every part of a sprite uses the same ground.
+
 ## v3.2-T1 (fork, experimental)
 
 - 3D depth now follows the terrain: ledges, cliff faces and stairs give the ground

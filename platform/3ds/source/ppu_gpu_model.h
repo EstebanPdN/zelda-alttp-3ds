@@ -30,6 +30,9 @@ typedef struct {
   uint8_t r,g,b,a;
   uint8_t parallax; // stereo depth at the bottom edge, in eighths of a unit; trailing so positional initializers default to 0
   uint8_t parallaxTop; // same for the top edge: a tall tile leans from its floor to its tall depth
+  // Right-edge depths. Neighbouring terrain tiles share edge depths so the stereo
+  // shift bends the surface instead of opening one-pixel cracks between columns.
+  uint8_t parallaxRight, parallaxTopRight;
 } PicaQuad;
 // Groups 0/2: main/sub backdrop and BG. 1/3: their OBJ, in OAM order.
 // Groups 4..19: compose flags subtract=1 half=2 clip=4 prevent=8.

@@ -37,6 +37,7 @@ set(ZELDA3_3DS_SOURCES
   "${CMAKE_CURRENT_LIST_DIR}/source/ppu_gpu_model.c"
   "${CMAKE_CURRENT_LIST_DIR}/source/stereo_terrain.c"
   "${CMAKE_CURRENT_LIST_DIR}/source/stereo_terrain_source.c"
+  "${CMAKE_CURRENT_LIST_DIR}/source/stereo_terrain_worker.c"
 )
 
 ctr_add_shader_library(alttp_pica_shader source/ppu_gpu.v.pica)
