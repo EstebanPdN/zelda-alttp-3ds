@@ -484,7 +484,8 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
                StringEqualsNoCase(key, "SecondScreenSwap") ||
                StringEqualsNoCase(key, "SecondScreenCrt") ||
                StringEqualsNoCase(key, "GuideLine") ||
-               StringEqualsNoCase(key, "GuideView")) {
+               StringEqualsNoCase(key, "GuideView") ||
+               StringEqualsNoCase(key, "GuideChapter")) {
       return true;  // read by the second-screen UI only, the engine ignores it
     } else if (StringEqualsNoCase(key, "DisplayMode") ||
                StringEqualsNoCase(key, "WideMode") ||

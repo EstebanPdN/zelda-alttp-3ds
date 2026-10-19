@@ -20,7 +20,7 @@ two rules of '=' (the layout most GameFAQs walkthroughs use).
 """
 import argparse, re, textwrap
 
-WIDTH = 46   # 276 px of the guide panel at 6 px per character
+WIDTH = 44   # 264 px of the guide panel at 6 px per character, beside the scrollbar
 
 ASCII = {'©': '(c)', '®': '(r)', '’': "'", '‘': "'", '“': '"', '”': '"',
          '–': '-', '—': '-', 'é': 'e', 'è': 'e', 'à': 'a', 'ü': 'u', 'ö': 'o'}

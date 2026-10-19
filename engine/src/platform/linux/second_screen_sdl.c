@@ -1703,27 +1703,36 @@ static void draw_cinema_settings_overlay(void) {
 // text by tools/secondscreen/make_guide.py; guides stay on the player's card).
 // Lines arrive wrapped to GUIDE_COLS. A line starting with 1 or 2 is a chapter or
 // section heading listed in the contents, 3 a heading that is only shown.
-// Navigation is by taps: upper half of the text = previous page, lower half =
-// next page, the scrollbar jumps, the contents list opens a chapter or place.
+// Contents: chapter buttons, then a chapter's places as a two-column grid.
+// Reading: drag the text to scroll, tap its upper or lower half to turn a page,
+// drag the scrollbar thumb. A press acts on release so a drag never selects.
 #ifdef __3DS__
 #define GUIDE_PATH "sdmc:/3ds/Zelda 3DS/guide.txt"
 #else
 #define GUIDE_PATH "guide.txt"
 #endif
-enum { GUIDE_COLS = 46, GUIDE_ROWS = 16, GUIDE_LINE_H = 9, GUIDE_MAX_TOC = 256 };
+enum { GUIDE_COLS = 44, GUIDE_ROWS = 16, GUIDE_LINE_H = 9, GUIDE_MAX_CH = 64, GUIDE_MAX_SEC = 256,
+       GUIDE_BTN_H = 18, GUIDE_BTN_PITCH = 21, GUIDE_COL_GAP = 6 };
+enum { GUIDE_READ, GUIDE_CHAPTERS, GUIDE_PLACES };
+enum { GUIDE_DRAG_NONE, GUIDE_DRAG_CONTENT, GUIDE_DRAG_THUMB };
 static const RectFS kGuidePanel = {6, 4, 308, 174};
-static const RectFS kGuideText = {22, 30, 278, GUIDE_ROWS * GUIDE_LINE_H};
-static const RectFS kGuideBar = {302, 30, 6, GUIDE_ROWS * GUIDE_LINE_H};
+static const RectFS kGuideText = {22, 30, GUIDE_COLS * 6, GUIDE_ROWS * GUIDE_LINE_H};
+static const RectFS kGuideBar = {292, 30, 12, GUIDE_ROWS * GUIDE_LINE_H};
 static struct {
   bool tried, ready;         // ready is published once by the loading thread
   char *text;
   int *line, lines;          // line i is text + line[i], NUL-terminated
-  int toc[GUIDE_MAX_TOC], tocCount;
+  int chLine[GUIDE_MAX_CH], chFirstSec[GUIDE_MAX_CH], chSecCount[GUIDE_MAX_CH], chCount;
+  int secLine[GUIDE_MAX_SEC], secCount;
   char title[48], author[40];
-  int top, tocTop;           // first visible line / contents row
-  bool inToc, dirty;
+  int view, chapter;         // view, and the chapter shown in the places grid
+  int readPx, listPx;        // scroll positions in pixels
+  bool dirty;
+  int drag, dragPx0;         // touch in progress on the content or the thumb
+  float pressX, pressY;
+  bool moved;
 } guide;
-static RectFS guide_contents_r, guide_up_r, guide_down_r;
+static RectFS guide_back_r, guide_up_r, guide_down_r;
 
 static int guide_ini_int(const char *key, int fallback) {
   FILE *f = fopen("zelda3.ini", "rb");
@@ -1740,6 +1749,8 @@ static int guide_ini_int(const char *key, int fallback) {
   fclose(f);
   return v;
 }
+
+static const char *guide_line(int i) { return guide.text + guide.line[i]; }
 
 static void guide_load(void) {
   guide.tried = true;
@@ -1766,36 +1777,76 @@ static void guide_load(void) {
       if (!strncmp(p, "@A ", 3)) SDL_strlcpy(guide.author, p + 3, sizeof(guide.author));
     } else {
       header = false;
-      if ((p[0] == 1 || p[0] == 2) && guide.tocCount < GUIDE_MAX_TOC) guide.toc[guide.tocCount++] = lines;
+      if (p[0] == 1 && guide.chCount < GUIDE_MAX_CH) {
+        guide.chLine[guide.chCount] = lines;
+        guide.chFirstSec[guide.chCount] = guide.secCount;
+        guide.chSecCount[guide.chCount++] = 0;
+      } else if (p[0] == 2 && guide.secCount < GUIDE_MAX_SEC && guide.chCount) {
+        guide.secLine[guide.secCount++] = lines;
+        guide.chSecCount[guide.chCount - 1]++;
+      }
       ln[lines++] = (int)(p - t);
     }
     p = nl ? nl + 1 : NULL;
   }
   guide.text = t; guide.line = ln; guide.lines = lines;
-  int maxTop = lines > GUIDE_ROWS ? lines - GUIDE_ROWS : 0;
-  guide.top = guide_ini_int("GuideLine", 0);
-  if (guide.top < 0) guide.top = 0;
-  if (guide.top > maxTop) guide.top = maxTop;
-  guide.inToc = guide_ini_int("GuideView", 1) != 0;
+  int maxLine = lines > GUIDE_ROWS ? lines - GUIDE_ROWS : 0, top = guide_ini_int("GuideLine", 0);
+  guide.readPx = (top < 0 ? 0 : top > maxLine ? maxLine : top) * GUIDE_LINE_H;
+  guide.view = guide_ini_int("GuideView", GUIDE_CHAPTERS);
+  if (guide.view < GUIDE_READ || guide.view > GUIDE_PLACES) guide.view = GUIDE_CHAPTERS;
+  guide.chapter = guide_ini_int("GuideChapter", 0);
+  if (guide.chapter < 0 || guide.chapter >= guide.chCount) guide.chapter = 0;
+  if (guide.view == GUIDE_PLACES && !guide.chSecCount[guide.chapter]) guide.view = GUIDE_CHAPTERS;
   __atomic_store_n(&guide.ready, lines > 0, __ATOMIC_RELEASE);
 }
 
 static void guide_save(void) {
+  guide.drag = GUIDE_DRAG_NONE;
   if (!guide.dirty) return;
   guide.dirty = false;
   char v[16];
-  snprintf(v, sizeof(v), "%d", guide.top);
+  snprintf(v, sizeof(v), "%d", guide.readPx / GUIDE_LINE_H);
   update_ini("[General]", "GuideLine", v);
-  update_ini("[General]", "GuideView", guide.inToc ? "1" : "0");
+  snprintf(v, sizeof(v), "%d", guide.view);
+  update_ini("[General]", "GuideView", v);
+  snprintf(v, sizeof(v), "%d", guide.chapter);
+  update_ini("[General]", "GuideChapter", v);
 }
 
-static const char *guide_line(int i) { return guide.text + guide.line[i]; }
-
-// Contents entry the reader is in: the last listed heading at or above the top line.
-static int guide_current_entry(void) {
-  int e = -1;
-  for (int k = 0; k < guide.tocCount && guide.toc[k] <= guide.top + 1; k++) e = k;
-  return e;
+// Chapter and place the reader is in: the last headings at or above the top line.
+static int guide_current_chapter(void) {
+  int top = guide.readPx / GUIDE_LINE_H + 1, c = 0;
+  for (int k = 0; k < guide.chCount && guide.chLine[k] <= top; k++) c = k;
+  return c;
+}
+static int guide_current_place(int chapter) {
+  int top = guide.readPx / GUIDE_LINE_H + 1, s = -1;
+  for (int k = 0; k < guide.chSecCount[chapter]; k++)
+    if (guide.secLine[guide.chFirstSec[chapter] + k] <= top) s = k;
+  return s;
+}
+// Places grid cells: cell 0 opens the chapter itself, cell k the (k-1)th place.
+static int guide_list_rows(void) {
+  if (guide.view == GUIDE_CHAPTERS) return guide.chCount;
+  return (guide.chSecCount[guide.chapter] + 2) / 2;
+}
+static int guide_max_px(void) {
+  if (guide.view == GUIDE_READ) {
+    int span = guide.lines - GUIDE_ROWS;
+    return span > 0 ? span * GUIDE_LINE_H : 0;
+  }
+  int span = guide_list_rows() * GUIDE_BTN_PITCH - (int)kGuideText.h;
+  return span > 0 ? span : 0;
+}
+static int *guide_pos(void) { return guide.view == GUIDE_READ ? &guide.readPx : &guide.listPx; }
+static void guide_set_pos(int px) {
+  int m = guide_max_px();
+  *guide_pos() = px < 0 ? 0 : px > m ? m : px;
+  guide.dirty = true;
+}
+static void guide_show_row(int row) {   // scroll a list so a row sits near the middle
+  guide.listPx = 0;
+  guide_set_pos(row * GUIDE_BTN_PITCH - (int)kGuideText.h / 2 + GUIDE_BTN_H);
 }
 
 static void guide_text(const char *s, float x, float y, uint32_t color, int maxCols) {
@@ -1814,15 +1865,40 @@ static void guide_text(const char *s, float x, float y, uint32_t color, int maxC
 static void guide_arrow_button(RectFS r, bool up) {
   draw_tablet(r, false, 3);
   float cx = floorf(r.x + r.w / 2), cy = floorf(r.y + r.h / 2);
-  for (int i = 0; i < 4; i++) {
-    float row = up ? cy - 2 + i : cy + 1 - i;
+  for (int i = 0; i < 5; i++) {
+    float row = up ? cy - 2 + i : cy + 2 - i;
     fill_rect(cx - i, row, 1 + 2 * i, 1, COL_INK);
   }
+}
+
+// Contents button on the parchment: darker paper, brown rim, gold when current.
+static void guide_list_button(RectFS r, const char *label, bool current, bool more) {
+  fill_round(r.x, r.y + 1, r.w, r.h, 3, COL(150, 116, 60));
+  fill_round(r.x, r.y, r.w, r.h, 3, current ? COL(176, 128, 40) : COL(160, 125, 60));
+  fill_round_grad(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 2,
+                  current ? COL(250, 222, 140) : COL(236, 220, 176),
+                  current ? COL(236, 196, 96) : COL(222, 202, 150),
+                  current ? COL(220, 176, 72) : COL(208, 186, 132), 0, 0);
+  int cols = (int)((r.w - 12 - (more ? 8 : 0)) / 6);
+  guide_text(label, r.x + 6, r.y + floorf((r.h - 9) / 2) + 1, current ? COL(70, 36, 6) : COL(60, 40, 16), cols);
+  if (more) {   // a small chevron: this chapter has places
+    float cx = r.x + r.w - 9, cy = floorf(r.y + r.h / 2);
+    for (int i = 0; i < 4; i++) fill_rect(cx + i, cy - 3 + i, 1, 7 - 2 * i, COL(110, 70, 20));
+  }
+}
+
+static RectFS guide_cell(int index) {   // list cell rectangle at scroll 0
+  if (guide.view == GUIDE_CHAPTERS)
+    return (RectFS){kGuideText.x, kGuideText.y + index * GUIDE_BTN_PITCH, kGuideText.w, GUIDE_BTN_H};
+  float w = (kGuideText.w - GUIDE_COL_GAP) / 2;
+  return (RectFS){kGuideText.x + (index % 2) * (w + GUIDE_COL_GAP),
+                  kGuideText.y + (index / 2) * GUIDE_BTN_PITCH, w, GUIDE_BTN_H};
 }
 
 static void draw_guide(void) {
   if (!__atomic_load_n(&guide.ready, __ATOMIC_ACQUIRE) && !guide.tried) guide_load();
   draw_parchment(kGuidePanel);
+  guide_back_r = guide_up_r = guide_down_r = (RectFS){0};
   if (!__atomic_load_n(&guide.ready, __ATOMIC_ACQUIRE)) {
     draw_ribbon("GUIDE", kGuidePanel.x + kGuidePanel.w / 2, 8);
     static const char *const msg[] = {
@@ -1830,96 +1906,169 @@ static void draw_guide(void) {
       "", "Make it from a GameFAQs walkthrough", "with tools/secondscreen/make_guide.py",
     };
     for (int i = 0; i < 7; i++) guide_text(msg[i], kGuideText.x, kGuideText.y + 8 + i * 12, COL_PARCH_INK, GUIDE_COLS);
-    guide_contents_r = guide_up_r = guide_down_r = (RectFS){0};
     return;
   }
-  guide_up_r = (RectFS){262, 8, 20, 18};
-  guide_down_r = (RectFS){286, 8, 20, 18};
-  int total = guide.inToc ? guide.tocCount : guide.lines;
-  int first = guide.inToc ? guide.tocTop : guide.top;
-  char page[24];
-  snprintf(page, sizeof(page), "%d/%d", first / (GUIDE_ROWS - 1) + 1, (total + GUIDE_ROWS - 2) / (GUIDE_ROWS - 1));
-  if (guide.inToc) {
-    guide_contents_r = (RectFS){0};
-    draw_ribbon("CONTENTS", 140, 6);
-    int cur = guide_current_entry();
-    for (int r = 0; r < GUIDE_ROWS && guide.tocTop + r < guide.tocCount; r++) {
-      int e = guide.tocTop + r;
-      const char *s = guide_line(guide.toc[e]);
-      bool section = s[0] == 2;
-      float y = kGuideText.y + r * GUIDE_LINE_H;
-      if (e == cur) fill_rect(kGuideText.x - 2, y - 1, kGuideText.w, GUIDE_LINE_H, COL(214, 190, 132));
-      guide_text(s + 1, kGuideText.x + (section ? 12 : 0), y,
-                 section ? COL(92, 66, 30) : COL(122, 42, 16), GUIDE_COLS - (section ? 2 : 0));
-    }
-  } else {
-    guide_contents_r = (RectFS){22, 8, 70, 18};
-    draw_tablet(guide_contents_r, false, 3);
-    ui_text_center("CONTENTS", guide_contents_r.x + guide_contents_r.w / 2, guide_contents_r.y + 6,
+  guide_up_r = (RectFS){256, 7, 24, 20};
+  guide_down_r = (RectFS){284, 7, 24, 20};
+  SDL_Rect clip = {(int)kGuideText.x - 2, (int)kGuideText.y, (int)kGuideText.w + 4, (int)kGuideText.h};
+  int pos = *guide_pos();
+  if (guide.view == GUIDE_READ) {
+    guide_back_r = (RectFS){22, 7, 70, 20};
+    draw_tablet(guide_back_r, false, 3);
+    ui_text_center("CONTENTS", guide_back_r.x + guide_back_r.w / 2, guide_back_r.y + 7,
                    FONT_SMALL, COL_INK, COL_INK_LIT, 0);
-    int cur = guide_current_entry();
-    if (cur >= 0) guide_text(guide_line(guide.toc[cur]) + 1, 98, 12, COL(122, 42, 16), 18);
-    for (int r = 0; r < GUIDE_ROWS && guide.top + r < guide.lines; r++) {
-      const char *s = guide_line(guide.top + r);
+    int ch = guide_current_chapter(), pl = guide_current_place(ch);
+    const char *where = pl >= 0 ? guide_line(guide.secLine[guide.chFirstSec[ch] + pl]) : guide.chCount ? guide_line(guide.chLine[ch]) : "";
+    guide_text(where + (where[0] && where[0] <= 3), 98, 12, COL(122, 42, 16), 16);
+    char page[24];
+    int top = pos / GUIDE_LINE_H;
+    snprintf(page, sizeof(page), "%d/%d", top / (GUIDE_ROWS - 1) + 1, (guide.lines + GUIDE_ROWS - 2) / (GUIDE_ROWS - 1));
+    ui_text(page, 200, 14, FONT_SMALL, COL_PARCH_INK, 0);
+    SDL_RenderSetClipRect(ss_r, &clip);
+    int off = pos % GUIDE_LINE_H;
+    for (int r = 0; r <= GUIDE_ROWS && top + r < guide.lines; r++) {
+      const char *s = guide_line(top + r);
       bool heading = s[0] >= 1 && s[0] <= 3;
-      float y = kGuideText.y + r * GUIDE_LINE_H;
+      float y = kGuideText.y + r * GUIDE_LINE_H - off;
       guide_text(heading ? s + 1 : s, kGuideText.x, y, heading ? COL(122, 42, 16) : COL(44, 32, 14), GUIDE_COLS);
       if (heading && s[0] == 1) fill_rect(kGuideText.x, y + 9, kGuideText.w - 4, 1, COL(160, 120, 60));
     }
+    SDL_RenderSetClipRect(ss_r, NULL);
+  } else {
+    bool places = guide.view == GUIDE_PLACES;
+    guide_back_r = (RectFS){22, 7, 56, 20};
+    draw_tablet(guide_back_r, false, 3);
+    ui_text_center(places ? "BACK" : "READ", guide_back_r.x + guide_back_r.w / 2, guide_back_r.y + 7,
+                   FONT_SMALL, COL_INK, COL_INK_LIT, 0);
+    if (places) guide_text(guide_line(guide.chLine[guide.chapter]) + 1, 84, 12, COL(122, 42, 16), 28);
+    else draw_ribbon("CONTENTS", 166, 6);
+    int ch = guide_current_chapter(), pl = guide_current_place(ch);
+    int cells = places ? guide.chSecCount[guide.chapter] + 1 : guide.chCount;
+    SDL_RenderSetClipRect(ss_r, &clip);
+    for (int i = 0; i < cells; i++) {
+      RectFS r = guide_cell(i);
+      r.y -= pos;
+      if (r.y + r.h < kGuideText.y || r.y > kGuideText.y + kGuideText.h) continue;
+      if (places) {
+        const char *label = i ? guide_line(guide.secLine[guide.chFirstSec[guide.chapter] + i - 1]) + 1 : "Start of chapter";
+        guide_list_button(r, label, guide.chapter == ch && i - 1 == pl, false);
+      } else {
+        guide_list_button(r, guide_line(guide.chLine[i]) + 1, i == ch, guide.chSecCount[i] > 0);
+      }
+    }
+    SDL_RenderSetClipRect(ss_r, NULL);
   }
-  ui_text(page, 210, 13, FONT_SMALL, COL_PARCH_INK, 0);
   guide_arrow_button(guide_up_r, true);
   guide_arrow_button(guide_down_r, false);
-  // scrollbar: track and thumb
-  fill_rect(kGuideBar.x + 2, kGuideBar.y, 2, kGuideBar.h, COL(190, 162, 104));
-  int span = total > GUIDE_ROWS ? total - GUIDE_ROWS : 0;
-  float th = span ? fmaxf(12.0f, kGuideBar.h * GUIDE_ROWS / (float)total) : kGuideBar.h;
-  float ty = kGuideBar.y + (span ? (kGuideBar.h - th) * first / (float)span : 0);
-  fill_round(kGuideBar.x, ty, kGuideBar.w, th, 2, COL(138, 106, 44));
+  // scrollbar: a sunken track and a thumb big enough to drag
+  int span = guide_max_px();
+  fill_round(kGuideBar.x + 3, kGuideBar.y, kGuideBar.w - 6, kGuideBar.h, 3, COL(196, 170, 112));
+  fill_rect(kGuideBar.x + 4, kGuideBar.y + 2, 1, kGuideBar.h - 4, COL(170, 140, 84));
+  if (span) {
+    float view = guide.view == GUIDE_READ ? GUIDE_ROWS * GUIDE_LINE_H : kGuideText.h;
+    float th = fmaxf(24.0f, kGuideBar.h * view / (view + span));
+    float ty = kGuideBar.y + (kGuideBar.h - th) * pos / (float)span;
+    fill_round(kGuideBar.x, ty + 1, kGuideBar.w, th, 4, COL(90, 64, 24));
+    fill_round(kGuideBar.x, ty, kGuideBar.w, th, 4, guide.drag == GUIDE_DRAG_THUMB ? COL(196, 140, 52) : COL(150, 112, 46));
+    for (int i = -1; i <= 1; i++)   // grip lines
+      fill_rect(kGuideBar.x + 3, floorf(ty + th / 2) + i * 3, kGuideBar.w - 6, 1, COL(220, 190, 120));
+  }
 }
 
-static void guide_scroll(int rows) {
-  int *pos = guide.inToc ? &guide.tocTop : &guide.top;
-  int total = guide.inToc ? guide.tocCount : guide.lines;
-  int maxTop = total > GUIDE_ROWS ? total - GUIDE_ROWS : 0;
-  *pos += rows;
-  if (*pos > maxTop) *pos = maxTop;
-  if (*pos < 0) *pos = 0;
-  guide.dirty = true;
+static RectFS guide_bar_hit(void) {   // generous touch target around the scrollbar
+  return (RectFS){kGuideBar.x - 8, kGuideBar.y - 4, kGuideBar.w + 16, kGuideBar.h + 8};
+}
+
+static void guide_thumb_to(float y) {
+  float view = guide.view == GUIDE_READ ? GUIDE_ROWS * GUIDE_LINE_H : kGuideText.h;
+  int span = guide_max_px();
+  float th = fmaxf(24.0f, kGuideBar.h * view / (view + span));
+  float frac = (y - kGuideBar.y - th / 2) / (kGuideBar.h - th);
+  guide_set_pos((int)(frac * span + 0.5f));
+}
+
+static void guide_open_reading(int line) {
+  guide.view = GUIDE_READ;
+  guide.readPx = 0;
+  guide_set_pos(line * GUIDE_LINE_H);
+}
+
+// Release without a drag: the press was a tap.
+static void guide_tap_action(float x, float y) {
+  if (guide.view == GUIDE_READ) {
+    int page = (GUIDE_ROWS - 1) * GUIDE_LINE_H;
+    guide_set_pos(guide.readPx + (y < kGuideText.y + kGuideText.h / 2 ? -page : page));
+    return;
+  }
+  int cells = guide.view == GUIDE_PLACES ? guide.chSecCount[guide.chapter] + 1 : guide.chCount;
+  for (int i = 0; i < cells; i++) {
+    RectFS r = guide_cell(i);
+    r.y -= guide.listPx;
+    if (!in_rect(&r, x, y)) continue;
+    if (guide.view == GUIDE_CHAPTERS) {
+      if (guide.chSecCount[i]) {
+        guide.view = GUIDE_PLACES; guide.chapter = i;
+        int ch = guide_current_chapter();
+        guide_show_row(ch == i ? (guide_current_place(i) + 1) / 2 : 0);
+      } else {
+        guide_open_reading(guide.chLine[i]);
+      }
+    } else {
+      guide_open_reading(i ? guide.secLine[guide.chFirstSec[guide.chapter] + i - 1] : guide.chLine[guide.chapter]);
+    }
+    return;
+  }
 }
 
 static void guide_tap(float x, float y) {
   if (!__atomic_load_n(&guide.ready, __ATOMIC_ACQUIRE)) return;
-  int page = GUIDE_ROWS - 1;
-  RectFS bar = {kGuideBar.x - 6, kGuideBar.y, kGuideBar.w + 10, kGuideBar.h};   // generous touch target
-  if (in_rect(&guide_up_r, x, y)) { guide_scroll(-page); return; }
-  if (in_rect(&guide_down_r, x, y)) { guide_scroll(page); return; }
-  if (!guide.inToc && in_rect(&guide_contents_r, x, y)) {
-    guide.inToc = true;
-    int cur = guide_current_entry();
-    guide.tocTop = 0;
-    guide_scroll(cur > GUIDE_ROWS / 2 ? cur - GUIDE_ROWS / 2 : 0);
-    return;
-  }
-  if (in_rect(&bar, x, y)) {
-    int total = guide.inToc ? guide.tocCount : guide.lines;
-    int span = total > GUIDE_ROWS ? total - GUIDE_ROWS : 0;
-    int *pos = guide.inToc ? &guide.tocTop : &guide.top;
-    *pos = 0;
-    guide_scroll((int)((y - bar.y) / bar.h * span + 0.5f));
-    return;
-  }
-  if (!in_rect(&kGuideText, x, y)) return;
-  if (guide.inToc) {
-    int e = guide.tocTop + (int)((y - kGuideText.y) / GUIDE_LINE_H);
-    if (e >= 0 && e < guide.tocCount) {
-      guide.inToc = false;
-      guide.top = 0;
-      guide_scroll(guide.toc[e]);
+  int pageList = (int)kGuideText.h - GUIDE_BTN_PITCH;
+  int page = guide.view == GUIDE_READ ? (GUIDE_ROWS - 1) * GUIDE_LINE_H : pageList;
+  RectFS bar = guide_bar_hit();
+  guide.drag = GUIDE_DRAG_NONE;
+  if (in_rect(&guide_up_r, x, y)) { guide_set_pos(*guide_pos() - page); return; }
+  if (in_rect(&guide_down_r, x, y)) { guide_set_pos(*guide_pos() + page); return; }
+  if (in_rect(&guide_back_r, x, y)) {
+    if (guide.view == GUIDE_READ) {          // CONTENTS: back to where the reader is
+      int ch = guide_current_chapter();
+      if (guide.chSecCount[ch]) { guide.view = GUIDE_PLACES; guide.chapter = ch; guide_show_row((guide_current_place(ch) + 1) / 2); }
+      else { guide.view = GUIDE_CHAPTERS; guide_show_row(ch); }
+    } else if (guide.view == GUIDE_PLACES) { // BACK: the chapter list
+      guide.view = GUIDE_CHAPTERS; guide_show_row(guide.chapter);
+    } else {                                 // READ: resume reading
+      guide.view = GUIDE_READ;
     }
-  } else {
-    guide_scroll(y < kGuideText.y + kGuideText.h / 2 ? -page : page);
+    guide.dirty = true;
+    return;
   }
+  if (in_rect(&bar, x, y) && guide_max_px()) {
+    guide.drag = GUIDE_DRAG_THUMB;
+    guide_thumb_to(y);
+    return;
+  }
+  if (in_rect(&kGuideText, x, y)) {
+    guide.drag = GUIDE_DRAG_CONTENT;
+    guide.pressX = x; guide.pressY = y; guide.dragPx0 = *guide_pos(); guide.moved = false;
+  }
+}
+
+// Finger moved while pressed: scroll with it. Returns true when the view changed.
+static bool guide_drag_to(float y) {
+  int before = *guide_pos();
+  if (guide.drag == GUIDE_DRAG_THUMB) {
+    guide_thumb_to(y);
+  } else if (guide.drag == GUIDE_DRAG_CONTENT) {
+    float dy = y - guide.pressY;
+    if (!guide.moved && fabsf(dy) < 4) return false;
+    guide.moved = true;
+    guide_set_pos(guide.dragPx0 - (int)dy);
+  }
+  return *guide_pos() != before;
+}
+
+static void guide_drag_end(void) {
+  if (guide.drag == GUIDE_DRAG_CONTENT && !guide.moved) guide_tap_action(guide.pressX, guide.pressY);
+  guide.drag = GUIDE_DRAG_NONE;
 }
 
 static void draw_tab_button(RectFS r, const char *label, bool active) {
@@ -2751,7 +2900,10 @@ bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
 #ifdef __3DS__
     return true;
 #else
-    return e->tfinger.windowID == ss_winid;
+    if (e->tfinger.windowID != ss_winid) return false;
+    if (e->type == SDL_FINGERMOTION) guide_drag_to(e->tfinger.y * H);
+    else guide_drag_end();
+    return true;
 #endif
   case SDL_MOUSEBUTTONDOWN:
     if (e->button.windowID == ss_winid) {
@@ -2761,7 +2913,10 @@ bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
     }
     return false;
   case SDL_MOUSEBUTTONUP: case SDL_MOUSEMOTION:
-    return e->button.windowID == ss_winid;
+    if (e->button.windowID != ss_winid) return false;
+    if (e->type == SDL_MOUSEMOTION && (e->motion.state & SDL_BUTTON_LMASK)) guide_drag_to((float)e->motion.y);
+    else if (e->type == SDL_MOUSEBUTTONUP) guide_drag_end();
+    return true;
   case SDL_WINDOWEVENT:
     if (e->window.windowID != ss_winid) return false;
     if (e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
@@ -2962,9 +3117,32 @@ static bool ensure_second_screen_worker(void) {
   return true;
 }
 
+// GUIDE drags: the touch layer only reports presses, so follow a held contact
+// once per frame and finish the gesture on release.
+static void guide_poll_drag(void) {
+  if (guide.drag == GUIDE_DRAG_NONE) return;
+  bool changed;
+  if (tab == TAB_GUIDE && (hidKeysHeld() & KEY_TOUCH)) {
+    touchPosition tp; hidTouchRead(&tp);
+    changed = guide_drag_to((float)tp.py - (240.0f - H) * 0.5f);
+  } else {
+    guide_drag_end();
+    changed = true;
+  }
+  if (!changed) return;
+  if (!ss_is_new_3ds) {
+    ss_touch_request_ticks = svcGetSystemTick();
+    ss_touch_redraw_pending = true;
+    ss_worker_interactive = true;
+  }
+  request_bottom_redraw(kBottomRedrawFull);
+  prioritize_bottom_touch();
+}
+
 void SecondScreenSDL_BeginFrame(int logic_frames) {
   if (!ss_enabled || Platform3DS_IsSystemClosing())
     return;
+  guide_poll_drag();
   static uint32_t frame_no;
   frame_no++;
   static unsigned update_revision;
@@ -3215,7 +3393,7 @@ static void destroy_textures(void) {
                            &tex_letters, &tex_face, &tex_mapicons,
                            &tex_bg_parch, &tex_bg_wood, &tex_ui_icons,
                            &tex_heart_scratch, &ui_font[FONT_LARGE].tex,
-                           &ui_font[FONT_SMALL].tex, &tex_triforce};
+                           &ui_font[FONT_SMALL].tex, &tex_triforce, &tex_guide_font};
   for (size_t i = 0; i < sizeof(texes) / sizeof(texes[0]); i++) {
     if (*texes[i]) SDL_DestroyTexture(*texes[i]);
     *texes[i] = NULL;

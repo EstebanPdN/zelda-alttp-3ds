@@ -65,6 +65,7 @@ static void draw_bottom_sidebar_patch(void){assert(priority==0x30);drawn_health=
 static void draw_second_screen(int n){if(!ss_worker_touch_request_ticks)assert(priority>=0x30);drawn_health=live[0x6d];}
 '''+s[a:b]+fn('static void prioritize_bottom_scene(')+fn('static void prioritize_bottom_touch(')
 if 'static s32 bottom_worker_priority(' in s:code+=fn('static s32 bottom_worker_priority(')+fn('static void prioritize_bottom_hud(')
+code+='static void guide_poll_drag(void){}\n'
 code+=fn('static void request_bottom_redraw_on_state_change(')+fn('void SecondScreenSDL_BeginFrame(')+fn('static void second_screen_worker_main(')
 code+=r'''
 typedef struct {int x,y,w,h;} SDL_Rect;

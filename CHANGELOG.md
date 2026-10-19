@@ -1,5 +1,12 @@
 # Changelog
 
+## v3.2-G2 (fork, experimental)
+
+- GUIDE contents are large buttons: chapters first, then a chapter's places in a
+  two-column grid, with your current place highlighted.
+- Drag the text to scroll smoothly; a short tap still turns the page.
+- Wider scrollbar with a thumb you can drag; guide text wraps at 44 columns.
+
 ## v3.2-G1 (fork, experimental)
 
 - GUIDE tab on the bottom screen: a walkthrough from guide.txt on the SD card,

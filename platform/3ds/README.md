@@ -28,8 +28,9 @@ when updating. The public CIA retains v2.9's title ID `0004000005a13e00`.
 - Settings > Screen > 3D DEPTH (OFF/LOW/MID/HIGH): stereoscopic layer depth
   with the 3D slider; Old 3DS/3DS XL only, GPU-rendered frames only.
 - GUIDE tab: reads sdmc:/3ds/Zelda 3DS/guide.txt (make it with
-  tools/secondscreen/make_guide.py from a GameFAQs walkthrough). Tap the upper or
-  lower half of the text to page, the scrollbar to jump, CONTENTS for the list.
+  tools/secondscreen/make_guide.py from a GameFAQs walkthrough). Drag the text to
+  scroll, tap its upper or lower half to turn a page, drag the scrollbar thumb;
+  CONTENTS opens chapter buttons and each chapter's places.
 - Settings > Developer > 3D TERRAIN: depth from the game's collision data
   (ground height from ledges, cliffs and stairs; objects and sprites stand on it).
   Off falls back to depth by background layer and priority.
