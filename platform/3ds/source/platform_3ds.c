@@ -3292,7 +3292,11 @@ static bool EnsureProfileReady(RomEntry *rom, bool force_extract) {
   if (!ready) return false;
   if (!CopyFileReplacing(profile_assets, kAssetsFilename))
     return ProfileSetupFailure("SD assets copy error", profile_assets);
-  if (!CopyFileReplacing(profile_ini, "zelda3.ini"))
+  /* Only seed zelda3.ini the first time.  Replacing it on every launch silently
+   * discarded whatever the user edited in the working directory, because the
+   * per-ROM profile ini would overwrite it before config parsing read it back.
+   * This matches what MigrateWideDefaults() already does for the same file. */
+  if (!CopyFileIfMissing(profile_ini, "zelda3.ini"))
     return ProfileSetupFailure("SD settings copy error", profile_ini);
   if (!PrepareSaveDirectory(rom, false))
     return ProfileSetupFailure("SD save folder error", rom->profile);
