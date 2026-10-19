@@ -1,5 +1,6 @@
 #include "ppu_gpu.h"
 #include "ppu_gpu_model.h"
+#include "stereo_terrain.h"
 #include "ppu_gpu_c3d.h"
 #include "platform_3ds.h"
 #include "alttp_pica_shader_shbin.h"
@@ -37,6 +38,9 @@ static struct {
   Range ranges[PICA_GROUPS];
   unsigned count,width,height,captured;
   float invWidth,invHeight,eyeNdc,stereoPixels;
+  PicaTerrain terrain;
+  uint32_t terrainUs;
+  int terrainMode;
   uint64_t frames,gpuFrames,cpuFrames,probePixels,probeErrors;
   uint64_t geometryPixels,geometryErrors;
   uint32_t prepareUs,syncUs,buildUs,submitUs,uploadBytes,firstBad,expected,actual;
@@ -421,8 +425,16 @@ bool PpuGpuBegin(Ppu *p,unsigned height) {
 void PpuGpuLine(Ppu *p,unsigned y) {if(y<g.height){PicaCaptureLine(&g.lines[y],p,y);g.captured++;}}
 bool PpuGpuFinish(Ppu *p) {
   p->gpuRecording=false;uint64_t start=svcGetSystemTick();
+  // Terrain depth only while the previous frame was drawn in stereo.
+  const PicaTerrain *terrain=NULL;g.terrainUs=0;g.terrainMode=0;
+  if(g.stereoPixels>0 && Platform3DS_GetStereoTerrain()) {
+    StereoTerrainSource src;g.terrainMode=StereoTerrain_GetSource(&src);
+    if(g.terrainMode==1) {uint64_t t0=svcGetSystemTick();StereoTerrain_Update(&g.terrain,g.saved,&src);g.terrainUs=Us(t0);}
+    if(!g.terrainMode) {g.terrain.valid=false;StereoTerrain_Reset();}
+    if(g.terrain.valid) terrain=&g.terrain;
+  }
   PicaFrame frame={.memory=g.saved,.lines=g.lines,.scratch=g.scratch,.atlas=g.cache,
-    .pixels=g.atlas.data,.width=g.width,.height=g.height,.emit=Emit};
+    .pixels=g.atlas.data,.width=g.width,.height=g.height,.emit=Emit,.terrain=terrain};
   bool ok=!p->gpuInvalidWrite && g.captured==g.height;
   if(ok) ok=PicaBuildFrame(&frame);
   g.buildUs=Us(start);g.prepareUs=g.buildUs+g.syncUs;
@@ -492,6 +504,7 @@ void PpuGpuWriteDiagnostics(FILE *f) {
   fputc('\n',f);
   fprintf(f,"PICA resource_slots=2 current_slot=%u last_submitted_slot=%u dump_readback=CPU-uncached-VRAM timeout_ms=1000\n",g.slot,g.lastSubmittedSlot);
   fprintf(f,"PICA stereo_pixels_per_unit=%.2f last_frame_stereo=%u\n",(double)g.stereoPixels,g.stereo);
+  fprintf(f,"PICA terrain mode=%d valid=%u update_us=%lu changed_tiles=%u sweeps=%u\n",g.terrainMode,g.terrain.valid,(unsigned long)g.terrainUs,g.terrain.changed,g.terrain.sweeps);
   fputs("PICA recent-frame history: GPU preparation/submit wall spans; CPU rows describe GPU preflight only, not CPU PPU time.\n",f);
   fputs("number,gpu,prepare_us,prior_gpu_wait_us,build_us,submit_us,upload_bytes,vertices,decodes,reason\n",f);
   for(unsigned i=0;i<g.historyCount;i++) {

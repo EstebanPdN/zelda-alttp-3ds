@@ -229,7 +229,7 @@ static RectFS settings_row_r[5], remap_row_r[6], remap_back_r;
 static RectFS remap_page_r;
 static RectFS screen_row_r[5], screen_back_r;
 static RectFS cinema_back_r;
-static RectFS developer_row_r[4], developer_back_r;
+static RectFS developer_row_r[5], developer_back_r;
 static RectFS load_cancel_r, load_confirm_r;
 
 // settings / remap state
@@ -1480,16 +1480,24 @@ static void draw_developer_panel(RectFS r) {
   const char *load_value = load_result == -2 ? "WAIT" :
     (load_result >= 0 && SDL_GetTicks() < load_flash_until ?
       DumpState_ResultLabel((ZeldaDumpStateResult)load_result) : "LOAD");
-  const char *labels[4] = {
-    "MEM DUMP", "LOAD STATE", "SHOW FPS", "OVERLAY",
+  const char *labels[5] = {
+    "MEM DUMP", "LOAD STATE", "SHOW FPS", "OVERLAY", "3D TERRAIN",
   };
-  const char *values[4] = {
+  const char *values[5] = {
     SDL_GetTicks() < dump_flash_until ? "DONE" : "WRITE",
     load_value,
     show_fps ? "ON" : "OFF",
     "OPEN",
+    "OFF",
   };
-  for (int i = 0; i < 4; i++) {
+  int rows = 4;
+#ifdef __3DS__
+  // 3D TERRAIN: stereo depth from the game's collision data, for A/B comparison.
+  values[4] = Platform3DS_GetStereoTerrain() ? "ON" : "OFF";
+  rows = Platform3DS_StereoSupported() ? 5 : 4;
+#endif
+  developer_row_r[4] = (RectFS){0};
+  for (int i = 0; i < rows; i++) {
     developer_row_r[i] = settings_row(i);
     draw_settings_entry(&developer_row_r[i], labels[i], values[i], false);
   }
@@ -2385,6 +2393,12 @@ settings_tap:
         developer_overlay_mode = true;
 #ifdef __3DS__
         request_bottom_redraw(kBottomRedrawFull);
+#endif
+#ifdef __3DS__
+      } else if (in_rect(&developer_row_r[4], x, y)) {
+        bool on = !Platform3DS_GetStereoTerrain();
+        Platform3DS_SetStereoTerrain(on);
+        update_ini("[General]", "Stereo3DTerrain", on ? "1" : "0");
 #endif
       }
     } else {

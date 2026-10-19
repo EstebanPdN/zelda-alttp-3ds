@@ -1,4 +1,5 @@
 #include "ppu_gpu_model.h"
+#include "stereo_terrain.h"
 #include <string.h>
 #include <assert.h>
 
@@ -26,6 +27,12 @@ static unsigned BgParallax(const Ppu *p,unsigned layer,unsigned sub,bool prio) {
   return prio?kParallaxTall:kParallaxFloor;
 }
 static unsigned ObjParallax(unsigned prio) { return prio==3?kParallaxTall:prio==2?kParallaxFloor:kParallaxBelow; }
+// Terrain: a sprite stands on the ground under its feet and leans kTerrainRise
+// eighths nearer per 8 px above them, up to kTerrainCap rows.
+static unsigned ObjLean(const PicaTerrain *t,unsigned e,int y) {
+  int rise=t->objFeet[e]-y; if(rise<0)rise=0; if(rise>kTerrainCap*8)rise=kTerrainCap*8;
+  int v=(int)t->objGround[e]-(rise*kTerrainRise+4)/8; return v<1?1u:(unsigned)v;
+}
 static uint32_t Hash(uint32_t key) { return (key * 2654435761u) >> 18; }
 static uint32_t Encode(uint16_t rgb, unsigned alpha) {
   // Bias by one BEFORE arithmetic. This makes half-add interpolation robust
@@ -201,6 +208,11 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
         }
         unsigned sy=wy&7;
         unsigned pt=top*8+(bottom-top)*sy,pb=top*8+(bottom-top)*(sy+h);
+        if(f->terrain && layer==1 && !sub) {
+          // Main-screen BG2 is the ground layer: depth comes from the terrain grid.
+          unsigned ti=((wy>>3)&63)*64+((wx>>3)&63),a=f->terrain->top[ti],b=f->terrain->bottom[ti];
+          pt=(a*(8-sy)+b*sy+4)/8; pb=(a*(8-sy-h)+b*(sy+h)+4)/8;
+        }
         if(slot>=0 && !TileQuad(f,group,slot,x+p->extraLeftRight,y,w,h,wx&7,wy&7,
             tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127),pb,pt)) return false;
         x+=w;
@@ -270,6 +282,10 @@ static bool Objects(PicaFrame *f,unsigned sub) {
     unsigned palette=128+((attr>>9)&7)*16;
     unsigned z=((((attr>>12)&3)*4+2)*16+4+((attr&0x800)?0:2))<<8;
     PpuWindowSpans win;PpuGetWindowSpans(p,4,!f->sharedWindow && (p->screenWindowed[sub]&16)!=0,&win);
+    unsigned opt=ObjParallax((attr>>12)&3)*8,opb=opt;
+    if(f->terrain && ((attr>>12)&3)>=2 && f->terrain->objFeet[index/2]!=kTerrainNoFeet) {
+      opt=ObjLean(f->terrain,index/2,(int)y); opb=ObjLean(f->terrain,index/2,(int)(y+h));
+    }
     while(mask) {
       unsigned col=__builtin_ctz(mask)*8;mask&=mask-1;int left=x+col;
       unsigned usedcol=(attr&0x4000)?size-1-col:col;
@@ -282,7 +298,7 @@ static bool Objects(PicaFrame *f,unsigned sub) {
         int l=IntMax(left,win.edges[i]),r=IntMin(left+8,win.edges[i+1]);
         if(l>=r)continue;
         if(!TileQuad(f,sub*2+1,slot,l+p->extraLeftRight,y,r-l,h,l-left,vf?7-(row&7):row&7,
-          attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127),ObjParallax((attr>>12)&3)*8,ObjParallax((attr>>12)&3)*8))return false;
+          attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127),opb,opt))return false;
       }
     }
     y+=h;

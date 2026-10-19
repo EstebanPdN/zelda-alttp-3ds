@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.2-T1 (fork, experimental)
+
+- 3D depth now follows the terrain: ledges, cliff faces and stairs give the ground
+  its height, so plateaus, ramps and terraces stand at different depths.
+- Statues, columns, trees and house walls stand up from their own base as one
+  piece, and sprites stand on the ground under their feet.
+- Settings > Developer > 3D TERRAIN switches back to the previous layer-based depth.
+
 ## v3.2-S3 (fork, experimental)
 
 - Tall tiles (tree tops, statue heads, wall tops) now lean from the floor they

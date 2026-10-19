@@ -491,7 +491,8 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
                StringEqualsNoCase(key, "CStickMode") ||
                StringEqualsNoCase(key, "CStickTurboMultiplier") ||
                StringEqualsNoCase(key, "ShowFps") ||
-               StringEqualsNoCase(key, "Stereo3D")) {
+               StringEqualsNoCase(key, "Stereo3D") ||
+               StringEqualsNoCase(key, "Stereo3DTerrain")) {
       return true;  // parsed by platform_3ds.c
     }
   } else if (section == 4) {

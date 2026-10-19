@@ -27,6 +27,9 @@ when updating. The public CIA retains v2.9's title ID `0004000005a13e00`.
 - Settings > Developer > Show FPS: optional top-screen counter.
 - Settings > Screen > 3D DEPTH (OFF/LOW/MID/HIGH): stereoscopic layer depth
   with the 3D slider; Old 3DS/3DS XL only, GPU-rendered frames only.
+- Settings > Developer > 3D TERRAIN: depth from the game's collision data
+  (ground height from ledges, cliffs and stairs; objects and sprites stand on it).
+  Off falls back to depth by background layer and priority.
 - Title-screen Triforce: display and turbo settings.
 
 Both display paths use nearest-neighbor sampling. Old 3DS uses the PICA200

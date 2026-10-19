@@ -37,7 +37,7 @@ enum {kPlatform3DSDisplayOriginal,kPlatform3DSDisplayUltraWideMod,kPlatform3DSDi
 enum {kPlatform3DSWideEdgeStandard,kPlatform3DSWideEdgeFixedCamera};
 enum {kPlatform3DSCStickDisabled,kPlatform3DSCStickTurbo};
 static bool g_is_new_3ds,g_display_mode_auto,g_wide_edge_mode_auto;
-static bool g_display_mode_legacy_stretch,g_runtime_wide_edge_seen,g_show_fps;
+static bool g_display_mode_legacy_stretch,g_runtime_wide_edge_seen,g_show_fps,g_stereo_terrain;
 static int g_display_mode,g_wide_edge_mode,g_wide_zoom_index,g_cstick_mode,g_turbo_multiplier,g_stereo_level;
 static const char *kBundledConfig="bundled.ini";
 static bool ProfileSetupFailure(const char *status,const char *path){return false;}

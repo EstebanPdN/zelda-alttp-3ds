@@ -35,6 +35,7 @@ static void PresentSetupConsole(void){if(++setupPresents>=2)valid=3;}
 static void SetupAudioStop(void){}
 static void gfxExit(void){GSPGPU_SetLcdForceBlack(1);valid=0;}
 static bool C3D_FrameBegin(int flags){return true;}
+static bool stereo_on;static bool gfxIs3D(void){return stereo_on;}static void gfxSet3D(bool on){stereo_on=on;}
 static void Platform3DS_ClearBlackTarget(int target){valid|=target;}
 static void C2D_SceneBegin(int target){}
 static void Platform3DS_EndGpuFrame(void){}

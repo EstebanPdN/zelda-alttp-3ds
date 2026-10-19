@@ -56,6 +56,7 @@ static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_show_fps;
 static int g_stereo_level; /* 0 = off, 1..3 = 3D depth strength */
+static bool g_stereo_terrain = true; /* depth from collision data (terrain, objects) */
 static unsigned g_current_fps;
 static uint64_t g_dump_saved_overlay_until_ms;
 static bool g_quick_dump_requested;
@@ -479,6 +480,10 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
     else if (strcasecmp(value, "3") == 0 || strcasecmp(value, "High") == 0)
       level = 3;
     g_stereo_level = level;
+  } else if (strcasecmp(key, "Stereo3DTerrain") == 0) {
+    bool on = true;
+    if (ParseBool(value, &on))
+      g_stereo_terrain = on;
   }
 }
 
@@ -489,6 +494,7 @@ void Platform3DS_LoadRuntimeSettings(void) {
   g_runtime_wide_edge_seen = false;
   g_show_fps = false;
   g_stereo_level = 0;
+  g_stereo_terrain = true;
   FILE *file = fopen("zelda3.ini", "rb");
   if (!file) {
     Platform3DS_ApplyAutoDisplayDefaults();
@@ -688,6 +694,15 @@ void Platform3DS_SetStereoLevel(int level) {
     level = 3;
   g_stereo_level = level;
   Platform3DS_LogRuntime("Stereo 3D level set: %d", g_stereo_level);
+}
+
+bool Platform3DS_GetStereoTerrain(void) {
+  return g_stereo_terrain;
+}
+
+void Platform3DS_SetStereoTerrain(bool on) {
+  g_stereo_terrain = on;
+  Platform3DS_LogRuntime("Stereo 3D terrain: %s", on ? "on" : "off");
 }
 
 // Stereo needs the Old 3DS GPU renderer and a 3D-capable screen (no 2DS).
