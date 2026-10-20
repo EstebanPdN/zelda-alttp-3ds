@@ -15,5 +15,11 @@ bool PpuGpuPrepared(void);
 bool PpuGpuOutputActive(void);
 bool PpuGpuDraw(void);
 void *PpuGpuOutput(void);
+// Layered stereo: half_separation_px is the per-eye shift of the nearest layer
+// (0 disables). PpuGpuOutputRight() is non-NULL only after a stereo frame.
+void PpuGpuSetStereo(float half_separation_px);
+void *PpuGpuOutputRight(void);
+// Layer term for sprites (default 6700); larger pops sprites out more.
+void PpuGpuSetSpriteDepth(float term);
 void PpuGpuWriteDiagnostics(FILE *file);
 const uint32_t *PpuGpuReadback(void);

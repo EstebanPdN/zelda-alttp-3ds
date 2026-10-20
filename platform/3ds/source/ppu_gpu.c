@@ -21,12 +21,16 @@ static struct {
   Ppu *saved,*scratch;
   PicaAtlas *cache;
   PicaLine lines[PICA_MAX_LINES];
-  C3D_Tex atlas, main, sub, result;
+  C3D_Tex atlas, main, sub, result, resultR;
   C3D_Tex atlasPool[2];
   PicaAtlas *cachePool[2];
   Vertex *vertexPool[2];
   unsigned slot,lastSubmittedSlot;
-  C3D_RenderTarget *mainTarget,*subTarget,*resultTarget;
+  C3D_RenderTarget *mainTarget,*subTarget,*resultTarget,*resultTargetR;
+  int eyeLocation,spriteLocation;
+  float spriteTerm;
+  float eyePx,stereoHalf;
+  bool rightReady;
   DVLB_s *shader;
   shaderProgram_s shaderProgram;
   int scaleLocation;
@@ -65,7 +69,8 @@ static bool Emit(void *ctx,unsigned group,const PicaQuad *q) {
   if(range->first+range->count!=g.count) return false;
   int16_t depth=q->depth>>1;
   if(!depth) depth=1;
-  Vertex a={q->x0,q->y0,depth,1,q->u0,q->v0,q->r,q->g,q->b,q->a};
+  // w=2 marks sprites (groups 1 and 3) so the shader gives them no parallax.
+  Vertex a={q->x0,q->y0,depth,(group==1||group==3)?2:1,q->u0,q->v0,q->r,q->g,q->b,q->a};
   Vertex b=a,c=a,d=a;
   b.x=d.x=q->x1;b.u=d.u=q->u1;
   c.y=d.y=q->y1;c.v=d.v=q->v1;
@@ -88,6 +93,10 @@ static void ResetTev(void) {
 static void BindState(void) {
   C3D_BindProgram(&g.shaderProgram);C3D_SetAttrInfo(&g.attributes);C3D_SetBufInfo(&g.buffers);
   C3D_FVUnifSet(GPU_VERTEX_SHADER,g.scaleLocation,g.invWidth,-g.invHeight,-1.f/32768.f,1.f);
+  // Depth units here are q->depth>>1. 0x3880 is the SNES BG2 low-priority
+  // layer (ground), which stays at screen depth; layers in front pop out.
+  if(g.eyeLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.eyeLocation,g.eyePx,-14464.f,2048.f,3600.f);
+  if(g.spriteLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.spriteLocation,g.spriteTerm>0.f?g.spriteTerm:6700.f,0.f,0.f,0.f);
   C3D_CullFace(GPU_CULL_NONE);C3D_DepthMap(true,-1.f,0.f);
   C3D_FragOpMode(GPU_FRAGOPMODE_GL);
   C3D_EarlyDepthTest(false,GPU_EARLYDEPTH_GREATER,0);
@@ -184,10 +193,10 @@ static void ConfigureCompose(unsigned flags) {
   C3D_TexEnvSrc(e,C3D_Alpha,GPU_CONSTANT,GPU_PREVIOUS,GPU_PREVIOUS);
   C3D_TexEnvColor(e,0xffffffff);C3D_TexEnvFunc(e,C3D_Alpha,GPU_REPLACE);
 }
-static bool DrawComposition(void) {
+static bool DrawComposition(C3D_RenderTarget *out) {
   C3D_FrameSplit(GX_CMDLIST_FLUSH);
-  C3D_RenderTargetClear(g.resultTarget,C3D_CLEAR_COLOR,0,0);
-  if(!C3D_FrameDrawOn(g.resultTarget)) return false;
+  C3D_RenderTargetClear(out,C3D_CLEAR_COLOR,0,0);
+  if(!C3D_FrameDrawOn(out)) return false;
   BindState();Viewport();
   C3D_DepthTest(false,GPU_ALWAYS,GPU_WRITE_COLOR);
   C3D_TexBind(0,&g.main);C3D_TexBind(1,&g.sub);
@@ -231,7 +240,7 @@ static bool ColorProbe(void) {
     PicaQuad q={0,y,512,y+8,0,4096-(int)y*16,4096,4096-(int)(y+8)*16,1,255,255,255,255};
     Emit(NULL,4+flags,&q);
   }
-  bool ok=Clean(g.vertices,g.count*sizeof(Vertex)) && DrawComposition();
+  bool ok=Clean(g.vertices,g.count*sizeof(Vertex)) && DrawComposition(g.resultTarget);
   if(ok) ok=TransferReadback(GX_TRANSFER_FMT_RGB5A1);
   RestoreC2D();C3D_FrameEnd(GX_CMDLIST_FLUSH);
   bool readbackOk=FinishReadback(512*256*2);
@@ -311,7 +320,7 @@ static bool GeometryProbe(bool shared) {
     .pixels=g.atlas.data,.width=400,.height=height,.emit=Emit};
   bool ok=PicaBuildFrame(&frame) && (!shared || frame.sharedWindow) && Clean(g.atlas.data,g.atlas.size) && Clean(g.vertices,g.count*sizeof(Vertex));
   if(ok && C3D_FrameBegin(0)) {
-    ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition();
+    ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition(g.resultTarget);
     if(ok) ok=TransferReadback(GX_TRANSFER_FMT_RGB5A1);
     RestoreC2D();C3D_FrameEnd(GX_CMDLIST_FLUSH);
     bool readbackOk=FinishReadback(512*256*2);
@@ -372,6 +381,14 @@ bool PpuGpuInit(void) {
   if(R_FAILED(shaderProgramSetVsh(&g.shaderProgram,&g.shader->DVLE[0]))) return false;
   g.scaleLocation=shaderInstanceGetUniformLocation(g.shaderProgram.vertexShader,"positionScale");
   if(g.scaleLocation<0) {g.reason="shader-uniform";return false;}
+  g.eyeLocation=shaderInstanceGetUniformLocation(g.shaderProgram.vertexShader,"eyeParams");
+  g.spriteLocation=shaderInstanceGetUniformLocation(g.shaderProgram.vertexShader,"spriteParams");
+  // Optional right-eye output for layered stereo; failure only disables 3D.
+  if(!Target(&g.resultR,&g.resultTargetR,GPU_RGBA5551,false)) {
+    if(g.resultTargetR){C3D_RenderTargetDelete(g.resultTargetR);g.resultTargetR=NULL;}
+    if(g.resultR.data)C3D_TexDelete(&g.resultR);
+    memset(&g.resultR,0,sizeof(g.resultR));
+  }
   AttrInfo_Init(&g.attributes);
   AttrInfo_AddLoader(&g.attributes,0,GPU_SHORT,4);AttrInfo_AddLoader(&g.attributes,1,GPU_SHORT,2);AttrInfo_AddLoader(&g.attributes,2,GPU_UNSIGNED_BYTE,4);
   g.ready=ColorProbe() && GeometryProbe(false) && GeometryProbe(true);g.output=g.prepared=false;return g.ready;
@@ -382,8 +399,9 @@ void PpuGpuShutdown(void) {
   if(g.mainTarget) C3D_RenderTargetDelete(g.mainTarget);
   if(g.subTarget) C3D_RenderTargetDelete(g.subTarget);
   if(g.resultTarget) C3D_RenderTargetDelete(g.resultTarget);
-  C3D_Tex *textures[]={&g.atlasPool[0],&g.atlasPool[1],&g.main,&g.sub,&g.result};
-  for(unsigned i=0;i<5;i++) if(textures[i]->data) C3D_TexDelete(textures[i]);
+  if(g.resultTargetR) C3D_RenderTargetDelete(g.resultTargetR);
+  C3D_Tex *textures[]={&g.atlasPool[0],&g.atlasPool[1],&g.main,&g.sub,&g.result,&g.resultR};
+  for(unsigned i=0;i<6;i++) if(textures[i]->data) C3D_TexDelete(textures[i]);
   if(g.program) shaderProgramFree(&g.shaderProgram);
   if(g.shader) DVLB_Free(g.shader);
   for(unsigned slot=0;slot<2;slot++){if(g.vertexPool[slot])linearFree(g.vertexPool[slot]);free(g.cachePool[slot]);}
@@ -447,10 +465,23 @@ void PpuGpuCpuFrame(void) {g.prepared=g.output=false;if(g.forceCpu)g.reason="thu
 bool PpuGpuPrepared(void) {return g.prepared;}
 bool PpuGpuOutputActive(void) {return g.output;}
 void *PpuGpuOutput(void) {return g.output?&g.result:NULL;}
+void PpuGpuSetStereo(float half) {g.stereoHalf=half>0.f?half:0.f;}
+void PpuGpuSetSpriteDepth(float term) {g.spriteTerm=term;}
+void *PpuGpuOutputRight(void) {return (g.output&&g.rightReady&&g.resultTargetR)?&g.resultR:NULL;}
 bool PpuGpuDraw(void) {
   if(!g.prepared) return g.output;
   uint64_t start=svcGetSystemTick();
-  bool ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition();
+  bool ok=true;
+  const bool stereo=g.stereoHalf>0.f && g.resultTargetR;
+  for(unsigned eye=0;ok && eye<(stereo?2u:1u);eye++) {
+    // Left eye shifts nearer layers right, right eye shifts them left.
+    g.eyePx=stereo?(eye==0?1.f:-1.f)*g.stereoHalf/16768.f:0.f;
+    ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1);
+    g.eyePx=0.f; // composition quads must stay unshifted
+    if(ok) ok=DrawComposition(eye==0?g.resultTarget:g.resultTargetR);
+  }
+  g.eyePx=0.f;
+  g.rightReady=ok && stereo;
   RestoreC2D();g.submitUs=Us(start);g.prepared=false;
   if(ok) {
     g.lastSubmittedSlot=g.slot;g.gpuFrames++;RecordFrame(true);

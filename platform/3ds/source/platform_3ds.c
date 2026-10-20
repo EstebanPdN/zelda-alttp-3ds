@@ -54,6 +54,11 @@ static bool g_runtime_wide_edge_seen;
 static enum Platform3DSCStickMode g_cstick_mode = kPlatform3DSCStickTurbo;
 static int g_turbo_multiplier = 5;
 static bool g_show_fps;
+/* Stereoscopic 3D: 0=off, 1=low, 2=medium, 3=high (total eye separation
+ * in pixels at full slider, see kStereoSeparation). */
+static int g_stereo_depth = 2;
+static const float kStereoSeparation[4] = { 0.0f, 4.0f, 8.0f, 12.0f };
+static C3D_RenderTarget *g_top_target_right;
 static unsigned g_current_fps;
 static uint64_t g_dump_saved_overlay_until_ms;
 static bool g_quick_dump_requested;
@@ -453,6 +458,16 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
     if (multiplier > 5)
       multiplier = 5;
     g_turbo_multiplier = multiplier;
+  } else if (strcasecmp(key, "Stereo3D") == 0) {
+    if (strcasecmp(value, "Off") == 0 || strcmp(value, "0") == 0)
+      g_stereo_depth = 0;
+    else if (strcasecmp(value, "Low") == 0 || strcmp(value, "1") == 0)
+      g_stereo_depth = 1;
+    else if (strcasecmp(value, "Medium") == 0 || strcmp(value, "2") == 0 ||
+             strcasecmp(value, "On") == 0)
+      g_stereo_depth = 2;
+    else if (strcasecmp(value, "High") == 0 || strcmp(value, "3") == 0)
+      g_stereo_depth = 3;
   } else if (strcasecmp(key, "ShowFps") == 0) {
     bool show = false;
     if (ParseBool(value, &show))
@@ -466,6 +481,7 @@ void Platform3DS_LoadRuntimeSettings(void) {
   g_display_mode_legacy_stretch = false;
   g_runtime_wide_edge_seen = false;
   g_show_fps = false;
+  g_stereo_depth = 2;
   FILE *file = fopen("zelda3.ini", "rb");
   if (!file) {
     Platform3DS_ApplyAutoDisplayDefaults();
@@ -607,6 +623,10 @@ void Platform3DS_BlankScreens(void) {
       return;
     Platform3DS_ClearBlackTarget(g_top_target);
     C2D_SceneBegin(g_top_target);
+    if (g_top_target_right) {
+      Platform3DS_ClearBlackTarget(g_top_target_right);
+      C2D_SceneBegin(g_top_target_right);
+    }
     Platform3DS_ClearBlackTarget(g_bottom_target);
     C2D_SceneBegin(g_bottom_target);
     Platform3DS_EndGpuFrame();
@@ -753,6 +773,7 @@ bool Platform3DS_InitTopPresenter(void) {
 
   gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);
   gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
+  gfxSet3D(g_stereo_depth > 0);
   gfxSetDoubleBuffering(GFX_TOP, true);
   gfxSetDoubleBuffering(GFX_BOTTOM, true);
 
@@ -855,6 +876,24 @@ bool Platform3DS_InitTopPresenter(void) {
       GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565) |
       GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
       GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+  if (g_stereo_depth > 0) {
+    g_top_target_right = C3D_RenderTargetCreate(
+      GSP_SCREEN_WIDTH, GSP_SCREEN_HEIGHT_TOP,
+      GPU_RB_RGB565, -1);
+    if (g_top_target_right) {
+      C3D_RenderTargetSetOutput(
+        g_top_target_right, GFX_TOP, GFX_RIGHT,
+        GX_TRANSFER_FLIP_VERT(0) |
+          GX_TRANSFER_OUT_TILED(0) |
+          GX_TRANSFER_RAW_COPY(0) |
+          GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGB565) |
+          GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB565) |
+          GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    } else {
+      Platform3DS_LogRuntime("Stereo 3D right-eye target unavailable");
+      gfxSet3D(false);
+    }
+  }
   g_gpu_presenter_initialized = true;
 
   memset(g_recent_frames, 0, sizeof(g_recent_frames));
@@ -910,6 +949,10 @@ void Platform3DS_ShutdownTopPresenter(void) {
   PpuGpuShutdown();
   C3D_RenderTargetDelete(g_bottom_target);
   g_bottom_target = NULL;
+  if (g_top_target_right) {
+    C3D_RenderTargetDelete(g_top_target_right);
+    g_top_target_right = NULL;
+  }
   C3D_RenderTargetDelete(g_top_target);
   g_top_target = NULL;
   C3D_TexDelete(&g_bottom_texture);
@@ -1054,6 +1097,14 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
   g_last_gpu_begin_us = (uint32_t)((svcGetSystemTick() - begin_start) * 1000000ull / SYSCLOCK_ARM11);
   if (!began) return;
   bool gpu_image = !g_is_new_3ds && PpuGpuOutputActive();
+  const float slider = osGet3DSliderState();
+  const bool stereo_wanted =
+    g_top_target_right && g_stereo_depth > 0 && slider > 0.02f;
+  /* Old 3DS PICA200 path: the GPU renders a per-eye image with layered
+   * parallax (nearer SNES layers shift more). */
+  if (gpu_image)
+    PpuGpuSetStereo(stereo_wanted ?
+      kStereoSeparation[g_stereo_depth] * slider * 0.5f : 0.0f);
   g_gpu_frame_active = true;
   if (gpu_image) {
     if (PpuGpuPrepared() && !PpuGpuDraw()) {
@@ -1125,6 +1176,7 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     .tex = gpu_image ? (C3D_Tex*)PpuGpuOutput() : &g_top_texture,
     .subtex = &g_top_subtexture,
   };
+  C3D_Tex *right_tex = gpu_image ? (C3D_Tex*)PpuGpuOutputRight() : NULL;
   C2D_DrawParams params = {
     .pos = {
       .x = (GSP_SCREEN_HEIGHT_TOP - draw_width) * 0.5f,
@@ -1137,29 +1189,46 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     .angle = 0.0f,
   };
 
-  Platform3DS_ClearBlackTarget(g_top_target);
-  C2D_SceneBegin(g_top_target);
-  Platform3DS_DrawMappedImage(image, &params, gpu_image ? ConfigureRgb565TextureEnv : ConfigureArgbTextureEnv);
-  if (g_show_fps) {
-    char label[28];
-    snprintf(label, sizeof(label), "FPS %u", g_current_fps);
-    float box_width = StatusTextWidth(label, 2.0f) + 10.0f;
-    C2D_DrawRectSolid(5.0f, 216.0f, 0.7f, box_width, 20.0f,
-                      C2D_Color32(0, 0, 0, 210));
-    DrawStatusText(10.0f, 219.0f, 2.0f, label);
+  /* Stereo 3D: draw the frame once per eye. The image plane sits behind the
+   * screen: the left eye's copy shifts left and the right eye's shifts right
+   * by half the separation, scaled by the 3D slider. Overlays are drawn
+   * unshifted so they stay at screen depth. */
+  const bool stereo = stereo_wanted;
+  /* With layered output the parallax is already baked into each eye's
+   * texture; otherwise fall back to shifting the whole flat image. */
+  const float eye_shift = (stereo && !right_tex) ?
+    kStereoSeparation[g_stereo_depth] * slider * 0.5f : 0.0f;
+  const float base_x = params.pos.x;
+  for (int eye = 0; eye < (stereo ? 2 : 1); eye++) {
+    C3D_RenderTarget *target = eye == 0 ? g_top_target : g_top_target_right;
+    params.pos.x = base_x + (eye == 0 ? -eye_shift : eye_shift);
+    if (right_tex)
+      image.tex = eye == 0 ? (C3D_Tex*)PpuGpuOutput() : right_tex;
+    Platform3DS_ClearBlackTarget(target);
+    C2D_SceneBegin(target);
+    Platform3DS_DrawMappedImage(image, &params, gpu_image ? ConfigureRgb565TextureEnv : ConfigureArgbTextureEnv);
+    if (g_show_fps) {
+      char label[28];
+      snprintf(label, sizeof(label), "FPS %u%s", g_current_fps,
+               !stereo ? "" : right_tex ? " 3D" : " 2D");
+      float box_width = StatusTextWidth(label, 2.0f) + 10.0f;
+      C2D_DrawRectSolid(5.0f, 216.0f, 0.7f, box_width, 20.0f,
+                        C2D_Color32(0, 0, 0, 210));
+      DrawStatusText(10.0f, 219.0f, 2.0f, label);
+    }
+    if (osGetTime() < g_dump_saved_overlay_until_ms) {
+      static const char kDumpSavedText[] = "DUMP SAVED";
+      float text_width = StatusTextWidth(kDumpSavedText, 2.0f);
+      float box_width = text_width + 18.0f;
+      float box_x = (400.0f - box_width) * 0.5f;
+      C2D_DrawRectSolid(box_x, 12.0f, 0.7f, box_width, 24.0f,
+                        C2D_Color32(0, 0, 0, 220));
+      DrawStatusText(box_x + 9.0f, 17.0f, 2.0f, kDumpSavedText);
+    }
   }
   uint64_t now_ms = osGetTime();
-  if (now_ms < g_dump_saved_overlay_until_ms) {
-    static const char kDumpSavedText[] = "DUMP SAVED";
-    float text_width = StatusTextWidth(kDumpSavedText, 2.0f);
-    float box_width = text_width + 18.0f;
-    float box_x = (400.0f - box_width) * 0.5f;
-    C2D_DrawRectSolid(box_x, 12.0f, 0.7f, box_width, 24.0f,
-                      C2D_Color32(0, 0, 0, 220));
-    DrawStatusText(box_x + 9.0f, 17.0f, 2.0f, kDumpSavedText);
-  } else {
+  if (now_ms >= g_dump_saved_overlay_until_ms)
     g_dump_saved_overlay_until_ms = 0;
-  }
 }
 
 bool Platform3DS_PresentBottomFrame(const uint8_t *pixels, int pitch,

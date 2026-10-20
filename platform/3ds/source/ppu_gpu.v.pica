@@ -1,7 +1,25 @@
 ; Packed pixel-edge x/y/depth/w, UV and RGBA: 16 bytes per vertex.
 ; Move coordinate conversion to PICA rather than repeating CPU float work.
 .fvec positionScale
+; eyeParams = (pixels per depth unit for this eye, -reference depth,
+;               minimum depth that receives parallax, maximum depth offset)
+; Parallax depends only on layer depth, so every quad is shifted by one
+; constant amount (no per-scanline shear, no stair-steps on edges). The whole
+; scene sits slightly behind the screen (recess); layers in front pop out.
+; Every sprite gets the same fixed layer term (the one Link has), a quarter of
+; which is applied, so all characters stand on the ground at one depth instead
+; of floating. Background layers are capped lower (eyeParams.w) to soften the
+; boxy look of columns and doorways. Vertex w is 1 for BG layers and 2 for
+; sprites; w is restored to 1 for the output.
+.fvec eyeParams
+; spriteParams.x = fixed layer term given to sprites (raised on the title
+; screen so the Triforce pops out)
+.fvec spriteParams
 .constf positionOffset(-1.0, 1.0, 0.0, 0.0)
+.constf one(1.0, 1.0, 1.0, 1.0)
+.constf spriteK(-0.75, 1.75, 0.0, 0.0)
+.constf recess(-2500.0, 0.0, 0.0, 0.0)
+.constf ground(1920.0, 0.0, 0.0, 0.0)
 .constf scale(0.000244140625, 0.000244140625, 0.003921568627451, 1.0)
 .out outpos position
 .out outcolor color
@@ -12,6 +30,33 @@
 .alias incolor v2
 .proc main
     mul r0, positionScale, inpos
+    mov r3, eyeParams
+    mov r8, spriteParams
+    ; layer term: depth relative to the ground layer, capped
+    add r1, inpos.zzzz, r3.yyyy
+    ; both ground layers (BG2 low, BG1 low) count as depth 0, so characters
+    ; look the same on either floor; layers behind the ground stay behind
+    min r5, recess.yyyy, r1
+    add r1, -ground.xxxx, r1
+    max r1, r1, r5
+    min r1, r1, r3.wwww
+    ; sprites all use one fixed layer term, whatever their OAM priority
+    add r6, -one.xxxx, inpos.wwww
+    add r5, r8.xxxx, -r1
+    mul r5, r5, r6
+    add r1, r1, r5
+    ; sprites keep a quarter of the layer term
+    mul r4, spriteK.xxxx, inpos.wwww
+    add r4, spriteK.yyyy, r4
+    mul r1, r1, r4
+    add r1, recess.xxxx, r1
+    ; no parallax for the backdrop and compose quads
+    sge r2, inpos.zzzz, r3.zzzz
+    mul r1, r1, r2
+    mul r1, r1, r3.xxxx
+    mul r1, positionScale.xxxx, r1
+    add r0.x, r0.xxxx, r1.xxxx
+    mov r0.w, one
     add outpos, positionOffset, r0
     mul outtc0, scale, intex
     mul outtc1, scale, intex
