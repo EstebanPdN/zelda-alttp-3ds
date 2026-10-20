@@ -31,7 +31,7 @@
 
 Nintendo 3DS dual-screen port of Zelda3.
 
-This project was developed with the help of [OpenAI Codex](https://openai.com/codex/). Learn more about the development process [here](AI_DEVELOPMENT.md).
+This project was developed with the help of [OpenAI Codex](https://openai.com/codex/) and [Claude Code](https://claude.com/product/claude-code). Learn more about the development process [here](AI_DEVELOPMENT.md).
 
 This project is based on open-source work from:
 
