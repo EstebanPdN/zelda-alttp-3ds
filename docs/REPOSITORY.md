@@ -9,6 +9,7 @@ notices. Implementation, resources and supporting documents are grouped below.
 
 | Location | Responsibility |
 | --- | --- |
+| `AI_DEVELOPMENT.md` | The owner’s explanation of Codex use, development decisions, tests and community discussions. |
 | `engine` | Shared Zelda3 C engine, software PPU, Opus source and upstream notices. |
 | `third_party/SDL2` | Vendored SDL2 used to build its Nintendo 3DS backend. |
 | `platform/3ds` | 3DS device code, updater, build entry point, packaging and host regressions. |

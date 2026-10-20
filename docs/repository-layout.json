@@ -2,6 +2,7 @@
   "root_entries": [
     ".github",
     ".gitignore",
+    "AI_DEVELOPMENT.md",
     "CHANGELOG.md",
     "README.md",
     "docs",
@@ -13,11 +14,13 @@
   ],
   "current_documents": [
     "README.md",
+    "AI_DEVELOPMENT.md",
     "docs/REPOSITORY.md",
     "docs/CONTRIBUTING.md"
   ],
   "required_paths": [
     "README.md",
+    "AI_DEVELOPMENT.md",
     "docs/REPOSITORY.md",
     "scripts/check-repository.py",
     "platform/3ds/build.sh"
