@@ -1,24 +1,24 @@
 # How I develop these projects
 
-I use OpenAI Codex a lot during development.
-It helps me with research, code analysis, debugging, code changes, tests, and documentation.
-It also writes and modifies code.
+I use OpenAI Codex and Claude Code a lot during development.
+They help me with research, code analysis, debugging, code changes, tests, and documentation.
+They also write and modify code.
 
 I want to explain how I use it, what I do myself, and why this method works for me.
 
 ## Research and planning
 
 Before I start a project, I research its code, existing work, and technical requirements.
-I use Codex to help investigate these areas.
+I use Codex and Claude Code to help investigate these areas.
 
 I compare the project with the limits of the target hardware, which is usually the Nintendo 3DS.
 This helps me decide whether the project is practical and what problems I will need to solve.
 
-Then I create a roadmap with help from Codex.
+Then I create a roadmap with help from Codex and Claude Code.
 I decide the goals, the order of the work, and which changes to add.
 I also provide ideas and possible ways to structure the code or solve problems.
 
-## Why I use Codex
+## Why I use Codex and Claude Code
 
 I am a young developer, and I work on these projects on my own.
 I have studied computer science for more than four years.
@@ -33,9 +33,9 @@ I would not do that just to prove I am a "real programmer."
 
 Some tasks involve the same change across 20 or 30 files.
 I know how to do many of these tasks by hand, but they can take hours.
-Codex can often help me complete this repeated work in minutes.
+Codex and Claude Code can often help me complete this repeated work in minutes.
 
-It also helps me examine large logs and memory dumps.
+They also help me examine large logs and memory dumps.
 These files can contain useful information about crashes, memory problems, and performance.
 I use that information to investigate problems and compare possible causes with what I can reproduce.
 
@@ -67,7 +67,7 @@ I want the result to feel consistent and look good.
 ## Code organization and documentation
 
 I use written rules to organize the code, documents, and GitHub repositories.
-I also use these rules to guide Codex.
+I also use these rules to guide Codex and Claude Code.
 
 I collect this guidance in [Code Atlas](https://code-atlas.estebanpdn.chatgpt.site/).
 It contains the methods and references I use to structure, document, and improve my projects.
@@ -85,7 +85,7 @@ Some look as if the AI output received little attention before release.
 I understand why people are concerned about that kind of work.
 
 I put time into research, code changes, tests, graphics, and documentation.
-The work continues after Codex produces an answer.
+The work continues after Codex or Claude Code produces an answer.
 I examine the result, make corrections, and test again.
 
 My goal is to publish something that works well and looks good.
