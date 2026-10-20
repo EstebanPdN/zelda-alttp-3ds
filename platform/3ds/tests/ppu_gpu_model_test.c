@@ -133,6 +133,8 @@ static uint16_t Unpack(uint32_t c) {return ((c>>27)&31)|(((c>>19)&31)<<5)|(((c>>
 static uint16_t RefRgb(uint32_t c) {return ((c>>19)&31)|(((c>>11)&31)<<5)|(((c>>3)&31)<<10);}
 static bool Raster(void *ctx,unsigned group,const PicaQuad *q) {
  (void)ctx;
+ if(group==1||group==3) assert(q->lean0<=PICA_LEAN_ONE && q->lean1<=q->lean0);
+ else assert(!q->lean0 && !q->lean1);
  for(int y=q->y0;y<q->y1;y++) for(int x=q->x0;x<q->x1;x++) {
   assert(x>=0 && x<(int)width && y>=0 && y<240);
   unsigned i=y*512+x;

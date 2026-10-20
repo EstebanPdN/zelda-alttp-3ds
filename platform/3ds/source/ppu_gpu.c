@@ -28,7 +28,8 @@ static struct {
   unsigned slot,lastSubmittedSlot;
   C3D_RenderTarget *mainTarget,*subTarget,*resultTarget,*resultTargetR;
   int eyeLocation,spriteLocation;
-  float spriteTerm;
+  float spriteTerm,bodyScale;
+  bool bodyScaleSet;
   float eyePx,stereoHalf;
   bool rightReady;
   DVLB_s *shader;
@@ -69,9 +70,16 @@ static bool Emit(void *ctx,unsigned group,const PicaQuad *q) {
   if(range->first+range->count!=g.count) return false;
   int16_t depth=q->depth>>1;
   if(!depth) depth=1;
-  // w=2 marks sprites (groups 1 and 3) so the shader gives them no parallax.
-  Vertex a={q->x0,q->y0,depth,(group==1||group==3)?2:1,q->u0,q->v0,q->r,q->g,q->b,q->a};
+  // w=1 for BG layers; sprites (groups 1 and 3) carry 2+lean (lean 0..4096) so
+  // the shader can plant their feet on the ground and raise the upper body.
+  // The title screen (large sprite term) keeps whole-sprite pop: lean is full.
+  const bool sprite=group==1||group==3;
+  const bool flat=g.spriteTerm>6700.f;
+  int16_t top=sprite?(int16_t)(2+(flat?4096:q->lean0)):1;
+  int16_t bottom=sprite?(int16_t)(2+(flat?4096:q->lean1)):1;
+  Vertex a={q->x0,q->y0,depth,top,q->u0,q->v0,q->r,q->g,q->b,q->a};
   Vertex b=a,c=a,d=a;
+  c.w=d.w=bottom;
   b.x=d.x=q->x1;b.u=d.u=q->u1;
   c.y=d.y=q->y1;c.v=d.v=q->v1;
   Vertex *v=&g.vertices[g.count];
@@ -96,7 +104,7 @@ static void BindState(void) {
   // Depth units here are q->depth>>1. 0x3880 is the SNES BG2 low-priority
   // layer (ground), which stays at screen depth; layers in front pop out.
   if(g.eyeLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.eyeLocation,g.eyePx,-14464.f,2048.f,3600.f);
-  if(g.spriteLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.spriteLocation,g.spriteTerm>0.f?g.spriteTerm:6700.f,0.f,0.f,0.f);
+  if(g.spriteLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.spriteLocation,(g.spriteTerm>0.f?g.spriteTerm:6700.f)*(g.spriteTerm>6700.f?1.f:(g.bodyScaleSet?g.bodyScale:2.f)),0.f,0.f,0.f);
   C3D_CullFace(GPU_CULL_NONE);C3D_DepthMap(true,-1.f,0.f);
   C3D_FragOpMode(GPU_FRAGOPMODE_GL);
   C3D_EarlyDepthTest(false,GPU_EARLYDEPTH_GREATER,0);
@@ -467,6 +475,7 @@ bool PpuGpuOutputActive(void) {return g.output;}
 void *PpuGpuOutput(void) {return g.output?&g.result:NULL;}
 void PpuGpuSetStereo(float half) {g.stereoHalf=half>0.f?half:0.f;}
 void PpuGpuSetSpriteDepth(float term) {g.spriteTerm=term;}
+void PpuGpuSetBodyScale(float scale) {g.bodyScale=scale>0.f?scale:0.f;g.bodyScaleSet=true;}
 void *PpuGpuOutputRight(void) {return (g.output&&g.rightReady&&g.resultTargetR)?&g.resultR:NULL;}
 bool PpuGpuDraw(void) {
   if(!g.prepared) return g.output;

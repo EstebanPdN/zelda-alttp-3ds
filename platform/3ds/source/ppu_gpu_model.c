@@ -104,11 +104,12 @@ static PicaQuad Solid(int x0,int y0,int x1,int y1,uint16_t rgb,unsigned alpha) {
     (rgb&31)*8+1,((rgb>>5)&31)*8+1,((rgb>>10)&31)*8+1,alpha};
 }
 static bool TileQuad(PicaFrame *f,unsigned group,unsigned slot,int x,int y,
-                     int w,int h,int sx,int sy,bool hf,bool vf,unsigned z,unsigned alpha) {
+                     int w,int h,int sx,int sy,bool hf,bool vf,unsigned z,unsigned alpha,
+                     unsigned lean0,unsigned lean1) {
   unsigned col=slot%(PICA_ATLAS_W/8),row=slot/(PICA_ATLAS_W/8);
   int u0=col*8+(hf?8-sx:sx),u1=u0+(hf?-w:w);
   int v0=row*8+(vf?8-sy:sy),v1=v0+(vf?-h:h);
-  PicaQuad q={x,y,x+w,y+h,u0*4,4096-v0*8,u1*4,4096-v1*8,z,255,255,255,alpha};
+  PicaQuad q={x,y,x+w,y+h,u0*4,4096-v0*8,u1*4,4096-v1*8,z,255,255,255,alpha,lean0,lean1};
   return Emit(f,group,q);
 }
 static unsigned Band(PicaFrame *f,unsigned y,unsigned max) {
@@ -172,7 +173,7 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
         unsigned w=IntMin(8-(wx&7),end-x);
         unsigned z=layer==0?((tile&0x2000)?0xc000:0x8000):layer==1?((tile&0x2000)?0xb100:0x7100):((tile&0x2000)?0xf200:0x1200);
         if(slot>=0 && !TileQuad(f,group,slot,x+p->extraLeftRight,y,w,h,wx&7,wy&7,
-            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127))) return false;
+            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127),0,0)) return false;
         x+=w;
       }
     }
@@ -180,6 +181,53 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
    }
   }
   return true;
+}
+// Body lean: sprites that touch or overlap form one character (Link's head,
+// body, sword and shadow are separate OAM entries). The lowest drawn row of the
+// cluster is its feet; lean rises with height above the feet and stops at
+// PICA_LEAN_PIXELS so tall bosses do not smear. Because every piece of a
+// cluster uses one function of the screen row, seams between pieces line up.
+static unsigned Lean(int feet,int y) {
+  int up=feet-y;
+  if(up<=0)return 0;
+  if(up>=PICA_LEAN_PIXELS)return PICA_LEAN_ONE;
+  return (unsigned)(up*PICA_LEAN_ONE/PICA_LEAN_PIXELS);
+}
+static int Root(uint8_t *parent,int i) {
+  while(parent[i]!=i){parent[i]=parent[parent[i]];i=parent[i];}
+  return i;
+}
+static void ObjectFeet(PicaFrame *f,const uint16_t *active,unsigned activeCount,
+                       const uint16_t *first,const uint16_t *last,int *feet) {
+  int x0[128],x1[128];
+  uint8_t parent[128];
+  for(unsigned i=0;i<128;i++){parent[i]=i;feet[i]=0;x0[i]=x1[i]=0;}
+  for(unsigned item=0;item<activeCount;item++) {
+    unsigned index=active[item],i=index/2;
+    if(first[i]>=last[i])continue;
+    Ppu *p=Line(f,first[i]);
+    unsigned high=f->memory->oam[0x100+(index>>4)]>>(index&15);
+    unsigned size=sizes[p->objSize][(high>>1)&1];
+    int x=(f->memory->oam[index]&255)+(high&1)*256;
+    x-=(x>=256+p->extraLeftRight)*512;x+=p->renderObjXOffset;
+    x0[i]=x;x1[i]=x+(int)size;feet[i]=last[i];
+  }
+  for(unsigned a=0;a<activeCount;a++) {
+    unsigned i=active[a]/2;
+    if(first[i]>=last[i])continue;
+    for(unsigned b=a+1;b<activeCount;b++) {
+      unsigned j=active[b]/2;
+      if(first[j]>=last[j])continue;
+      // touching counts as overlapping (1 px tolerance on every side)
+      if(x0[i]>x1[j]+1||x0[j]>x1[i]+1)continue;
+      if((int)first[i]>(int)last[j]+1||(int)first[j]>(int)last[i]+1)continue;
+      int ra=Root(parent,i),rb=Root(parent,j);
+      if(ra!=rb)parent[rb]=ra;
+    }
+  }
+  int bottom[128]={0};
+  for(unsigned i=0;i<128;i++){int r=Root(parent,i);if(feet[i]>bottom[r])bottom[r]=feet[i];}
+  for(unsigned i=0;i<128;i++)feet[i]=bottom[Root(parent,i)];
 }
 static bool Objects(PicaFrame *f,unsigned sub) {
   // First select accepted slivers using the original per-line SNES limits.
@@ -220,6 +268,8 @@ static bool Objects(PicaFrame *f,unsigned sub) {
       }
     }
   }
+  int feet[128];
+  ObjectFeet(f,active,activeCount,first,last,feet);
   for(unsigned item=0;item<activeCount;item++) {
    unsigned index=active[item];
    for(unsigned y=first[index/2];y<last[index/2];) {
@@ -252,7 +302,8 @@ static bool Objects(PicaFrame *f,unsigned sub) {
         int l=IntMax(left,win.edges[i]),r=IntMin(left+8,win.edges[i+1]);
         if(l>=r)continue;
         if(!TileQuad(f,sub*2+1,slot,l+p->extraLeftRight,y,r-l,h,l-left,vf?7-(row&7):row&7,
-          attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127)))return false;
+          attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127),
+          Lean(feet[index/2],y),Lean(feet[index/2],y+h)))return false;
       }
     }
     y+=h;

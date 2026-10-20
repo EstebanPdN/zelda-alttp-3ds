@@ -57,6 +57,9 @@ static bool g_show_fps;
 /* Stereoscopic 3D: 0=off, 1=low, 2=medium, 3=high (total eye separation
  * in pixels at full slider, see kStereoSeparation). */
 static int g_stereo_depth = 2;
+/* Body lean: how far character upper bodies pop out, percent of the old flat
+ * sprite pop (feet always stay on the ground). 0 = flat, default 200. */
+static int g_stereo_body = 200;
 static const float kStereoSeparation[4] = { 0.0f, 4.0f, 8.0f, 12.0f };
 static C3D_RenderTarget *g_top_target_right;
 static unsigned g_current_fps;
@@ -468,6 +471,11 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
       g_stereo_depth = 2;
     else if (strcasecmp(value, "High") == 0 || strcmp(value, "3") == 0)
       g_stereo_depth = 3;
+  } else if (strcasecmp(key, "Stereo3DBody") == 0) {
+    int pct = atoi(value);
+    if (pct < 0) pct = 0;
+    if (pct > 600) pct = 600;
+    g_stereo_body = pct;
   } else if (strcasecmp(key, "ShowFps") == 0) {
     bool show = false;
     if (ParseBool(value, &show))
@@ -482,6 +490,7 @@ void Platform3DS_LoadRuntimeSettings(void) {
   g_runtime_wide_edge_seen = false;
   g_show_fps = false;
   g_stereo_depth = 2;
+  g_stereo_body = 200;
   FILE *file = fopen("zelda3.ini", "rb");
   if (!file) {
     Platform3DS_ApplyAutoDisplayDefaults();
@@ -1102,6 +1111,8 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     g_top_target_right && g_stereo_depth > 0 && slider > 0.02f;
   /* Old 3DS PICA200 path: the GPU renders a per-eye image with layered
    * parallax (nearer SNES layers shift more). */
+  if (gpu_image)
+    PpuGpuSetBodyScale(g_stereo_body / 100.0f);
   if (gpu_image)
     PpuGpuSetStereo(stereo_wanted ?
       kStereoSeparation[g_stereo_depth] * slider * 0.5f : 0.0f);

@@ -27,7 +27,11 @@ typedef struct {
   int16_t u0,v0,u1,v1; // normalized UV * 4096
   uint16_t depth;
   uint8_t r,g,b,a;
+  // Sprites only: 0..4096 "body lean" at the top/bottom edge (0 = on the
+  // ground plane, 4096 = fully raised). Other groups leave these zero.
+  uint16_t lean0,lean1;
 } PicaQuad;
+enum { PICA_LEAN_ONE=4096, PICA_LEAN_PIXELS=32 };
 // Groups 0/2: main/sub backdrop and BG. 1/3: their OBJ, in OAM order.
 // Groups 4..19: compose flags subtract=1 half=2 clip=4 prevent=8.
 typedef bool PicaEmit(void *context, unsigned group, const PicaQuad *quad);

@@ -21,5 +21,9 @@ void PpuGpuSetStereo(float half_separation_px);
 void *PpuGpuOutputRight(void);
 // Layer term for sprites (default 6700); larger pops sprites out more.
 void PpuGpuSetSpriteDepth(float term);
+// Body lean: sprite upper bodies pop out up to this multiple of the old flat
+// sprite pop while the feet stay on the ground plane (default 2.0, 0 = flat
+// ground-level sprites).
+void PpuGpuSetBodyScale(float scale);
 void PpuGpuWriteDiagnostics(FILE *file);
 const uint32_t *PpuGpuReadback(void);

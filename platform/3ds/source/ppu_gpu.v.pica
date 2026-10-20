@@ -6,14 +6,15 @@
 ; Parallax depends only on layer depth, so every quad is shifted by one
 ; constant amount (no per-scanline shear, no stair-steps on edges). The whole
 ; scene sits slightly behind the screen (recess); layers in front pop out.
-; Every sprite gets the same fixed layer term (the one Link has), a quarter of
-; which is applied, so all characters stand on the ground at one depth instead
-; of floating. Background layers are capped lower (eyeParams.w) to soften the
+; Sprites get a layer term that grows with height above their feet (the
+; vertex w carries 2+lean, lean 0..4096, computed per character on the CPU), a
+; quarter of which is applied: feet stay on the ground plane and the upper body
+; leans toward the viewer, like the Minish Cap port. Background layers are capped lower (eyeParams.w) to soften the
 ; boxy look of columns and doorways. Vertex w is 1 for BG layers and 2 for
 ; sprites; w is restored to 1 for the output.
 .fvec eyeParams
-; spriteParams.x = fixed layer term given to sprites (raised on the title
-; screen so the Triforce pops out)
+; spriteParams.x = layer term of a fully raised sprite point (lean 4096);
+; raised on the title screen so the Triforce pops out
 .fvec spriteParams
 .constf positionOffset(-1.0, 1.0, 0.0, 0.0)
 .constf one(1.0, 1.0, 1.0, 1.0)
@@ -40,14 +41,22 @@
     add r1, -ground.xxxx, r1
     max r1, r1, r5
     min r1, r1, r3.wwww
-    ; sprites all use one fixed layer term, whatever their OAM priority
+    ; r6 = 1 for sprites (w>=2), 0 for BG layers (w=1)
     add r6, -one.xxxx, inpos.wwww
-    add r5, r8.xxxx, -r1
+    min r6, r6, one.xxxx
+    ; sprite layer term = lean * spriteParams.x, lean = (w-2)/4096: feet at
+    ; the ground plane (0), upper body raised, same shift for a whole row
+    add r7, inpos.wwww, -one.xxxx
+    add r7, r7, -one.xxxx
+    max r7, r7, recess.yyyy
+    mul r7, r7, scale.xxxx
+    mul r7, r7, r8.xxxx
+    add r5, r7, -r1
     mul r5, r5, r6
     add r1, r1, r5
     ; sprites keep a quarter of the layer term
-    mul r4, spriteK.xxxx, inpos.wwww
-    add r4, spriteK.yyyy, r4
+    mul r4, spriteK.xxxx, r6
+    add r4, one.xxxx, r4
     mul r1, r1, r4
     add r1, recess.xxxx, r1
     ; no parallax for the backdrop and compose quads
