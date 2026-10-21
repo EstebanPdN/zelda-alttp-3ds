@@ -482,7 +482,10 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
       return true;
     } else if (StringEqualsNoCase(key, "SecondScreenXItemRing") ||
                StringEqualsNoCase(key, "SecondScreenSwap") ||
-               StringEqualsNoCase(key, "SecondScreenCrt")) {
+               StringEqualsNoCase(key, "SecondScreenCrt") ||
+               StringEqualsNoCase(key, "GuideLine") ||
+               StringEqualsNoCase(key, "GuideView") ||
+               StringEqualsNoCase(key, "GuideChapter")) {
       return true;  // read by the second-screen UI only, the engine ignores it
     } else if (StringEqualsNoCase(key, "DisplayMode") ||
                StringEqualsNoCase(key, "WideMode") ||
@@ -490,7 +493,9 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
                StringEqualsNoCase(key, "WideZoom") ||
                StringEqualsNoCase(key, "CStickMode") ||
                StringEqualsNoCase(key, "CStickTurboMultiplier") ||
-               StringEqualsNoCase(key, "ShowFps")) {
+               StringEqualsNoCase(key, "ShowFps") ||
+               StringEqualsNoCase(key, "Stereo3D") ||
+               StringEqualsNoCase(key, "Stereo3DTerrain")) {
       return true;  // parsed by platform_3ds.c
     }
   } else if (section == 4) {

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Stereoscopic 3D on Old 3DS and Old 3DS XL with the GPU renderer: the 3D slider
+  sets the depth, Settings > Screen > 3D DEPTH picks OFF, LOW, MID or HIGH.
+- 3D depth follows the terrain: ledges, cliff faces and stairs give the ground its
+  height, statues, trees and walls stand up from their own base as one piece, and
+  sprites stand on the ground under their feet. The solve runs on the system core.
+  Settings > Developer > 3D TERRAIN switches to the simpler layer-based depth.
+- Bottom screen restyled in the A Link Between Worlds look: wood frame, parchment
+  panels, gold item slots, stone tabs and redrawn icons.
+- GUIDE tab: reads a walkthrough from guide.txt on the SD card, with chapter and
+  place buttons, drag scrolling, a draggable scrollbar and the reading position
+  remembered per profile. tools/secondscreen/make_guide.py turns a GameFAQs text
+  walkthrough into guide.txt.
+
 ## v3.2
 
 - Optimized update downloads and installation.

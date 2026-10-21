@@ -1,5 +1,6 @@
-// Compare the retained layer with actual draw_sidebar output, including its
-// background, equipment ring, integer geometry and all three heart sizes.
+// Compare the retained layer with actual draw_status_bar output: wood ground,
+// plaque, soft-edged 11 px hearts in one or two rows, magic and counters, on
+// an RGB565 target and on the 3DS's RGBA8888 window format read back as RGB565.
 #include <SDL.h>
 #include <assert.h>
 #include <stdint.h>
@@ -19,59 +20,61 @@ int SS_GetEquippedSlot(void) { return 0; }
 void SS_ReadSram(uint8_t *out, int n) { memset(out, 0, n); }
 static void capture_bottom_hearts(int count, int size, int columns, int step, int x, int y) {
   if (capture_enabled)
-    BottomHearts_Capture(&captured, ss_r, count, size, columns, step, x, y,
-                        sram8(0x6d), sram8(0x6c), sram8(0x7b) >= 1);
+    BottomHearts_Capture(&captured, ss_r, tex_heart_scratch, draw_heart, count, size,
+                        columns, step, x, y, sram8(0x6d), sram8(0x6c), sram8(0x7b) >= 1);
 }
-static void Draw(bool dungeon) {
-  draw_tiled(dungeon ? tex_bg_stone : tex_bg_menu,
-    dungeon ? kSSTexStone_W : kSSTexMenu_W,
-    dungeon ? kSSTexStone_H : kSSTexMenu_H,
-    (RectFS){0,0,320,240}, COL_BG_MENU);
-  draw_sidebar(222,5,93,191,dungeon);
+static void Draw(bool dungeon, uint16_t *out) {
+  draw_ground((SDL_Rect){0, 176, 320, 34});  // the ground under and around the bar
+  draw_status_bar(dungeon);
   SDL_RenderFlush(ss_r);
+  assert(SDL_RenderReadPixels(ss_r, NULL, SDL_PIXELFORMAT_RGB565, out, 640) == 0);
 }
 int main(void) {
   assert(SDL_Init(0)==0);
-  SDL_Surface *surface=SDL_CreateRGBSurfaceWithFormat(0,320,240,16,SDL_PIXELFORMAT_RGB565);
-  assert(surface);ss_r=SDL_CreateSoftwareRenderer(surface);assert(ss_r);
-  W=320;H=240;u=.5f;
-  tex_bg_menu=make_tex(kSSTexMenu_W,kSSTexMenu_H,kSSTexMenu,false);
-  tex_bg_stone=make_tex(kSSTexStone_W,kSSTexStone_H,kSSTexStone,false);
-  // Synthetic binary-alpha atlas stresses every nearest-neighbor sample and
-  // RGB565 color bit, rather than requiring a private ROM in this test.
-  uint32_t sheet[SS_GLYPH_COLS*8*((kGlyphCount+kGlyphCols-1)/kGlyphCols)*8];
-  for(unsigned i=0;i<sizeof(sheet)/sizeof(*sheet);i++)
-    sheet[i]=(i%5==0) ? 0 : 0xff000000u|((i*7919u)&0xffffff);
-  tex_glyphs=make_tex(SS_GLYPH_COLS*8,((kGlyphCount+kGlyphCols-1)/kGlyphCols)*8,sheet,true);
-  const int cells[]={SS_GLYPH_HEART_EMPTY,SS_GLYPH_HEART_HALF,SS_GLYPH_HEART_FULL};
-  BottomHearts_LoadGlyphs(sheet,SS_GLYPH_COLS*8,cells,SS_GLYPH_COLS);
-  uint8_t actual[320*240*2];
+  static uint16_t actual[320*240], expected[320*240];
   unsigned cases=0;
-  for(int dungeon=0;dungeon<2;dungeon++) for(int half=0;half<2;half++) for(int cap=1;cap<=20;cap++) {
-    memset(sram,0,sizeof(sram));sram[0x6c]=cap*8;sram[0x6d]=cap*8;sram[0x7b]=half;
-    capture_enabled=true;Draw(dungeon);assert(captured.valid);capture_enabled=false;
-    memcpy(actual,surface->pixels,sizeof(actual));
-    // Damage down to zero, then healing up to capacity, including sub-half-heart
-    // changes which must not touch any pixel or trigger an upload.
-    for(int t=0;t<=cap*16;t++) {
-      int health=t<=cap*8 ? cap*8-t : t-cap*8;
-      int changed=BottomHearts_Apply(&captured,actual,640,health);
-      assert(changed<=1);
-      sram[0x6d]=health;Draw(dungeon);
-      if(memcmp(actual,surface->pixels,sizeof(actual))) {
-        for(int i=0;i<320*240;i++) if(((uint16_t*)actual)[i]!=((uint16_t*)surface->pixels)[i]) {
-          fprintf(stderr,"mismatch cap=%d half=%d dungeon=%d health=%d x=%d y=%d actual=%04x expected=%04x\n",cap,half,dungeon,health,i%320,i/320,((uint16_t*)actual)[i],((uint16_t*)surface->pixels)[i]);break;
+  const Uint32 formats[2]={SDL_PIXELFORMAT_RGB565,SDL_PIXELFORMAT_RGBA8888};
+  for(int f=0;f<2;f++) {
+    SDL_Surface *surface=SDL_CreateRGBSurfaceWithFormat(0,320,240,f?32:16,formats[f]);
+    assert(surface);ss_r=SDL_CreateSoftwareRenderer(surface);assert(ss_r);
+    W=320;H=240;u=.5f;
+    // The production art: baked wood, chrome icons and label font.
+    tex_bg_wood=make_tex(kSSTexWood_W,kSSTexWood_H,kSSTexWood,false);
+    tex_ui_icons=make_tex(kSSUiIcons_W,kSSUiIcons_H,kSSUiIcons,true);
+    ui_font[FONT_LARGE].tex=make_tex(kSSUiFontLarge_W,kSSUiFontLarge_H,kSSUiFontLarge,true);
+    ui_font[FONT_SMALL].tex=make_tex(kSSUiFontSmall_W,kSSUiFontSmall_H,kSSUiFontSmall,true);
+    tex_heart_scratch=SDL_CreateTexture(ss_r,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STATIC,12,12);
+    assert(tex_bg_wood&&tex_ui_icons&&tex_heart_scratch);
+    SDL_SetTextureBlendMode(tex_heart_scratch,SDL_BLENDMODE_NONE);
+    for(int dungeon=0;dungeon<2;dungeon++) for(int half=0;half<2;half++) for(int cap=1;cap<=20;cap++) {
+      memset(sram,0,sizeof(sram));sram[0x6c]=cap*8;sram[0x6d]=cap*8;sram[0x7b]=half;
+      sram[0x6e]=64;sram[0x6f]=dungeon?3:0xff;sram[0x62]=0x37;sram[0x43]=12;sram[0x77]=30;
+      capture_enabled=true;Draw(dungeon,actual);assert(captured.valid);capture_enabled=false;
+      // Capturing leaves the frame exactly as an uncaptured draw.
+      Draw(dungeon,expected);assert(!memcmp(actual,expected,sizeof(actual)));
+      // Damage down to zero, then healing up to capacity, including sub-half-heart
+      // changes which must not touch any pixel or trigger an upload.
+      for(int t=0;t<=cap*16;t++) {
+        int health=t<=cap*8 ? cap*8-t : t-cap*8;
+        int changed=BottomHearts_Apply(&captured,(uint8_t*)actual,640,health);
+        assert(changed<=1);
+        sram[0x6d]=health;Draw(dungeon,expected);
+        if(memcmp(actual,expected,sizeof(actual))) {
+          for(int i=0;i<320*240;i++) if(actual[i]!=expected[i]) {
+            fprintf(stderr,"mismatch format=%d cap=%d half=%d dungeon=%d health=%d x=%d y=%d actual=%04x expected=%04x\n",f,cap,half,dungeon,health,i%320,i/320,actual[i],expected[i]);break;
+          }
+          return 1;
         }
-        return 1;
+        cases++;
       }
-      cases++;
+      // A large change is bounded by the capacity (maximum 20 cells).
+      assert(BottomHearts_Apply(&captured,(uint8_t*)actual,640,0)<=20);
+      sram[0x6d]=0;Draw(dungeon,expected);assert(!memcmp(actual,expected,sizeof(actual)));
     }
-    // A large change is bounded by the capacity (maximum 20 cells).
-    assert(BottomHearts_Apply(&captured,actual,640,0)<=20);
-    sram[0x6d]=0;Draw(dungeon);assert(!memcmp(actual,surface->pixels,sizeof(actual)));
+    captured.valid=false;assert(!BottomHearts_Apply(&captured,(uint8_t*)actual,640,100));
+    destroy_textures();
+    SDL_DestroyRenderer(ss_r);SDL_FreeSurface(surface);
   }
-  captured.valid=false;assert(!BottomHearts_Apply(&captured,actual,640,100));
-  SDL_DestroyTexture(tex_glyphs);SDL_DestroyTexture(tex_bg_menu);SDL_DestroyTexture(tex_bg_stone);
-  SDL_DestroyRenderer(ss_r);SDL_FreeSurface(surface);SDL_Quit();
-  printf("PASS %u full-screen pixel comparisons: damage/healing, 1-20 hearts, half magic, both backgrounds, 10/12/16px glyphs; at most one cell per half-heart step\n",cases);
+  SDL_Quit();
+  printf("PASS %u full-screen pixel comparisons: damage/healing, 1-20 hearts in one or two rows, half magic, keys, RGB565 and RGBA8888 targets; at most one cell per half-heart step\n",cases);
 }

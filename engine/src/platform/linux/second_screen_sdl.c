@@ -62,6 +62,7 @@ int  SS_GetModule(void);
 bool SS_IsIndoors(void);
 void SS_ReadSram(uint8_t *out, int n);
 int  SS_GetEquippedSlot(void);
+int  SS_GetEquippedSlotX(void);
 int  SS_GetDungeon(void);
 bool SS_GetIndoorExit(int *out);
 void SS_ReadDungFlags(uint8_t *out, int n);
@@ -108,9 +109,19 @@ enum {
   COL_BG_MENU     = COL(24, 28, 22),   // stand-ins for the tiled theme textures
   COL_BG_STONE    = COL(52, 58, 70),
   COL_BG_PARCH    = COL(214, 188, 138),
+  // A Link Between Worlds skin
+  COL_WOOD        = COL(74, 44, 24),     // stand-in when the wood tile is missing
+  COL_INK         = COL(27, 29, 36),     // dark text on stone tablets
+  COL_INK_LIT     = COL(170, 175, 186),  // its engraved highlight
+  COL_PARCH_INK   = COL(58, 42, 18),
+  COL_PARCH_EDGE  = COL(138, 106, 44),
+  COL_RIM_DARK    = COL(42, 26, 12),
+  COL_RIM_BROWN   = COL(122, 84, 24),
+  COL_RIM_GOLD    = COL(227, 182, 76),
+  COL_SHADOW      = COL(26, 16, 10),
 };
 
-enum { TAB_MAP, TAB_ITEMS, TAB_GEAR, TAB_SETTINGS };
+enum { TAB_MAP, TAB_ITEMS, TAB_GEAR, TAB_SETTINGS, TAB_GUIDE };
 enum { MODE_GAME, MODE_TITLE, MODE_CINEMA };
 
 typedef struct { float x, y, w, h; } RectFS;
@@ -168,8 +179,10 @@ static int           W, H;
 static float         u = 1.0f;
 
 static SDL_Texture *tex_map[2], *tex_icons, *tex_glyphs, *tex_letters, *tex_face;
-static SDL_Texture *tex_floor, *tex_mapicons;
-static SDL_Texture *tex_bg_menu, *tex_bg_parch, *tex_bg_stone;
+static SDL_Texture *tex_mapicons;
+static SDL_Texture *tex_bg_parch, *tex_bg_wood;
+static SDL_Texture *tex_ui_icons, *tex_heart_scratch;  // chrome icons; Old hearts layer
+static SDL_Texture *tex_guide_font;                    // 6x9 reading font for the GUIDE tab
 #ifdef __3DS__
 #include "bottom_hearts.h"
 static BottomHearts ss_worker_hearts[2], ss_display_hearts;
@@ -208,16 +221,16 @@ static void rebuild_renderer(int w2, int h2);
 static bool ss_needs_rebuild;
 
 // touch rects recomputed every draw, used by the tap handler
-static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_settings_r, y_ring_r;
+static RectFS map_area_r, tab_items_r, tab_gear_r, tab_map_r, tab_guide_r, tab_settings_r, y_ring_r;
 static bool update_mode, update_confirm, update_show_notes;
 static unsigned update_page;
 static RectFS update_release_r, update_prev_r, update_next_r;
 static RectFS update_back_r, update_channel_r, update_action_r;
 static RectFS settings_row_r[5], remap_row_r[6], remap_back_r;
 static RectFS remap_page_r;
-static RectFS screen_row_r[4], screen_back_r;
+static RectFS screen_row_r[5], screen_back_r;
 static RectFS cinema_back_r;
-static RectFS developer_row_r[4], developer_back_r;
+static RectFS developer_row_r[5], developer_back_r;
 static RectFS load_cancel_r, load_confirm_r;
 
 // settings / remap state
@@ -239,7 +252,7 @@ static uint32_t load_flash_until;
 static int load_result = -1;
 static RectFS plaque_r[16];
 static int    plaque_floor[16], plaque_count;
-static float  grid_x, grid_y, grid_cell;
+static float  grid_x, grid_y, grid_cell, grid_row_h;
 static int    ss_diag_current_fps;
 static int    ss_diag_average_fps;
 #ifdef __3DS__
@@ -276,10 +289,9 @@ static bool in_rect(const RectFS *r, float x, float y) {
 }
 static float unit_for_size(int w, int h) {
   float unit = (w < h ? w : h) / 720.0f;
-#ifdef __3DS__
+  // One unit is half a 3DS pixel; the desktop draws the same 320x240 layout.
   if (unit < 0.5f)
     unit = 0.5f;
-#endif
   return unit;
 }
 
@@ -329,18 +341,6 @@ static void fill_circle(float cx, float cy, float r, uint32_t c) {
     SDL_RenderFillRectF(ss_r, &seg);
   }
 }
-static void stroke_circle(float cx, float cy, float r, float t, uint32_t c) {
-  set_color(c);
-  float ri = r - t;
-  for (int dy = (int)-r; dy <= (int)r; dy++) {
-    float dxo = sqrtf(r * r - dy * dy);
-    float dxi = (float)fabs((double)dy) < ri ? sqrtf(ri * ri - dy * dy) : 0;
-    SDL_FRect a = {cx - dxo, cy + dy, dxo - dxi, 1};
-    SDL_FRect b = {cx + dxi, cy + dy, dxo - dxi, 1};
-    SDL_RenderFillRectF(ss_r, &a);
-    SDL_RenderFillRectF(ss_r, &b);
-  }
-}
 static void draw_x_mark(float cx, float cy, float r, float t, uint32_t c) {
   set_color(c);
   for (float d = -r; d <= r; d += 1.0f) {
@@ -357,14 +357,30 @@ static void draw_cell(SDL_Texture *tex, int cell, int cellpx, int cols, float x,
   SDL_FRect dst = {x, y, cellpx * s, cellpx * s};
   SDL_RenderCopyF(ss_r, tex, &src, &dst);
 }
-static void draw_icon(int cell, float x, float y, float s)  { draw_cell(tex_icons, cell, 16, SS_ICON_COLS, x, y, s); }
 static void draw_glyph(int cell, float x, float y, float s) { draw_cell(tex_glyphs, cell, 8, SS_GLYPH_COLS, x, y, s); }
 
-static void draw_icon_inner(int cell, float x, float y, float size) {
-  if (cell < 0 || !tex_icons) return;
+// ROM sprite with a soft drop shadow: once 1 px lower in dark brown, then normal.
+static void copy_with_shadow(SDL_Texture *t, const SDL_Rect *src, SDL_FRect dst) {
+  if (!t) return;
+  SDL_FRect below = {dst.x, dst.y + 1, dst.w, dst.h};
+  SDL_SetTextureColorMod(t, 26, 16, 8);
+  SDL_SetTextureAlphaMod(t, 200);
+  SDL_RenderCopyF(ss_r, t, src, &below);
+  SDL_SetTextureColorMod(t, 255, 255, 255);
+  SDL_SetTextureAlphaMod(t, 255);
+  SDL_RenderCopyF(ss_r, t, src, &dst);
+}
+// Item art: the 14 px inside of a 16 px icon cell, scaled to size.
+static void draw_item_icon(int cell, float x, float y, float size) {
+  if (cell < 0) return;
   SDL_Rect src = {(cell % SS_ICON_COLS) * 16 + 1, (cell / SS_ICON_COLS) * 16 + 1, 14, 14};
-  SDL_FRect dst = {x, y, size, size};
-  SDL_RenderCopyF(ss_r, tex_icons, &src, &dst);
+  copy_with_shadow(tex_icons, &src, (SDL_FRect){x, y, size, size});
+}
+// Gear art: the whole 16 px icon cell at 1x.
+static void draw_gear_icon(int cell, float x, float y) {
+  if (cell < 0) return;
+  SDL_Rect src = {(cell % SS_ICON_COLS) * 16, (cell / SS_ICON_COLS) * 16, 16, 16};
+  copy_with_shadow(tex_icons, &src, (SDL_FRect){x, y, 16, 16});
 }
 
 static float text_width(const char *s, float sc) {
@@ -448,45 +464,75 @@ static void draw_tiny_text(const char *s, float x, float y, float sc, uint32_t c
   }
 }
 
-static void draw_block_text(const char *s, float x, float y, float sc,
-                            uint32_t color) {
-  draw_tiny_text(s, floorf(x + 0.5f), floorf(y + 0.5f), floorf(sc + 0.5f),
-                 color);
+// Baked Nunito ExtraBold label font (ui_font_{large,small}.png): white glyphs
+// tinted per call. If a sheet failed to load, LARGE falls back to the ROM
+// letters and SMALL to the 5x7 block font above.
+enum { FONT_LARGE, FONT_SMALL };
+typedef struct UiFont {
+  SDL_Texture *tex;
+  int cell_w, cell_h, cols, cap_top, pad, space;
+  const unsigned char *advance;
+} UiFont;
+static UiFont ui_font[2] = {
+  {NULL, SS_FONT_LARGE_CELL_W, SS_FONT_LARGE_CELL_H, SS_FONT_LARGE_COLS,
+   SS_FONT_LARGE_CAP_TOP, SS_FONT_LARGE_PAD, SS_FONT_LARGE_SPACE, kSS_FontLargeAdvance},
+  {NULL, SS_FONT_SMALL_CELL_W, SS_FONT_SMALL_CELL_H, SS_FONT_SMALL_COLS,
+   SS_FONT_SMALL_CAP_TOP, SS_FONT_SMALL_PAD, SS_FONT_SMALL_SPACE, kSS_FontSmallAdvance},
+};
+
+// Sheet index of a character; lower case maps to upper case except the x of "x5".
+static int ui_glyph(char ch) {
+  if (ch >= 'a' && ch <= 'z' && ch != 'x') ch -= 'a' - 'A';
+  const char *p = ch ? strchr(kSS_FontChars, ch) : NULL;
+  return p ? (int)(p - kSS_FontChars) : -1;
 }
 
-static void draw_block_label_value(const char *label, const char *value,
-                                   float x, float y, float sc,
-                                   uint32_t label_color,
-                                   uint32_t value_color) {
-  draw_block_text(label, x, y, sc, label_color);
-  draw_block_text(value, x + 190 * u, y, sc, value_color);
+static float ui_text_width(const char *s, int font, int spacing) {
+  const UiFont *f = &ui_font[font];
+  if (!f->tex) return font == FONT_LARGE ? text_width(s, 1) : tiny_text_width(s, 1);
+  float w = 0;
+  for (const char *c = s; *c; c++) {
+    int g = ui_glyph(*c);
+    w += (g >= 0 ? f->advance[g] : f->space) + (c[1] ? spacing : 0);
+  }
+  return w;
 }
-static void draw_number(int value, int digits, float x, float y, float s, bool yellow) {
-  static const int kD[10]  = {SS_GLYPH_DIGIT0, SS_GLYPH_DIGIT1, SS_GLYPH_DIGIT2, SS_GLYPH_DIGIT3, SS_GLYPH_DIGIT4,
-                              SS_GLYPH_DIGIT5, SS_GLYPH_DIGIT6, SS_GLYPH_DIGIT7, SS_GLYPH_DIGIT8, SS_GLYPH_DIGIT9};
-  static const int kDy[10] = {SS_GLYPH_DIGIT0Y, SS_GLYPH_DIGIT1Y, SS_GLYPH_DIGIT2Y, SS_GLYPH_DIGIT3Y, SS_GLYPH_DIGIT4Y,
-                              SS_GLYPH_DIGIT5Y, SS_GLYPH_DIGIT6Y, SS_GLYPH_DIGIT7Y, SS_GLYPH_DIGIT8Y, SS_GLYPH_DIGIT9Y};
-  for (int i = digits - 1; i >= 0; i--) {
-    draw_glyph((yellow ? kDy : kD)[value % 10], x + i * 8 * s, y, s);
-    value /= 10;
+
+// Draws s with the top of its capitals at y; spacing is extra pixels per glyph.
+static void ui_text(const char *s, float x, float y, int font, uint32_t color, int spacing) {
+  const UiFont *f = &ui_font[font];
+  uint8_t r = (color >> 16) & 0xff, g = (color >> 8) & 0xff, b = color & 0xff;
+  if (!f->tex) {
+    if (font == FONT_SMALL) {
+      draw_tiny_text(s, x, y, 1, color);
+    } else {
+      SDL_SetTextureColorMod(tex_letters, r, g, b);
+      SDL_SetTextureColorMod(tex_glyphs, r, g, b);
+      draw_text(s, x, y, 1);
+      SDL_SetTextureColorMod(tex_letters, 255, 255, 255);
+      SDL_SetTextureColorMod(tex_glyphs, 255, 255, 255);
+    }
+    return;
+  }
+  SDL_SetTextureColorMod(f->tex, r, g, b);
+  float cx = floorf(x + 0.5f), cy = floorf(y + 0.5f) - f->cap_top;
+  for (; *s; s++) {
+    int gi = ui_glyph(*s);
+    if (gi >= 0) {
+      SDL_Rect src = {gi % f->cols * f->cell_w, gi / f->cols * f->cell_h, f->cell_w, f->cell_h};
+      SDL_FRect dst = {cx - f->pad, cy, (float)f->cell_w, (float)f->cell_h};
+      SDL_RenderCopyF(ss_r, f->tex, &src, &dst);
+    }
+    cx += (gi >= 0 ? f->advance[gi] : f->space) + spacing;
   }
 }
 
-// ALttP menu-style box: black fill, colored double border, corner dots
-static void menu_box(RectFS r, uint32_t border) {
-  fill_round(r.x, r.y, r.w, r.h, 10 * u, COL_BOX);
-  fill_round(r.x + 3 * u, r.y + 3 * u, r.w - 6 * u, r.h - 6 * u, 8 * u, border);
-  fill_round(r.x + 7 * u, r.y + 7 * u, r.w - 14 * u, r.h - 14 * u, 6 * u, COL(200, 200, 200));
-  fill_round(r.x + 9 * u, r.y + 9 * u, r.w - 18 * u, r.h - 18 * u, 6 * u, COL_BOX);
-  float d = 3.5f * u;
-  fill_circle(r.x + 8 * u, r.y + 8 * u, d, COL(255, 255, 255));
-  fill_circle(r.x + r.w - 8 * u, r.y + 8 * u, d, COL(255, 255, 255));
-  fill_circle(r.x + 8 * u, r.y + r.h - 8 * u, d, COL(255, 255, 255));
-  fill_circle(r.x + r.w - 8 * u, r.y + r.h - 8 * u, d, COL(255, 255, 255));
-}
-static void slot_bg(float x, float y, float size) {
-  fill_round(x, y, size, size, 10 * u, COL(70, 70, 70));
-  fill_round(x + 2.5f * u, y + 2.5f * u, size - 5 * u, size - 5 * u, 8 * u, COL(30, 30, 30));
+// Centred on cx; a non-zero shadow is drawn 1 px lower first (engraved look).
+static void ui_text_center(const char *s, float cx, float y, int font,
+                           uint32_t color, uint32_t shadow, int spacing) {
+  float x = floorf(cx - ui_text_width(s, font, spacing) / 2 + 0.5f);
+  if (shadow) ui_text(s, x, y + 1, font, shadow, spacing);
+  ui_text(s, x, y, font, color, spacing);
 }
 
 // textures from second_screen.c buffers
@@ -512,14 +558,211 @@ static void draw_tiled(SDL_Texture *tex, int tw, int th, RectFS r, uint32_t fall
   SDL_RenderSetClipRect(ss_r, NULL);
 }
 
+// A Link Between Worlds skin. Everything is flat fills and copies: gradients
+// are one span per row, gold rims are concentric discs.
+static uint32_t mix_col(uint32_t a, uint32_t b, float t) {
+  uint32_t out = 0xff000000u;
+  for (int sh = 0; sh < 24; sh += 8) {
+    float ca = (float)((a >> sh) & 0xff), cb = (float)((b >> sh) & 0xff);
+    out |= (uint32_t)(ca + (cb - ca) * t + 0.5f) << sh;
+  }
+  return out;
+}
+
+// Rounded box with a vertical gradient (top, mid at 60%, bottom), one span per
+// row with the same corner insets as SecondScreenFillRound. hl/sh, when set,
+// replace the first row and the last two rows: a tablet's inset light and shade.
+static void fill_round_grad(float x, float y, float w, float h, float rad,
+                            uint32_t top, uint32_t mid, uint32_t bot,
+                            uint32_t hl, uint32_t sh) {
+  int left = (int)floorf(x + 0.5f), ty = (int)floorf(y + 0.5f);
+  int width = (int)floorf(x + w + 0.5f) - left;
+  int height = (int)floorf(y + h + 0.5f) - ty;
+  if (width <= 0 || height <= 0) return;
+  int r = (int)floorf(rad + 0.5f);
+  if (r < 0) r = 0;
+  if (r > width / 2) r = width / 2;
+  if (r > height / 2) r = height / 2;
+  for (int row = 0; row < height; row++) {
+    int d = row < r ? r - row : row >= height - r ? row - (height - r) + 1 : 0;
+    int inset = 0;
+    if (d > 0) {
+      float dy = d - 0.5f;
+      inset = (int)ceilf(r - sqrtf((float)r * r - dy * dy) - 0.5f);
+    }
+    float t = height > 1 ? row / (float)(height - 1) : 0;
+    uint32_t c = t < 0.6f ? mix_col(top, mid, t / 0.6f) : mix_col(mid, bot, (t - 0.6f) / 0.4f);
+    if (hl && row == 0) c = hl;
+    if (sh && row >= height - 2) c = sh;
+    fill_rect(left + inset, ty + row, width - 2 * inset, 1, c);
+  }
+}
+
+static void disc(float cx, float cy, float d, uint32_t c) {
+  fill_round(cx - d / 2, cy - d / 2, d, d, d / 2, c);
+}
+
+// Dark wood ground, tiled from the screen origin so partial redraws line up.
+// Leaves no clip rect set.
+static void draw_ground(SDL_Rect clip) {
+  SDL_RenderSetClipRect(ss_r, &clip);
+  if (!tex_bg_wood) fill_rect(clip.x, clip.y, clip.w, clip.h, COL_WOOD);
+  int tw = kSSTexWood_W * 2, th = kSSTexWood_H * 2;
+  for (int y = clip.y / th * th; tex_bg_wood && y < clip.y + clip.h; y += th)
+    for (int x = clip.x / tw * tw; x < clip.x + clip.w; x += tw) {
+      SDL_FRect dst = {(float)x, (float)y, (float)tw, (float)th};
+      SDL_RenderCopyF(ss_r, tex_bg_wood, NULL, &dst);
+    }
+  SDL_RenderSetClipRect(ss_r, NULL);
+}
+
+// Parchment scroll: gold-brown border, light inner line, tiled paper and the
+// rolled "curl" strip down the left edge.
+static void draw_parchment(RectFS r) {
+  fill_round(r.x, r.y + 2, r.w, r.h, 6, COL_SHADOW);
+  fill_round(r.x, r.y, r.w, r.h, 6, COL_PARCH_EDGE);
+  RectFS in = {r.x + 2, r.y + 2, r.w - 4, r.h - 4};
+  draw_tiled(tex_bg_parch, kSSTexParch_W, kSSTexParch_H, in, COL_BG_PARCH);
+  draw_frame(in.x, in.y, in.w, in.h, 1, COL(249, 237, 200));
+  for (int i = 0; i < 12; i++) {
+    float t = i / 11.0f;
+    uint32_t c = t < 0.55f ? mix_col(COL(169, 138, 78), COL(232, 215, 168), t / 0.55f)
+                           : mix_col(COL(232, 215, 168), COL(201, 176, 120), (t - 0.55f) / 0.45f);
+    fill_rect(in.x + i, in.y, 1, in.h, i == 11 ? mix_col(c, COL(0, 0, 0), 0.15f) : c);
+  }
+}
+
+// Small parchment strip (gear sections).
+static void draw_strip(RectFS r) {
+  fill_round(r.x, r.y + 1, r.w, r.h, 4, COL_SHADOW);
+  fill_round(r.x, r.y, r.w, r.h, 4, COL_PARCH_EDGE);
+  fill_round(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 3, COL(249, 237, 200));
+  fill_round_grad(r.x + 2, r.y + 2, r.w - 4, r.h - 4, 2, COL(240, 225, 184),
+                  COL(229, 210, 158), COL(220, 198, 140), 0, 0);
+}
+
+// Dark plaque with a gold-brown border (status bar, info rows, version).
+static void draw_plaque(RectFS r) {
+  fill_round(r.x, r.y + 1, r.w, r.h, 5, COL(0, 0, 0));
+  fill_round(r.x, r.y, r.w, r.h, 5, COL_RIM_BROWN);
+  fill_round(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 4, COL(90, 58, 24));
+  fill_round_grad(r.x + 2, r.y + 2, r.w - 4, r.h - 4, 3, COL(45, 28, 16),
+                  COL(32, 19, 10), COL(26, 15, 8), 0, 0);
+}
+
+// Stone tablet (tabs, settings rows); gold when active.
+static void draw_tablet(RectFS r, bool active, float rad) {
+  fill_round(r.x, r.y + 1, r.w, r.h, rad, COL(0, 0, 0));
+  if (active)
+    fill_round_grad(r.x, r.y, r.w, r.h, rad, COL(243, 210, 124), COL(212, 164, 63),
+                    COL(169, 120, 42), COL(255, 240, 192), COL(110, 74, 20));
+  else
+    fill_round_grad(r.x, r.y, r.w, r.h, rad, COL(142, 148, 162), COL(92, 99, 115),
+                    COL(69, 75, 88), COL(192, 196, 207), COL(43, 47, 56));
+}
+
+// Parchment title ribbon centred on cx.
+static void draw_ribbon(const char *s, float cx, float y) {
+  float tw = ui_text_width(s, FONT_LARGE, 2);
+  RectFS r = {floorf(cx - tw / 2 - 15 + 0.5f), y, floorf(tw + 30 + 0.5f), 20};
+  fill_round(r.x, r.y + 1, r.w, r.h, 3, COL_SHADOW);
+  fill_round(r.x, r.y, r.w, r.h, 3, COL_PARCH_EDGE);
+  fill_round_grad(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 2, COL(242, 227, 187),
+                  COL(228, 208, 158), COL(217, 194, 138), 0, 0);
+  ui_text(s, r.x + 15, r.y + 6, FONT_LARGE, COL_PARCH_INK, 2);
+}
+
+// Round slot: (x, y, d) is the dark centre's box; the rims lie outside it.
+enum { SLOT_GOLD, SLOT_CELL, SLOT_EMPTY, SLOT_SELECTED };
+static void draw_round_slot(float x, float y, float d, int style) {
+  float cx = x + d / 2, cy = y + d / 2, r = d / 2;
+  uint32_t lit = COL(58, 38, 20), dark = COL(27, 17, 10);
+  if (style == SLOT_GOLD) {            // X/Y/B slots and the map zoom button
+    disc(cx, cy + 2, d + 10, COL(18, 11, 6));
+    disc(cx, cy, d + 10, COL_RIM_DARK);
+    disc(cx, cy, d + 8, COL_RIM_GOLD);
+    disc(cx, cy, d + 4, COL_RIM_BROWN);
+  } else if (style == SLOT_SELECTED) { // equipped item: bright gold ring and glow
+    disc(cx, cy, d + 14, COL(104, 76, 34));
+    disc(cx, cy, d + 10, COL(158, 120, 52));
+    disc(cx, cy, d + 8, COL(255, 242, 192));
+    disc(cx, cy, d + 6, COL_RIM_GOLD);
+    disc(cx, cy, d + 2, COL_RIM_DARK);
+    lit = COL(46, 29, 16); dark = COL(22, 13, 7);
+  } else if (style == SLOT_CELL) {
+    disc(cx, cy, d + 6, COL(26, 16, 10));
+    disc(cx, cy, d + 4, COL_RIM_BROWN);
+    disc(cx, cy, d + 2, COL_RIM_DARK);
+    lit = COL(46, 29, 16); dark = COL(22, 13, 7);
+  } else {                             // not owned: dim ring, dull centre
+    disc(cx, cy, d + 6, COL(48, 29, 15));
+    disc(cx, cy, d + 4, COL(66, 46, 25));
+    disc(cx, cy, d + 2, COL(55, 35, 18));
+    lit = COL(50, 32, 18); dark = COL(41, 25, 13);
+  }
+  // centre lit from 35% of its height
+  disc(cx, cy, d, dark);
+  disc(cx, cy - r * 0.3f, r * 1.36f, mix_col(dark, lit, 0.5f));
+  disc(cx, cy - r * 0.3f, r * 0.7f, lit);
+}
+
+// 24 px (big) or 12 px chrome icon from ui_icons.png.
+static void draw_ui_icon(int icon, float x, float y, bool big) {
+  if (!tex_ui_icons) return;
+  int sz = big ? SS_UI_ICON_CELL : SS_UI_ICON_CELL / 2;
+  SDL_Rect src = {icon * SS_UI_ICON_CELL, big ? 0 : SS_UI_ICON_CELL, sz, sz};
+  SDL_FRect dst = {x, y, (float)sz, (float)sz};
+  SDL_RenderCopyF(ss_r, tex_ui_icons, &src, &dst);
+}
+
+// One status-bar heart (0 empty, 1 half, 2 full): the 12 px icon cropped to
+// 11x11 (its transparent top row and faint left column) so hearts on the
+// 11 px pitch never overlap; the Old retained layer relies on that.
+static void draw_heart(int glyph, int x, int y) {
+  static const int kHeart[3] = {SS_UI_HEART_OFF, SS_UI_HEART_HALF, SS_UI_HEART};
+  if (!tex_ui_icons) return;
+  SDL_Rect src = {kHeart[glyph] * SS_UI_ICON_CELL + 1, SS_UI_ICON_CELL + 1, 11, 11};
+  SDL_Rect dst = {x, y, 11, 11};
+  SDL_RenderCopy(ss_r, tex_ui_icons, &src, &dst);
+}
+
+// Letter badge on a slot's top-left (cx, cy is its centre).
+static void draw_key_badge(float cx, float cy, const char *key) {
+  disc(cx, cy, 16, COL_RIM_GOLD);
+  disc(cx, cy, 14, COL(26, 16, 10));
+  ui_text_center(key, cx, cy - 3, FONT_SMALL, COL_RIM_GOLD, 0, 0);
+}
+
 static bool try_load_art(void) {
   static uint32_t buf[512 * 512];   // reused for every sheet; world map is the largest
   uint8_t lay[16 * 25];
 
-  // theme tiles are baked into the binary
-  if (!tex_bg_menu)  tex_bg_menu  = make_tex(kSSTexMenu_W, kSSTexMenu_H, kSSTexMenu, false);
+  // theme tiles, chrome icons and the label font are baked into the binary
   if (!tex_bg_parch) tex_bg_parch = make_tex(kSSTexParch_W, kSSTexParch_H, kSSTexParch, false);
-  if (!tex_bg_stone) tex_bg_stone = make_tex(kSSTexStone_W, kSSTexStone_H, kSSTexStone, false);
+  if (!tex_bg_wood) {
+    // the shared wood tile is a light plank; darken it once for the ground
+    static uint32_t wood[kSSTexWood_W * kSSTexWood_H];
+    for (int i = 0; i < kSSTexWood_W * kSSTexWood_H; i++) {
+      uint32_t c = kSSTexWood[i];
+      wood[i] = 0xff000000u | (((c >> 16) & 0xff) * 9 / 16) << 16 |
+                (((c >> 8) & 0xff) * 9 / 16) << 8 | (c & 0xff) * 9 / 16;
+    }
+    tex_bg_wood = make_tex(kSSTexWood_W, kSSTexWood_H, wood, false);
+  }
+  if (!tex_ui_icons) tex_ui_icons = make_tex(kSSUiIcons_W, kSSUiIcons_H, kSSUiIcons, true);
+  if (!tex_guide_font) tex_guide_font = make_tex(kSSGuideFont_W, kSSGuideFont_H, kSSGuideFont, true);
+  if (!ui_font[FONT_LARGE].tex)
+    ui_font[FONT_LARGE].tex = make_tex(kSSUiFontLarge_W, kSSUiFontLarge_H, kSSUiFontLarge, true);
+  if (!ui_font[FONT_SMALL].tex)
+    ui_font[FONT_SMALL].tex = make_tex(kSSUiFontSmall_W, kSSUiFontSmall_H, kSSUiFontSmall, true);
+#ifdef __3DS__
+  // Old retained hearts put each cell's background back through this texture.
+  if (!ss_is_new_3ds && !tex_heart_scratch) {
+    tex_heart_scratch = SDL_CreateTexture(ss_r, SDL_PIXELFORMAT_ARGB8888,
+                                          SDL_TEXTUREACCESS_STATIC, 12, 12);
+    if (tex_heart_scratch) SDL_SetTextureBlendMode(tex_heart_scratch, SDL_BLENDMODE_NONE);
+  }
+#endif
   if (!tex_triforce) {
     tex_triforce = make_tex(kSSTexTriforce_W, kSSTexTriforce_H, kSSTexTriforce, true);
     // baked as a smooth AA silhouette, not pixel art -- scale it smoothly.
@@ -536,20 +779,12 @@ static bool try_load_art(void) {
   SS_RenderIconSheet(buf);
   tex_icons = make_tex(SS_ICON_COLS * 16, ((kIconCount + kIconCols - 1) / kIconCols) * 16, buf, true);
   SS_RenderGlyphSheet(buf);
-#ifdef __3DS__
-  if (!ss_is_new_3ds) {
-    const int cells[] = {SS_GLYPH_HEART_EMPTY, SS_GLYPH_HEART_HALF, SS_GLYPH_HEART_FULL};
-    BottomHearts_LoadGlyphs(buf, SS_GLYPH_COLS * 8, cells, SS_GLYPH_COLS);
-  }
-#endif
   tex_glyphs = make_tex(SS_GLYPH_COLS * 8, ((kGlyphCount + kGlyphCols - 1) / kGlyphCols) * 8, buf, true);
   SS_RenderLetterSheet(buf);
   tex_letters = make_tex(16 * 8, 2 * 8, buf, true);
   SS_RenderLinkFace(buf, 0);
   tex_face = make_tex(16, 16, buf, true);
 
-  tex_floor = SDL_CreateTexture(ss_r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, 80, 80);
-  SDL_SetTextureBlendMode(tex_floor, SDL_BLENDMODE_BLEND);
   tex_mapicons = SDL_CreateTexture(ss_r, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, 32, 8);
   SDL_SetTextureBlendMode(tex_mapicons, SDL_BLENDMODE_BLEND);
 
@@ -608,33 +843,24 @@ static void draw_cinema(void) {
   SDL_RenderCopyF(ss_r, tex_triforce, NULL, &br_r);
 }
 
-// Snap the button and both strokes to one pixel grid. Matching size parity
-// keeps the glyph exactly centered, including on the 28px-wide 3DS button.
+// Round gold +/- at the parchment's top-left (the whole map toggles the zoom).
+// Both strokes snap to the button's pixel grid with matching size parity, so
+// the glyph stays exactly centred.
 static void draw_map_zoom_button(RectFS r) {
-  int size = (int)lroundf(56 * u);
-  int bx = (int)lroundf(r.x + 14 * u), by = (int)lroundf(r.y + 14 * u);
-  fill_round(bx, by, size, size, 8 * u, COL_BOX);
-  fill_round(bx + 3 * u, by + 3 * u, size - 6 * u, size - 6 * u, 6 * u, COL_BOX_BORDER2);
-  fill_round(bx + 6 * u, by + 6 * u, size - 12 * u, size - 12 * u, 5 * u, COL_BOX);
-  int length = (int)lroundf(28 * u), thickness = (int)lroundf(5 * u);
-  if ((size - length) & 1) length--;
-  if ((size - thickness) & 1) thickness--;
-  if (thickness < 1) thickness = (size & 1) ? 1 : 2;
+  int size = 22, length = 10, thickness = 2;
+  int bx = (int)lroundf(r.x + 24), by = (int)lroundf(r.y + 13);
+  draw_round_slot(bx, by, size, SLOT_GOLD);
   SDL_Rect horizontal = {bx + (size - length) / 2, by + (size - thickness) / 2, length, thickness};
   SDL_Rect vertical = {bx + (size - thickness) / 2, by + (size - length) / 2, thickness, length};
-  set_color(COL(255, 255, 255));
+  set_color(COL_RIM_GOLD);
   SDL_RenderFillRect(ss_r, &horizontal);
   if (whole_map) SDL_RenderFillRect(ss_r, &vertical);
 }
 
 static void draw_overworld(RectFS r, int link_x, int link_y, int area) {
-  // parchment sheet with gold frame
-  draw_tiled(tex_bg_parch, kSSTexParch_W, kSSTexParch_H, r, COL_BG_PARCH);
-  draw_frame(r.x + u, r.y + u, r.w - 2 * u, r.h - 2 * u, 3 * u, COL_GOLD_DARK);
-  draw_frame(r.x + 4 * u, r.y + 4 * u, r.w - 8 * u, r.h - 8 * u, 2 * u, COL_GOLD);
-
-  float pad = 8 * u;
-  RectFS m = {r.x + pad, r.y + pad, r.w - 2 * pad, r.h - 2 * pad};
+  // parchment scroll; the live map sits in an inset right of the curl
+  draw_parchment(r);
+  RectFS m = {r.x + 20, r.y + 9, r.w - 26, r.h - 18};
 
   bool dark = (area & 0x40) != 0;
   SDL_Texture *map = tex_map[dark ? 1 : 0];
@@ -688,6 +914,7 @@ static void draw_overworld(RectFS r, int link_x, int link_y, int area) {
   SDL_FRect fdst = {fx - 16 * fs / 2, fy - 16 * fs / 2 + bob, 16 * fs, 16 * fs};
   SDL_RenderCopyF(ss_r, tex_face, NULL, &fdst);
   SDL_RenderSetClipRect(ss_r, NULL);
+  draw_frame(m.x, m.y, m.w, m.h, 1, COL(92, 70, 34));
 
   draw_map_zoom_button(r);
 }
@@ -697,13 +924,9 @@ static void draw_dungeon(RectFS r, int link_x, int link_y, int room, int dungeon
   int floor = (int8_t)(dungeon_info >> 8);
   Dungeon *d = (palace >= 0 && palace < 14) ? &dungeons[palace] : NULL;
 
-  float bs = 3 * u;
-  const char *name = d ? d->name : "DUNGEON";
-  float tw = text_width(name, bs);
-  float bx = r.x + r.w / 2 - tw / 2, by = r.y + 20 * u;
-  fill_round(bx - 20 * u, by - 9 * u, tw + 40 * u, 8 * bs + 18 * u, 8 * u, COL_STONE_EDGE_L);
-  fill_round(bx - 18 * u, by - 7 * u, tw + 36 * u, 8 * bs + 14 * u, 7 * u, COL_STONE_INSET);
-  draw_text(name, bx, by, bs);
+  // parchment scroll, dungeon name on a ribbon
+  draw_parchment(r);
+  draw_ribbon(d ? d->name : "DUNGEON", r.x + 2 + (r.w - 4) * 0.58f, r.y + 8);
   if (!d) return;
 
   if (view_floor_touched_at && SDL_GetTicks() - view_floor_touched_at > 6000) {
@@ -715,53 +938,63 @@ static void draw_dungeon(RectFS r, int link_x, int link_y, int room, int dungeon
   if (li > d->floors - 1) li = d->floors - 1;
   int view_floor = li - d->basements;
 
-  // floor plaques down the left side
+  // wooden floor tabs down the left: the viewed floor blue, Link's face beside
+  // his own floor. A tab's touch area also covers its gaps.
   plaque_count = 0;
-  float ph = 50 * u, pw = 100 * u, pgap = 8 * u;
-  float px0 = r.x + 24 * u, py0 = r.y + 78 * u;
+  float pitch = d->floors > 6 ? 136.0f / d->floors : 20;
+  float ph = pitch - 4 < 16 ? pitch - 4 : 16, pw = 30;
+  float px0 = r.x + 26, py0 = r.y + 36;
   for (int f = d->floors - 1; f >= 0; f--) {
     int fl = f - d->basements;
     if (plaque_count >= 16) break;
-    RectFS *pr = &plaque_r[plaque_count];
-    *pr = (RectFS){px0, py0, pw, ph};
+    RectFS tabr = {px0, floorf(py0 + 0.5f), pw, ph};
+    plaque_r[plaque_count] = (RectFS){px0 - 10, py0 - (pitch - ph) / 2, pw + 14, pitch};
     plaque_floor[plaque_count] = fl;
     plaque_count++;
     bool sel = (fl == view_floor);
-    fill_round(pr->x, pr->y, pr->w, pr->h, 6 * u, sel ? COL(160, 200, 255) : COL_STONE_EDGE_L);
-    fill_round(pr->x + 2 * u, pr->y + 2 * u, pr->w - 4 * u, pr->h - 4 * u, 5 * u,
-               sel ? COL_PLAQUE_SEL : COL_PLAQUE);
+    fill_round(tabr.x, tabr.y, tabr.w, tabr.h, 3, sel ? COL(27, 58, 104) : COL_RIM_DARK);
+    if (sel)
+      fill_round_grad(tabr.x + 1, tabr.y + 1, tabr.w - 2, tabr.h - 2, 2, COL(90, 160, 240),
+                      COL(62, 122, 204), COL(44, 94, 168), 0, 0);
+    else
+      fill_round_grad(tabr.x + 1, tabr.y + 1, tabr.w - 2, tabr.h - 2, 2, COL(107, 63, 34),
+                      COL(90, 53, 28), COL(74, 44, 24), 0, 0);
     char label[16];
     if (fl >= 0) snprintf(label, sizeof(label), "%dF", fl + 1);
     else snprintf(label, sizeof(label), "B%d", -fl);
-    draw_text(label, pr->x + pr->w / 2 - text_width(label, 2 * u) / 2 + 8 * u,
-              pr->y + pr->h / 2 - 8 * u, 2 * u);
+    ui_text_center(label, tabr.x + tabr.w / 2, tabr.y + floorf((tabr.h - 6) / 2), FONT_SMALL,
+                   sel ? COL(255, 255, 255) : COL(232, 215, 168), 0, 1);
     if (fl == floor) {
-      SDL_FRect fdst = {pr->x + 4 * u, pr->y + pr->h / 2 - 13 * u, 16 * 1.7f * u, 16 * 1.7f * u};
+      SDL_FRect fdst = {tabr.x - 17, tabr.y + tabr.h / 2 - 8, 16, 16};
       SDL_RenderCopyF(ss_r, tex_face, NULL, &fdst);
     }
-    py0 += ph + pgap;
+    py0 += pitch;
   }
 
-  // the floor map square
-  float inset = 20 * u;
-  float mx0 = px0 + pw + 28 * u, my0 = r.y + 74 * u;
-  float avail_w = r.x + r.w - inset - mx0, avail_h = r.y + r.h - inset - my0;
-  float msize = avail_w < avail_h ? avail_w : avail_h;
-  mx0 += (avail_w - msize) / 2;
-  my0 += (avail_h - msize) / 2;
-  fill_round(mx0, my0, msize, msize, 10 * u, COL_STONE_EDGE_D);
-  fill_round(mx0 + 3 * u, my0 + 3 * u, msize - 6 * u, msize - 6 * u, 8 * u, COL_STONE_INSET);
-
+  // slate inset with one rounded tile per room: visited rooms blue, rooms
+  // known only from the map item dim, Link's room gold.
+  // ponytail: the ROM's per-quadrant room shapes are not drawn.
+  RectFS g = {r.x + 60, r.y + 30, 150, 130};
+  fill_round(g.x, g.y, g.w, g.h, 4, COL(22, 24, 30));
+  fill_round_grad(g.x + 1, g.y + 1, g.w - 2, g.h - 2, 3, COL(44, 49, 60),
+                  COL(36, 40, 50), COL(31, 35, 43), 0, 0);
   const uint8_t *lay = d->layout[li];
-  float cell = (msize - 24 * u) / 5.0f;
-  float gx = mx0 + 12 * u, gy = my0 + 12 * u;
-
-  // the floor's rooms with the game's own map tiles
-  static uint32_t floor_buf[80 * 80];
-  if (!SS_RenderDungeonFloor(palace, li, floor_buf)) return;
-  SDL_UpdateTexture(tex_floor, NULL, floor_buf, 80 * 4);
-  SDL_FRect fdst = {gx, gy, 5 * cell, 5 * cell};
-  SDL_RenderCopyF(ss_r, tex_floor, NULL, &fdst);
+  float cell = 24;
+  float gx = g.x + 15, gy = g.y + 5;
+  bool have_map = (sram16(0x68) & (0x8000 >> palace)) != 0;
+  for (int i = 0; i < 25; i++) {
+    int v = lay[i];
+    if (v == 0x0F) continue;
+    bool is_cur = (v == (room & 0xFF)) && view_floor == floor;
+    if (!is_cur && !(dung_flag(v) & 0xF) && !have_map) continue;
+    float x = gx + (i % 5) * cell + 3, y = gy + (i / 5) * cell + 3;
+    uint32_t edge = COL(31, 79, 148), top = COL(127, 182, 246), bot = COL(74, 142, 224);
+    if (is_cur) { edge = COL_RIM_BROWN; top = COL(255, 224, 138); bot = COL(224, 168, 60); }
+    else if (!(dung_flag(v) & 0xF)) { edge = COL(34, 56, 90); top = COL(84, 112, 152); bot = COL(58, 84, 120); }
+    fill_round(x, y, 18, 18, 3, edge);
+    fill_round_grad(x + 1, y + 1, 16, 16, 2, top, mix_col(top, bot, 0.6f), bot,
+                    mix_col(top, COL(255, 255, 255), 0.4f), 0);
+  }
 
   // overlay sprites: blinking here-dot + boss skull
   static uint32_t icon_buf[32 * 8];
@@ -789,7 +1022,6 @@ static void draw_dungeon(RectFS r, int link_x, int link_y, int room, int dungeon
       }
     }
     if (is_cur) {
-      draw_frame(x + 1.5f * u, y + 1.5f * u, cell - 3 * u, cell - 3 * u, 3 * u, COL_GOLD);
       if (icons) {
         int p = kDotPalette[(frame >> 2) & 3];
         float sx = x + (((link_x & 0x1E0) >> 5) - 3) * ms;
@@ -802,42 +1034,38 @@ static void draw_dungeon(RectFS r, int link_x, int link_y, int room, int dungeon
   }
 }
 
-static void draw_items(RectFS r) {
-  menu_box(r, COL_BOX_BORDER);
-  draw_text("ITEMS", r.x + r.w / 2 - text_width("ITEMS", 3 * u) / 2, r.y + 18 * u, 3 * u);
+// Grid slot 1..20 -> icon cell of the item's current level, -1 when not owned.
+static int item_cell(int slot) {
+  if (slot < 1 || slot > 20) return -1;
+  int i = slot - 1;
+  int lv = (i == 15) ? bottle_level() : sram8(0x40 + i);
+  if (lv <= 0) return -1;
+  if (lv > kSS_ItemMaxLevel[i]) lv = kSS_ItemMaxLevel[i];
+  return kSS_ItemCell[i][lv];
+}
 
-  float cw1 = (r.w - 70 * u) / 5, cw2 = (r.h - 100 * u) / 4;
-  float cellW = cw1 < cw2 ? cw1 : cw2;
-  grid_cell = cellW;
-  grid_x = r.x + r.w / 2 - cellW * 2.5f;
-  grid_y = r.y + 40 * u + (r.h - 40 * u - 4 * cellW) / 2;
+static void draw_items(RectFS r) {
+  (void)r;
+  draw_ribbon("ITEMS", W / 2.0f, 4);
+  // 5x4 round cells at 44 x 38 px; touch splits the gaps between them
+  grid_cell = 44; grid_row_h = 38;
+  grid_x = 16 - 6; grid_y = 24 - 3;
 
   int equipped = SS_GetEquippedSlot();
+  bool flash = SDL_GetTicks() < tap_flash_until;
   for (int i = 0; i < 20; i++) {
-    int col = i % 5, row = i / 5;
-    float x = grid_x + col * cellW, y = grid_y + row * cellW;
-    if (i + 1 == equipped) {
-      fill_round(x + 4 * u, y + 4 * u, cellW - 8 * u, cellW - 8 * u, 10 * u, COL_GOLD);
-      fill_round(x + 8 * u, y + 8 * u, cellW - 16 * u, cellW - 16 * u, 7 * u, COL(46, 40, 16));
-    }
-    if (i == tap_flash_slot && SDL_GetTicks() < tap_flash_until)
-      fill_round(x + 4 * u, y + 4 * u, cellW - 8 * u, cellW - 8 * u, 10 * u, COL(90, 82, 56));
-    int lv = (i == 15) ? bottle_level() : sram8(0x40 + i);
-    if (lv <= 0) continue;
-    if (lv > kSS_ItemMaxLevel[i]) lv = kSS_ItemMaxLevel[i];
-    float is = (cellW - 24 * u) / 16.0f;
-    is = clampf(is, 3 * u, 6 * u);
-    float icon_size = 16 * is;
-    draw_icon_inner(kSS_ItemCell[i][lv], x + (cellW - icon_size) / 2,
-                    y + (cellW - icon_size) / 2, icon_size);
+    float x = 16 + (i % 5) * 44.0f, y = 24 + (i / 5) * 38.0f;
+    int cell = item_cell(i + 1);
+    draw_round_slot(x, y, 32, i + 1 == equipped ? SLOT_SELECTED : cell >= 0 ? SLOT_CELL : SLOT_EMPTY);
+    if (i == tap_flash_slot && flash) disc(x + 16, y + 16, 28, COL(96, 74, 38));
+    draw_item_icon(cell, x + 5, y + 5, 21);
   }
   (void)kItemNames;
 }
 
 static void draw_gear(RectFS r) {
-  menu_box(r, COL_BOX_BORDER2);
-  draw_tiny_text("GEAR", r.x + r.w / 2 - tiny_text_width("GEAR", 2.0f) / 2,
-                 r.y + 12.0f, 2.0f, COL(250, 250, 250));
+  (void)r;
+  draw_ribbon("GEAR", W / 2.0f, 4);
 
   int sword = sram8(0x59), shield = sram8(0x5A);
   int gear_cells[7];
@@ -849,172 +1077,154 @@ static void draw_gear(RectFS r) {
   gear_cells[5] = sram8(0x56) > 0 ? SS_ICON_FLIPPERS_1 : -1;
   gear_cells[6] = sram8(0x57) > 0 ? SS_ICON_MOONPEARL_1 : -1;
 
-  float cell = 30.0f;
-  float gap = 7.0f;
-  float row_w = 7 * cell + 6 * gap;
-  if (row_w > r.w - 22) {
-    gap = 5.0f;
-    cell = (r.w - 22 - 6 * gap) / 7.0f;
-  }
-  float x0 = r.x + (r.w - (7 * cell + 6 * gap)) / 2;
-  float y0 = r.y + 30.0f;
-  float icon_s = clampf((cell - 5.0f) / 16.0f, 1.25f, 1.75f);
-
+  // EQUIPMENT: the gear icons in dark wells on a parchment strip
+  ui_text("EQUIPMENT", 16, 25, FONT_SMALL, COL_RIM_GOLD, 1);
+  draw_strip((RectFS){14, 33, 220, 27});
   for (int i = 0; i < 7; i++) {
-    float x = x0 + i * (cell + gap);
-    float y = y0;
-    slot_bg(x, y, cell);
-    if (gear_cells[i] >= 0)
-      draw_icon(gear_cells[i], x + (cell - 16 * icon_s) / 2,
-                y + (cell - 16 * icon_s) / 2, icon_s);
+    float x = 23 + i * 30.0f, y = 35;
+    fill_round(x, y, 22, 22, 4, COL_RIM_BROWN);
+    fill_round(x + 1, y + 1, 20, 20, 3, COL(30, 19, 11));
+    draw_gear_icon(gear_cells[i], x + 3, y + 3);
   }
 
-  float y1 = y0 + cell + 24.0f;
-  float bottle_cell = 25.0f;
-  float bottle_gap = 7.0f;
-  draw_tiny_text("BOTTLES", x0, y1 - 12.0f, 1.0f, COL(250, 250, 250));
+  // BOTTLES
+  ui_text("BOTTLES", 16, 67, FONT_SMALL, COL_RIM_GOLD, 1);
+  draw_strip((RectFS){14, 75, 118, 33});
   for (int i = 0; i < 4; i++) {
-    float x = x0 + i * (bottle_cell + bottle_gap);
-    slot_bg(x, y1, bottle_cell);
+    float x = 19 + i * 28.0f, y = 79;
+    fill_round(x, y, 24, 24, 4, COL_RIM_BROWN);
+    fill_round(x + 1, y + 1, 22, 22, 3, COL(30, 19, 11));
     int lv = sram8(0x5C + i);
     if (lv > 7) lv = 7;
-    if (lv > 0) {
-      float bs = clampf((bottle_cell - 5.0f) / 16.0f, 1.15f, 1.35f);
-      draw_icon(SS_ICON_BOTTLE_1 + (lv - 1),
-                x + (bottle_cell - 16 * bs) / 2,
-                y1 + (bottle_cell - 16 * bs) / 2, bs);
-    }
+    if (lv > 0) draw_gear_icon(SS_ICON_BOTTLE_1 + (lv - 1), x + 4, y + 4);
   }
-  float pend_x = r.x + r.w - 108.0f;
-  draw_tiny_text("PENDANTS", pend_x, y1 - 12.0f, 1.0f, COL(250, 250, 250));
+
+  // PENDANTS
+  ui_text("PENDANTS", 146, 67, FONT_SMALL, COL_RIM_GOLD, 1);
+  draw_strip((RectFS){144, 75, 90, 33});
   int pend = sram8(0x74);
   static const int pbit[3] = {4, 2, 1};
   static const uint32_t pcol[3] = {COL(64, 200, 88), COL(70, 110, 240), COL(230, 60, 60)};
   for (int i = 0; i < 3; i++) {
-    float cxp = pend_x + i * 28.0f + 13.0f;
-    float cyp = y1 + 13.0f;
-    fill_circle(cxp, cyp, 8.0f, (pend & pbit[i]) ? pcol[i] : COL(34, 34, 34));
-    stroke_circle(cxp, cyp, 8.0f, 2.0f, COL_GOLD_DARK);
+    float cxp = 163 + i * 26.0f, cyp = 91;
+    bool own = (pend & pbit[i]) != 0;
+    disc(cxp, cyp, 20, COL_RIM_BROWN);
+    disc(cxp, cyp, 16, own ? pcol[i] : COL(52, 40, 28));
+    if (own) disc(cxp - 3, cyp - 3, 4, mix_col(pcol[i], COL(255, 255, 255), 0.6f));
   }
 
-  float cyC = y1 + 49.0f;
-  draw_tiny_text("CRYSTALS", x0, cyC - 12.0f, 1.0f, COL(250, 250, 250));
-  float crystal_start = x0 + 78.0f;
-  float crystal_step = 23.0f;
+  // HEART PIECES: collected pieces are full hearts, plus "n / 4"
+  ui_text("HEART PIECES", 16, 115, FONT_SMALL, COL_RIM_GOLD, 1);
+  draw_strip((RectFS){14, 123, 118, 24});
+  int pieces = sram8(0x6B) & 3;
+  char count[8];
+  snprintf(count, sizeof(count), "%d / 4", pieces);
+  float hx = floorf(14 + (118 - (60 + 6 + ui_text_width(count, FONT_SMALL, 0))) / 2);
+  for (int i = 0; i < 4; i++)
+    draw_ui_icon(i < pieces ? SS_UI_HEART : SS_UI_HEART_OFF, hx + i * 16, 129, false);
+  ui_text(count, hx + 66, 132, FONT_SMALL, COL(90, 58, 24), 0);
+
+  // CRYSTALS
+  ui_text("CRYSTALS", 146, 115, FONT_SMALL, COL_RIM_GOLD, 1);
+  draw_strip((RectFS){144, 123, 90, 24});
   int owned7 = sram8(0x7A) & 0x7F, n_owned = 0;
   while (owned7) { n_owned += owned7 & 1; owned7 >>= 1; }
   for (int i = 0; i < 7; i++) {
-    float cxp = crystal_start + i * crystal_step;
-    float cyp = cyC;
-    fill_circle(cxp, cyp, 7.0f, i < n_owned ? COL(110, 160, 255) : COL(34, 34, 34));
-    stroke_circle(cxp, cyp, 7.0f, 2.0f, COL_GOLD_DARK);
-  }
-
-  float yp = cyC + 25.0f;
-  draw_glyph(SS_GLYPH_HEART_FULL, x0, yp - 3.0f, 1.7f);
-  int pieces = sram8(0x6B) & 3;
-  for (int i = 0; i < 4; i++) {
-    float gx = x0 + 34.0f + i * 25.0f, gy = yp;
-    fill_round(gx - 2.0f, gy - 2.0f, 20.0f, 20.0f, 5.0f, COL_GOLD_DARK);
-    fill_round(gx, gy, 16.0f, 16.0f, 4.0f, i < pieces ? COL(235, 80, 80) : COL(40, 34, 30));
+    float x = 151 + i * 11.0f, y = 128;
+    fill_round(x, y, 9, 13, 4, COL_RIM_BROWN);
+    if (i < n_owned)
+      fill_round_grad(x + 1, y + 1, 7, 11, 3, COL(190, 220, 255), COL(110, 160, 255),
+                      COL(70, 110, 220), 0, 0);
+    else
+      fill_round(x + 1, y + 1, 7, 11, 3, COL(52, 40, 28));
   }
 }
 
-static void draw_sidebar(float x, float y, float w, float h, bool dungeon_mode) {
-  float s = 3 * u;
+// Life, magic and counters on one plaque above the tabs, on every panel.
+static const RectFS kStatusBar = {8, 182, 304, 24};
+static void draw_status_bar(bool dungeon_mode) {
+  RectFS b = kStatusBar;
+  draw_plaque(b);
   bool show_keys = dungeon_mode && sram8(0x6F) != 0xFF;
-  float chip_h = (show_keys ? 40 : 30) * s + 20 * u;
-  menu_box((RectFS){x, y, w, chip_h}, COL_BOX_BORDER);
-  float ry = y + 12 * u, ix = x + 10 * u, ne = x + w - 10 * u;
-  draw_glyph(SS_GLYPH_RUPEE, ix + 4 * s, ry, s);
-  int rupees = sram16(0x62); if (rupees > 9999) rupees = 9999;
-  draw_number(rupees, 4, ne - 32 * s, ry, s, false);
   static const int kBombCap[8]  = {10, 15, 20, 25, 30, 35, 40, 50};
   static const int kArrowCap[8] = {30, 35, 40, 45, 50, 55, 60, 70};
   bool bombs_max = sram8(0x43) >= kBombCap[sram8(0x70) & 7];
   bool arrows_max = sram8(0x77) >= kArrowCap[sram8(0x71) & 7];
-  ry += 10 * s;
-  draw_glyph(SS_GLYPH_BOMB0, ix, ry, s); draw_glyph(SS_GLYPH_BOMB1, ix + 8 * s, ry, s);
-  draw_number(sram8(0x43), 2, ne - 16 * s, ry, s, bombs_max);
-  ry += 10 * s;
-  draw_glyph(SS_GLYPH_ARROW0, ix, ry, s); draw_glyph(SS_GLYPH_ARROW1, ix + 8 * s, ry, s);
-  draw_number(sram8(0x77), 2, ne - 16 * s, ry, s, arrows_max);
-  if (show_keys) {
-    ry += 10 * s;
-    draw_glyph(SS_GLYPH_KEY, ix + 4 * s, ry, s);
-    draw_number(sram8(0x6F), 1, ne - 8 * s, ry, s, false);
-  }
+  int rupees = sram16(0x62); if (rupees > 9999) rupees = 9999;
+  char counts[4][8];
+  snprintf(counts[0], sizeof(counts[0]), "%03d", rupees);
+  snprintf(counts[1], sizeof(counts[1]), "%02d", sram8(0x43) % 100);
+  snprintf(counts[2], sizeof(counts[2]), "%02d", sram8(0x77) % 100);
+  snprintf(counts[3], sizeof(counts[3]), "%d", sram8(0x6F) % 10);
+  static const int icons[4] = {SS_UI_RUPEE, SS_UI_BOMB, SS_UI_ARROW, SS_UI_KEY};
+  const uint32_t white = COL(255, 255, 255), full = COL(255, 220, 90);
+  const uint32_t colors[4] = {white, bombs_max ? full : white, arrows_max ? full : white, white};
+  int ncount = show_keys ? 4 : 3;
 
-  // Magic and hearts use integer pixel sizes on 3DS; fractional scaling made
-  // the HUD look uneven in real bottom-screen dumps.
-  float bar_h = 10.0f;
-  bool half_magic = sram8(0x7B) >= 1;
-  float my = floorf(y + h - bar_h - 5.0f + 0.5f);
+  // Hearts (110) | flask + gauge | counters, 6 px apart; with the key counter
+  // the gauge narrows and the gaps close up so everything still fits.
+  float gauge_w = show_keys ? 34 : 50;
+  float widths[4], used = 110 + 15 + gauge_w;
+  for (int i = 0; i < ncount; i++) {
+    widths[i] = 15 + ui_text_width(counts[i], FONT_LARGE, -1);
+    used += widths[i];
+  }
+  float x = b.x + 7;
+  float gap = floorf((b.w - 14 - used) / ncount);
+  if (gap > 6) gap = 6;
+  if (gap < 2) gap = 2;
+
+  // hearts: 10 per row on an 11 px pitch, up to two rows
   int cap = sram8(0x6C) >> 3; if (cap > 20) cap = 20;
   int cur = sram8(0x6D);
-  float heart_s = cap > 10 ? 1.25f : cap > 5 ? 1.5f : 2.0f;
-  float heart_px = 8.0f * heart_s;
-  float hs = heart_px + (cap > 10 ? 2.0f : 3.0f);
-  int desired_cols = cap <= 5 ? cap : cap <= 10 ? 5 : 10;
-  int max_cols = (int)((w + 2.0f) / hs);
-  int heart_cols = desired_cols;
-  if (heart_cols <= 0) heart_cols = 1;
-  if (max_cols > 0 && heart_cols > max_cols) heart_cols = max_cols;
-  int heart_rows = (cap + heart_cols - 1) / heart_cols;
-  float half_gap = half_magic ? 8.0f : 0.0f;
-  float hy = floorf(my - heart_rows * hs - 6.0f - half_gap + 0.5f);
-
-  // equipped item ring: tap cycles to the next owned item
-  float ring_top = y + chip_h + 4.0f;
-  float ring_r = clampf((hy - ring_top) / 2.0f - 2.0f, 18.0f, 32.0f);
-  float rcx = x + w / 2, rcy = ring_top + ring_r;
-  if (rcy + ring_r > hy - 2.0f)
-    rcy = hy - ring_r - 2.0f;
-  y_ring_r = (RectFS){rcx - ring_r, rcy - ring_r, ring_r * 2, ring_r * 2};
-  fill_circle(rcx, rcy, ring_r, COL(12, 12, 12));
-  stroke_circle(rcx, rcy, ring_r, 6 * u, COL_GOLD_DARK);
-  stroke_circle(rcx, rcy, ring_r - 3 * u, 2.5f * u, COL_GOLD);
-  int slot = SS_GetEquippedSlot();
-  if (slot >= 1 && slot <= 20) {
-    int i = slot - 1;
-    int lv = (i == 15) ? bottle_level() : sram8(0x40 + i);
-    if (lv < 0) lv = 0;
-    if (lv > kSS_ItemMaxLevel[i]) lv = kSS_ItemMaxLevel[i];
-    if (lv > 0) {
-      float item_size = clampf(ring_r * 1.15f, 26.0f, 38.0f);
-      draw_icon_inner(kSS_ItemCell[i][lv], rcx - item_size / 2,
-                      rcy - item_size / 2, item_size);
-    }
-  }
-  draw_text("Y", rcx + ring_r - 11.0f, rcy - ring_r + 4.0f, 1.0f);
-
-  // hearts (live health)
-  float hx0 = floorf(x + (w - (heart_cols - 1) * hs - heart_px) / 2 + 0.5f);
+  int hx = (int)x, hy = (int)b.y + (cap > 10 ? 1 : 6);
 #if defined(__3DS__) || defined(ZELDA3_TEST_BOTTOM_HEARTS)
-  capture_bottom_hearts(cap, (int)heart_px, heart_cols, (int)hs, (int)hx0, (int)hy);
+  capture_bottom_hearts(cap, 11, 10, 11, hx, hy);
 #endif
   for (int i = 0; i < cap; i++) {
-    int g = i < (cur >> 3) ? SS_GLYPH_HEART_FULL
-          : (i == (cur >> 3) && (cur & 7) >= 4 ? SS_GLYPH_HEART_HALF : SS_GLYPH_HEART_EMPTY);
-    draw_glyph(g, hx0 + (i % heart_cols) * hs, hy + (i / heart_cols) * hs, heart_s);
+    int g = i < (cur >> 3) ? 2 : (i == (cur >> 3) && (cur & 7) >= 4 ? 1 : 0);
+    draw_heart(g, hx + i % 10 * 11, hy + i / 10 * 11);
   }
+  x += 110 + gap;
 
-  // magic bar (with the HUD's 1/2 marker when the upgrade is owned)
-  if (half_magic) {
-    float gx = floorf(x + (w - 24.0f) / 2 + 0.5f);
-    draw_glyph(SS_GLYPH_HALF0, gx, my - 8.0f, 1.0f);
-    draw_glyph(SS_GLYPH_HALF1, gx + 8.0f, my - 8.0f, 1.0f);
-    draw_glyph(SS_GLYPH_HALF2, gx + 16.0f, my - 8.0f, 1.0f);
-  }
+  // magic flask and gauge; "1/2" marks the half-magic upgrade
+  draw_ui_icon(SS_UI_FLASK, x, b.y + 6, false);
+  float gx = x + 15, gy = b.y + 8;
+  fill_round(gx - 2, gy - 2, gauge_w + 4, 13, 4, COL_RIM_DARK);
+  fill_round(gx - 1, gy - 1, gauge_w + 2, 11, 4, COL_RIM_BROWN);
+  fill_round(gx, gy, gauge_w, 9, 3, COL(14, 10, 6));
   int magic = sram8(0x6E); if (magic > 128) magic = 128;
-  float bar_x = floorf(x + 8.0f + 0.5f);
-  float bar_w = floorf(w - 16.0f + 0.5f);
-  fill_rect(bar_x, my, bar_w, bar_h, COL_GOLD_DARK);
-  fill_rect(bar_x + 2.0f, my + 2.0f, bar_w - 4.0f, bar_h - 4.0f, COL_BOX);
-  float frac = magic / 128.0f;
-  if (frac > 0)
-    fill_rect(bar_x + 3.0f, my + 3.0f, floorf((bar_w - 6.0f) * frac + 0.5f),
-              bar_h - 6.0f, COL(72, 208, 72));
+  float fill = floorf((gauge_w - 2) * magic / 128.0f + 0.5f);
+  if (fill > 0)
+    fill_round_grad(gx + 1, gy + 1, fill, 7, 2, COL(185, 255, 192), COL(58, 208, 90),
+                    COL(21, 122, 44), 0, 0);
+  if (sram8(0x7B) >= 1)
+    ui_text("1/2", gx + gauge_w - 2 - ui_text_width("1/2", FONT_SMALL, 0), gy + 1,
+            FONT_SMALL, white, 0);
+  x += 15 + gauge_w + gap;
+
+  // rupees, bombs, arrows and (in dungeons) small keys
+  for (int i = 0; i < ncount; i++) {
+    draw_ui_icon(icons[i], x, b.y + 6, false);
+    ui_text(counts[i], x + 15, b.y + 8, FONT_LARGE, colors[i], -1);
+    x += widths[i] + gap;
+  }
+}
+
+// X and Y items and the B sword in round gold slots on the right. X shows the
+// engine's X item (ItemSwitchLR); tapping Y cycles to the next owned item.
+static void draw_quick_slots(void) {
+  draw_round_slot(260, 26, 40, SLOT_GOLD);
+  draw_item_icon(item_cell(SS_GetEquippedSlotX()), 266, 32, 28);
+  draw_key_badge(261, 27, "X");
+  y_ring_r = (RectFS){255, 75, 50, 50};
+  draw_round_slot(260, 80, 40, SLOT_GOLD);
+  draw_item_icon(item_cell(SS_GetEquippedSlot()), 266, 86, 28);
+  draw_key_badge(261, 81, "Y");
+  draw_round_slot(265, 134, 30, SLOT_GOLD);
+  int sword = sram8(0x59);
+  if (sword > 0 && sword != 0xFF) draw_ui_icon(SS_UI_SWORD, 268, 137, true);
+  draw_key_badge(266, 135, "B");
 }
 
 // Rewrite one `key = value` line inside a section of zelda3.ini
@@ -1117,18 +1327,42 @@ static void draw_cog(float cx, float cy, float r) {
 }
 
 static void draw_settings_row(RectFS *row, bool armed) {
-  fill_round(row->x, row->y, row->w, row->h, 8 * u, armed ? COL_GOLD : COL_GOLD_DARK);
-  fill_round(row->x + 3 * u, row->y + 3 * u, row->w - 6 * u, row->h - 6 * u, 6 * u,
-             armed ? COL(58, 48, 12) : COL(28, 28, 28));
+  draw_tablet(*row, armed, 5);
 }
 
+// Stone row: engraved label on the left, value (or nothing) on the right.
+static void draw_settings_entry(RectFS *row, const char *label, const char *value, bool armed) {
+  draw_settings_row(row, armed);
+  uint32_t ink = armed ? COL(42, 26, 8) : COL_INK;
+  uint32_t lit = armed ? COL(255, 236, 170) : COL_INK_LIT;
+  float ty = floorf(row->y + row->h / 2 - 4);
+  ui_text(label, row->x + 10, ty + 1, FONT_LARGE, lit, 1);
+  ui_text(label, row->x + 10, ty, FONT_LARGE, ink, 1);
+  if (value && value[0])
+    ui_text(value, row->x + row->w - 10 - ui_text_width(value, FONT_SMALL, 1), ty + 1,
+            FONT_SMALL, armed ? ink : COL(46, 51, 64), 1);
+}
+
+// Small stone button with a centred label (BACK, MORE, PREV...).
+static void draw_button(RectFS *r, const char *label, bool armed) {
+  draw_settings_row(r, armed);
+  ui_text_center(label, r->x + r->w / 2, floorf(r->y + r->h / 2 - 4), FONT_LARGE,
+                 armed ? COL(42, 26, 8) : COL_INK, armed ? COL(255, 236, 170) : COL_INK_LIT, 1);
+}
+
+// Sub-page header: title ribbon and a BACK tablet at the top-left.
+static void draw_page_header(const char *title, RectFS *back) {
+  draw_ribbon(title, W / 2.0f, 4);
+  *back = (RectFS){14, 4, 52, 20};
+  draw_button(back, "BACK", false);
+}
+
+// Settings pages lay out in the 220 px column left of the right-hand space.
+static RectFS settings_row(int i) { return (RectFS){14, 26 + i * 30.0f, 220, 26}; }
+
 static void draw_remap_panel(RectFS r) {
-  draw_text("REMAP BUTTONS", r.x + r.w / 2 - text_width("REMAP BUTTONS", 3 * u) / 2,
-            r.y + 18 * u, 3 * u);
-  remap_back_r = (RectFS){r.x + 14 * u, r.y + 12 * u, 76 * u, 32 * u};
-  draw_settings_row(&remap_back_r, false);
-  draw_text("BACK", remap_back_r.x + remap_back_r.w / 2 - text_width("BACK", 1.8f * u) / 2,
-            remap_back_r.y + remap_back_r.h / 2 - 7 * u, 1.8f * u);
+  (void)r;
+  draw_page_header("REMAP BUTTONS", &remap_back_r);
 
   // resolve a pending capture from the game thread
   if (remap_arm >= 0) {
@@ -1149,35 +1383,24 @@ static void draw_remap_panel(RectFS r) {
   if (remap_first_row > 6)
     remap_first_row = 6;
 
-  remap_page_r = (RectFS){r.x + r.w - 86 * u, r.y + 12 * u, 72 * u, 32 * u};
-  draw_settings_row(&remap_page_r, false);
-  draw_text(remap_first_row == 0 ? "MORE" : "TOP",
-            remap_page_r.x + remap_page_r.w / 2 -
-              text_width(remap_first_row == 0 ? "MORE" : "TOP", 1.8f * u) / 2,
-            remap_page_r.y + remap_page_r.h / 2 - 7 * u, 1.8f * u);
+  remap_page_r = (RectFS){254, 4, 52, 20};
+  draw_button(&remap_page_r, remap_first_row == 0 ? "MORE" : "TOP", false);
 
-  float row_h = 44 * u, gap = 6 * u;
-  float y0 = r.y + 56 * u;
-  float row_w = r.w - 42 * u;
+  float row_h = 22, gap = 3;
   for (int visible = 0; visible < 6; visible++) {
     int i = remap_first_row + visible;
     RectFS *row = &remap_row_r[visible];
-    *row = (RectFS){r.x + 14 * u, y0 + visible * (row_h + gap), row_w, row_h};
+    *row = (RectFS){14, 26 + visible * (row_h + gap), 214, row_h};
     bool armed = remap_arm == i;
-    draw_settings_row(row, armed);
-    float ty = row->y + row->h / 2 - 9 * u;
-    draw_text(kPadCmdNames[i], row->x + 12 * u, ty, 2.1f * u);
     const char *v = armed ? "PRESS KEY"
         : (pad_controls[i] >= 0 && pad_controls[i] < 17 ? kPadButtonLabel[pad_controls[i]] : "----");
-    draw_text(v, row->x + row->w - 12 * u - text_width(v, 2.1f * u), ty, 2.1f * u);
+    draw_settings_entry(row, kPadCmdNames[i], v, armed);
   }
-  float bar_x = r.x + r.w - 18 * u;
-  float bar_y = y0;
-  float bar_h = 6 * row_h + 5 * gap;
-  fill_round(bar_x, bar_y, 4 * u, bar_h, 2 * u, COL(42, 42, 42));
+  float bar_x = 232, bar_y = 26, bar_h = 6 * row_h + 5 * gap;
+  fill_round(bar_x, bar_y, 3, bar_h, 1, COL_RIM_DARK);
   float thumb_h = bar_h * 0.5f;
   float thumb_y = bar_y + (remap_first_row == 0 ? 0 : bar_h - thumb_h);
-  fill_round(bar_x, thumb_y, 4 * u, thumb_h, 2 * u, COL_GOLD);
+  fill_round(bar_x, thumb_y, 3, thumb_h, 1, COL_RIM_GOLD);
 }
 
 static const char *display_mode_label(void) {
@@ -1209,12 +1432,8 @@ static const char *wide_zoom_label(void) {
 }
 
 static void draw_screen_panel(RectFS r) {
-  draw_text("SCREEN", r.x + r.w / 2 - text_width("SCREEN", 3 * u) / 2,
-            r.y + 18 * u, 3 * u);
-  screen_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
-  draw_settings_row(&screen_back_r, false);
-  draw_text("BACK", screen_back_r.x + screen_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
-            screen_back_r.y + screen_back_r.h / 2 - 9 * u, 2.2f * u);
+  (void)r;
+  draw_page_header("SCREEN", &screen_back_r);
 
   const char *edge_value = "FIXED CAMERA";
 #ifdef __3DS__
@@ -1223,45 +1442,36 @@ static void draw_screen_panel(RectFS r) {
 #endif
   bool hud_hidden = SS_IsHudHidden();
   bool wide = false;
+  // 3D DEPTH is the last row, shown only on 3DS models with a 3D screen.
+  bool stereo = false;
+  const char *stereo_value = "OFF";
 #ifdef __3DS__
   wide = Platform3DS_GetDisplayMode() == kPlatform3DSDisplayUltraWideMod;
+  static const char *const stereo_labels[4] = {"OFF", "LOW", "MID", "HIGH"};
+  stereo = Platform3DS_StereoSupported();
+  stereo_value = stereo_labels[Platform3DS_GetStereoLevel()];
 #else
   wide = SS_IsWidescreen();
 #endif
-  static const char *const labels[4] = {
-    "DISPLAY MODE", "EDGE MODE", "ZOOM", "TOP HUD",
+  static const char *const labels[5] = {
+    "DISPLAY MODE", "EDGE MODE", "ZOOM", "TOP HUD", "3D DEPTH",
   };
-  const char *values[4] = {
+  const char *values[5] = {
     display_mode_label(), edge_value, wide_zoom_label(),
-    hud_hidden ? "OFF" : "ON",
+    hud_hidden ? "OFF" : "ON", stereo_value,
   };
-  int rows = wide ? 4 : 3;
+  int rows = (wide ? 4 : 3) + (stereo ? 1 : 0);
   screen_row_r[2] = (RectFS){0};
-  float row_h = 58 * u, gap = 14 * u;
-  float y0 = r.y + 82 * u;
   for (int visible = 0; visible < rows; visible++) {
-    int item = !wide && visible == 2 ? 3 : visible;
-    RectFS *row = &screen_row_r[item];
-    *row = (RectFS){
-      r.x + 28 * u, y0 + visible * (row_h + gap),
-      r.w - 56 * u, row_h,
-    };
-    draw_settings_row(row, false);
-    float ty = row->y + row->h / 2 - 8 * u;
-    draw_text(labels[item], row->x + 16 * u, ty, 2 * u);
-    draw_text(values[item],
-              row->x + row->w - 16 * u - text_width(values[item], 2 * u),
-              ty, 2 * u);
+    int item = !wide && visible >= 2 ? visible + 1 : visible;
+    screen_row_r[item] = settings_row(visible);
+    draw_settings_entry(&screen_row_r[item], labels[item], values[item], false);
   }
 }
 
 static void draw_developer_panel(RectFS r) {
-  draw_text("DEVELOPER", r.x + r.w / 2 - text_width("DEVELOPER", 3 * u) / 2,
-            r.y + 18 * u, 3 * u);
-  developer_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
-  draw_settings_row(&developer_back_r, false);
-  draw_text("BACK", developer_back_r.x + developer_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
-            developer_back_r.y + developer_back_r.h / 2 - 9 * u, 2.2f * u);
+  (void)r;
+  draw_page_header("DEVELOPER", &developer_back_r);
 
   bool show_fps = false;
 #ifdef __3DS__
@@ -1272,66 +1482,48 @@ static void draw_developer_panel(RectFS r) {
   const char *load_value = load_result == -2 ? "WAIT" :
     (load_result >= 0 && SDL_GetTicks() < load_flash_until ?
       DumpState_ResultLabel((ZeldaDumpStateResult)load_result) : "LOAD");
-  const char *labels[4] = {
-    "MEM DUMP", "LOAD STATE", "SHOW FPS", "OVERLAY",
+  const char *labels[5] = {
+    "MEM DUMP", "LOAD STATE", "SHOW FPS", "OVERLAY", "3D TERRAIN",
   };
-  const char *values[4] = {
+  const char *values[5] = {
     SDL_GetTicks() < dump_flash_until ? "DONE" : "WRITE",
     load_value,
     show_fps ? "ON" : "OFF",
     "OPEN",
+    "OFF",
   };
-  float row_h = 58 * u, gap = 14 * u;
-  float y0 = r.y + 82 * u;
-  for (int i = 0; i < 4; i++) {
-    RectFS *row = &developer_row_r[i];
-    *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
-    draw_settings_row(row, false);
-    float ty = row->y + row->h / 2 - 8 * u;
-    draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
-    draw_text(values[i], row->x + row->w - 16 * u - text_width(values[i], 2 * u),
-              ty, 2 * u);
+  int rows = 4;
+#ifdef __3DS__
+  // 3D TERRAIN: stereo depth from the game's collision data, for A/B comparison.
+  values[4] = Platform3DS_GetStereoTerrain() ? "ON" : "OFF";
+  rows = Platform3DS_StereoSupported() ? 5 : 4;
+#endif
+  developer_row_r[4] = (RectFS){0};
+  for (int i = 0; i < rows; i++) {
+    developer_row_r[i] = settings_row(i);
+    draw_settings_entry(&developer_row_r[i], labels[i], values[i], false);
   }
 }
 
 static void draw_load_confirmation(RectFS r) {
-  draw_text("LOAD STATE",
-            r.x + r.w / 2 - text_width("LOAD STATE", 3 * u) / 2,
-            r.y + 24 * u, 3 * u);
+  (void)r;
+  draw_ribbon("LOAD STATE", W / 2.0f, 4);
   const char *lines[] = {
     "LOAD THE LATEST DUMP",
     "FOR THIS ROM PROFILE",
     "UNSAVED PROGRESS IS LOST",
   };
   for (int i = 0; i < 3; i++)
-    draw_text(lines[i],
-              r.x + r.w / 2 - text_width(lines[i], 2 * u) / 2,
-              r.y + (82 + i * 34) * u, 2 * u);
-
-  float button_w = 220 * u;
-  float button_y = r.y + r.h - 62 * u;
-  load_cancel_r = (RectFS){r.x + 28 * u, button_y, button_w, 46 * u};
-  load_confirm_r = (RectFS){r.x + r.w - 28 * u - button_w,
-                            button_y, button_w, 46 * u};
-  draw_settings_row(&load_cancel_r, false);
-  draw_settings_row(&load_confirm_r, false);
-  draw_text("CANCEL",
-            load_cancel_r.x + load_cancel_r.w / 2 -
-              text_width("CANCEL", 2 * u) / 2,
-            load_cancel_r.y + 14 * u, 2 * u);
-  draw_text("LOAD",
-            load_confirm_r.x + load_confirm_r.w / 2 -
-              text_width("LOAD", 2 * u) / 2,
-            load_confirm_r.y + 14 * u, 2 * u);
+    ui_text_center(lines[i], 124, 44 + i * 18, FONT_LARGE, COL(255, 255, 255), 0, 0);
+  load_cancel_r = (RectFS){14, 146, 105, 26};
+  load_confirm_r = (RectFS){129, 146, 105, 26};
+  draw_button(&load_cancel_r, "CANCEL", false);
+  draw_button(&load_confirm_r, "LOAD", false);
 }
 
 static void draw_developer_overlay_panel(RectFS r) {
-  draw_text("OVERLAY", r.x + r.w / 2 - text_width("OVERLAY", 3 * u) / 2,
-            r.y + 18 * u, 3 * u);
-  developer_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
-  draw_settings_row(&developer_back_r, false);
-  draw_text("BACK", developer_back_r.x + developer_back_r.w / 2 - text_width("BACK", 2.2f * u) / 2,
-            developer_back_r.y + developer_back_r.h / 2 - 9 * u, 2.2f * u);
+  (void)r;
+  draw_page_header("OVERLAY", &developer_back_r);
 
   char version[32], model[32], fps_now[32], fps_avg[32], core[32],
        display[32], location[48], module[32];
@@ -1363,10 +1555,7 @@ static void draw_developer_overlay_panel(RectFS r) {
   }
   snprintf(module, sizeof(module), "%02X", SS_GetModule() & 0xff);
 
-  float sc = 3.0f * u;
-  float row_h = 30 * u;
-  float x = r.x + 26 * u;
-  float y = r.y + 62 * u;
+  float y = 26;
   struct {
     const char *label;
     const char *value;
@@ -1382,71 +1571,70 @@ static void draw_developer_overlay_panel(RectFS r) {
     {"MODULE", module, COL(230, 230, 230)},
   };
   for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
-    fill_round(x - 8 * u, y - 4 * u, r.w - 40 * u, row_h, 5 * u,
-               i == 2 || i == 3 ? COL(34, 28, 12) : COL(24, 24, 24));
-    draw_block_label_value(rows[i].label, rows[i].value, x, y, sc,
-                           COL(170, 170, 170), rows[i].color);
-    y += row_h + 3 * u;
+    draw_plaque((RectFS){14, y, 220, 17});
+    ui_text(rows[i].label, 22, y + 5, FONT_LARGE, COL(170, 170, 170), 0);
+    ui_text(rows[i].value, 102, y + 5, FONT_LARGE, rows[i].color, 0);
+    y += 19;
   }
 }
 
+// Centred in the settings column; long texts drop to the small font.
+static void draw_column_text(const char *s, float y, uint32_t color) {
+  int font = ui_text_width(s, FONT_LARGE, 0) <= 220 ? FONT_LARGE : FONT_SMALL;
+  ui_text_center(s, 124, y, font, color, 0, 0);
+}
+
 static void draw_update_panel(RectFS r) {
-  draw_text("UPDATE", r.x + r.w / 2 - text_width("UPDATE", 3 * u) / 2,
-            r.y + 18 * u, 3 * u);
-  update_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
-  draw_settings_row(&update_back_r, false);
-  draw_text("BACK", update_back_r.x + 16 * u, update_back_r.y + 10 * u, 2 * u);
+  (void)r;
+  draw_page_header("UPDATE", &update_back_r);
 #ifdef __3DS__
   UpdateStatus st; Updater_GetStatus(&st);
-  update_channel_r = (RectFS){r.x + 28 * u, r.y + 62 * u, r.w - 56 * u, 44 * u};
-  draw_settings_row(&update_channel_r, false);
-  const char *channel = st.prerelease ? "PRE-RELEASE" : "STABLE";
-  draw_text("CHANNEL", update_channel_r.x + 16 * u, update_channel_r.y + 16 * u, 2 * u);
-  draw_text(channel, update_channel_r.x + update_channel_r.w - 16 * u - text_width(channel, 2 * u),
-            update_channel_r.y + 16 * u, 2 * u);
-  update_release_r = (RectFS){r.x + 28 * u, r.y + 119 * u, r.w - 56 * u, 44 * u};
-  draw_settings_row(&update_release_r, update_show_notes);
-  const char *release_name = st.version[0] ? st.version : "NO RELEASE SELECTED";
-  draw_text(release_name, r.x + r.w / 2 - text_width(release_name, 2 * u) / 2,
-            update_release_r.y + 14 * u, 2 * u);
+  update_channel_r = settings_row(0);
+  draw_settings_entry(&update_channel_r, "CHANNEL", st.prerelease ? "PRE-RELEASE" : "STABLE", false);
+  update_release_r = settings_row(1);
+  draw_button(&update_release_r, st.version[0] ? st.version : "NO RELEASE SELECTED", update_show_notes);
   const char *message = update_confirm ? "DOWNLOAD AND INSTALL" : st.message;
   if (!message[0]) message = "CHECK FOR UPDATE";
-  draw_text(message, r.x + r.w / 2 - text_width(message, 2 * u) / 2,
-            r.y + 184 * u, 2 * u);
+  draw_column_text(message, 90, COL(255, 255, 255));
   const char *hint = update_confirm ? "UNSAVED PROGRESS IS LOST" :
     update_show_notes ? "CHANGELOG ON TOP SCREEN" : "TAP THE RELEASE FOR CHANGELOG";
-  draw_text(hint, r.x + r.w / 2 - text_width(hint, 2 * u) / 2,
-            r.y + 216 * u, 2 * u);
-  update_prev_r = (RectFS){r.x + 28 * u, r.y + 246 * u, 100 * u, 34 * u};
-  update_next_r = (RectFS){r.x + r.w - 128 * u, r.y + 246 * u, 100 * u, 34 * u};
+  ui_text_center(hint, 124, 104, FONT_SMALL, COL(205, 180, 124), 0, 1);
+  update_prev_r = (RectFS){14, 116, 70, 22};
+  update_next_r = (RectFS){164, 116, 70, 22};
   if (update_show_notes && !update_confirm) {
-    draw_settings_row(&update_prev_r, false); draw_settings_row(&update_next_r, false);
-    draw_text("PREV", update_prev_r.x + 22 * u, update_prev_r.y + 10 * u, 2 * u);
-    draw_text("NEXT", update_next_r.x + 22 * u, update_next_r.y + 10 * u, 2 * u);
+    draw_button(&update_prev_r, "PREV", false);
+    draw_button(&update_next_r, "NEXT", false);
   }
   const char *action = update_confirm ? "INSTALL UPDATE" :
     st.state == UPDATE_AVAILABLE ? "DOWNLOAD UPDATE" :
     (st.state == UPDATE_CHECKING || st.state == UPDATE_DOWNLOADING || st.state == UPDATE_VERIFYING) ? "CANCEL" :
     st.state == UPDATE_INSTALLING ? "PLEASE WAIT" : st.state == UPDATE_DONE ? "UPDATE INSTALLED" : "CHECK FOR UPDATE";
-  update_action_r = (RectFS){r.x + 28 * u, r.y + r.h - 68 * u, r.w - 56 * u, 48 * u};
+  update_action_r = (RectFS){14, 150, 220, 26};
   if (st.state == UPDATE_DOWNLOADING || st.state == UPDATE_INSTALLING) {
-    float by = update_action_r.y - 36 * u;
-    fill_round(r.x + 28 * u, by, r.w - 56 * u, 12 * u, 4 * u, COL_GOLD_DARK);
-    fill_rect(r.x + 30 * u, by + 2 * u, (r.w - 60 * u) * st.progress / 100.0f, 8 * u, COL_GOLD);
+    fill_round(14, 142, 220, 5, 2, COL_RIM_DARK);
+    fill_rect(15, 143, 218 * st.progress / 100.0f, 3, COL_RIM_GOLD);
   }
-  draw_settings_row(&update_action_r, update_confirm);
-  draw_text(action, r.x + r.w / 2 - text_width(action, 2 * u) / 2,
-            update_action_r.y + 16 * u, 2 * u);
+  draw_button(&update_action_r, action, update_confirm);
 #else
-  draw_text("3DS UPDATES", r.x + 28 * u, r.y + 90 * u, 2 * u);
+  draw_column_text("3DS UPDATES", 45, COL(255, 255, 255));
 #endif
 }
 
 bool SecondScreenSDL_UpdateIsOpen(void) { return update_mode; }
 bool SecondScreenSDL_UpdateNotesPage(unsigned *page) { *page = update_page; return update_show_notes; }
 
+// Version string on a small plaque at the bottom-right of every settings page.
+static void draw_version_plaque(void) {
+  char v[32];
+  const char *ver = ZELDA3_3DS_VERSION;
+  snprintf(v, sizeof(v), "%s%s", ver[0] >= '0' && ver[0] <= '9' ? "V" : "", ver);
+  RectFS p = {250, 150, ui_text_width(v, FONT_SMALL, 1) + 12, 16};
+  draw_plaque(p);
+  ui_text(v, p.x + 6, p.y + 5, FONT_SMALL, COL(205, 180, 124), 1);
+}
+
 static void draw_settings(RectFS r) {
-  menu_box(r, COL_BOX_BORDER);
+  draw_version_plaque();
   if (update_mode) { draw_update_panel(r); return; }
   if (load_confirm_mode) {
     draw_load_confirmation(r);
@@ -1467,7 +1655,7 @@ static void draw_settings(RectFS r) {
       draw_developer_panel(r);
     return;
   }
-  draw_text("SETTINGS", r.x + r.w / 2 - text_width("SETTINGS", 3 * u) / 2, r.y + 18 * u, 3 * u);
+  draw_ribbon("SETTINGS", W / 2.0f, 4);
 
   char turbo_value[12];
 #ifdef __3DS__
@@ -1475,82 +1663,454 @@ static void draw_settings(RectFS r) {
   if (turbo_multiplier <= 0)
     snprintf(turbo_value, sizeof(turbo_value), "OFF");
   else
-    snprintf(turbo_value, sizeof(turbo_value), "X%d", turbo_multiplier);
+    snprintf(turbo_value, sizeof(turbo_value), "x%d", turbo_multiplier);
 #else
-  snprintf(turbo_value, sizeof(turbo_value), "X5");
+  snprintf(turbo_value, sizeof(turbo_value), "x5");
 #endif
   static const char *const labels[5] = {
     "SCREEN", "TURBO SPEED", "DEVELOPER", "UPDATE", "RESTART",
   };
-  const char *values[5] = {"", turbo_value, "", "", NULL};
-  float gap = 8 * u;
-  float y0 = r.y + 55 * u;
-  float row_h = (r.h - 55 * u - 20 * u - 4 * gap) / 5;
+  // "" draws a chevron for a sub-page, NULL nothing
+  const char *values[5] = {display_mode_label(), turbo_value, "", "", NULL};
   for (int i = 0; i < 5; i++) {
     RectFS *row = &settings_row_r[i];
-    *row = (RectFS){r.x + 28 * u, y0 + i * (row_h + gap), r.w - 56 * u, row_h};
-    draw_settings_row(row, false);
-    float ty = row->y + row->h / 2 - 8 * u;
-    draw_text(labels[i], row->x + 16 * u, ty, 2 * u);
-    if (!values[i]) {
-      continue;
-    }
-    if (values[i][0] == 0) {
-      // chevron for sub-screens
-      float ax = row->x + row->w - 26 * u, ay = row->y + row->h / 2;
-      for (float d = 0; d < 10 * u; d += 1.0f) {
-        fill_rect(ax - 6 * u + d, ay - 8 * u + d * 0.8f, 4 * u, 2 * u, COL_GOLD);
-        fill_rect(ax - 6 * u + d, ay + 8 * u - d * 0.8f - 2 * u, 4 * u, 2 * u, COL_GOLD);
+    *row = settings_row(i);
+    draw_settings_entry(row, labels[i], values[i], false);
+    if (values[i] && !values[i][0]) {
+      float ax = row->x + row->w - 14, ay = floorf(row->y + row->h / 2);
+      for (int d = 0; d < 4; d++) {
+        fill_rect(ax + d, ay - 4 + d, 2, 1, COL_INK);
+        fill_rect(ax + d, ay + 3 - d, 2, 1, COL_INK);
       }
-    } else {
-      draw_text(values[i], row->x + row->w - 16 * u - text_width(values[i], 2 * u), ty, 2 * u);
     }
   }
 }
 
 static void draw_cinema_settings_overlay(void) {
   RectFS r = {10 * u, 10 * u, W - 20 * u, H - 20 * u};
+  draw_ground((SDL_Rect){0, 0, W, H});
   draw_settings(r);
   if (!screen_mode && !remap_mode && !developer_mode && !update_mode) {
-    cinema_back_r = (RectFS){r.x + 20 * u, r.y + 12 * u, 90 * u, 38 * u};
-    draw_settings_row(&cinema_back_r, false);
-    draw_text("BACK",
-              cinema_back_r.x + cinema_back_r.w / 2 -
-                text_width("BACK", 2.2f * u) / 2,
-              cinema_back_r.y + cinema_back_r.h / 2 - 9 * u, 2.2f * u);
+    cinema_back_r = (RectFS){14, 4, 52, 20};
+    draw_button(&cinema_back_r, "BACK", false);
   } else {
     cinema_back_r = (RectFS){0, 0, 0, 0};
   }
 }
 
-static void draw_tab_button(RectFS r, const char *label, bool active) {
-  uint32_t bg = active ? COL(40, 34, 12) : COL_BOX;
-  fill_round(r.x, r.y, r.w, r.h, 10 * u, bg);
-  fill_round(r.x + 3 * u, r.y + 3 * u, r.w - 6 * u, r.h - 6 * u, 8 * u,
-             active ? COL_GOLD : COL_BOX_BORDER2);
-  fill_round(r.x + 7 * u, r.y + 7 * u, r.w - 14 * u, r.h - 14 * u, 6 * u, bg);
-  float s = 3 * u;
-  if (label)
-    draw_text(label, r.x + r.w / 2 - text_width(label, s) / 2, r.y + r.h / 2 - 4 * s, s);
+
+// GUIDE tab: a walkthrough read from guide.txt on the card (made from a GameFAQs
+// text by tools/secondscreen/make_guide.py; guides stay on the player's card).
+// Lines arrive wrapped to GUIDE_COLS. A line starting with 1 or 2 is a chapter or
+// section heading listed in the contents, 3 a heading that is only shown.
+// Contents: chapter buttons, then a chapter's places as a two-column grid.
+// Reading: drag the text to scroll, tap its upper or lower half to turn a page,
+// drag the scrollbar thumb. A press acts on release so a drag never selects.
+#ifdef __3DS__
+#define GUIDE_PATH "sdmc:/3ds/Zelda 3DS/guide.txt"
+#else
+#define GUIDE_PATH "guide.txt"
+#endif
+enum { GUIDE_COLS = 44, GUIDE_ROWS = 16, GUIDE_LINE_H = 9, GUIDE_MAX_CH = 64, GUIDE_MAX_SEC = 256,
+       GUIDE_BTN_H = 18, GUIDE_BTN_PITCH = 21, GUIDE_COL_GAP = 6 };
+enum { GUIDE_READ, GUIDE_CHAPTERS, GUIDE_PLACES };
+enum { GUIDE_DRAG_NONE, GUIDE_DRAG_CONTENT, GUIDE_DRAG_THUMB };
+static const RectFS kGuidePanel = {6, 4, 308, 174};
+static const RectFS kGuideText = {22, 30, GUIDE_COLS * 6, GUIDE_ROWS * GUIDE_LINE_H};
+static const RectFS kGuideBar = {292, 30, 12, GUIDE_ROWS * GUIDE_LINE_H};
+static struct {
+  bool tried, ready;         // ready is published once by the loading thread
+  char *text;
+  int *line, lines;          // line i is text + line[i], NUL-terminated
+  int chLine[GUIDE_MAX_CH], chFirstSec[GUIDE_MAX_CH], chSecCount[GUIDE_MAX_CH], chCount;
+  int secLine[GUIDE_MAX_SEC], secCount;
+  char title[48], author[40];
+  int view, chapter;         // view, and the chapter shown in the places grid
+  int readPx, listPx;        // scroll positions in pixels
+  bool dirty;
+  int drag, dragPx0;         // touch in progress on the content or the thumb
+  float pressX, pressY;
+  bool moved;
+} guide;
+static RectFS guide_back_r, guide_up_r, guide_down_r;
+
+static int guide_ini_int(const char *key, int fallback) {
+  FILE *f = fopen("zelda3.ini", "rb");
+  if (!f) return fallback;
+  char ln[160]; size_t klen = strlen(key); int v = fallback;
+  while (fgets(ln, sizeof(ln), f)) {
+    const char *t = ln;
+    while (*t == ' ' || *t == '\t') t++;
+    if (SDL_strncasecmp(t, key, klen)) continue;
+    t += klen;
+    while (*t == ' ' || *t == '\t') t++;
+    if (*t == '=') v = atoi(t + 1);
+  }
+  fclose(f);
+  return v;
 }
 
+static const char *guide_line(int i) { return guide.text + guide.line[i]; }
+
+static void guide_load(void) {
+  guide.tried = true;
+  FILE *f = fopen(GUIDE_PATH, "rb");
+  if (!f) return;
+  fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+  char *t = n > 8 && n < (4 << 20) ? malloc(n + 1) : NULL;
+  if (!t || fread(t, 1, n, f) != (size_t)n) { free(t); fclose(f); return; }
+  fclose(f);
+  t[n] = 0;
+  if (strncmp(t, "ZGUIDE 1", 8)) { free(t); return; }
+  int count = 1;
+  for (long i = 0; i < n; i++) count += t[i] == '\n';
+  int *ln = malloc(sizeof(int) * count);
+  if (!ln) { free(t); return; }
+  int lines = 0; bool header = true;
+  for (char *p = t; p && *p;) {
+    char *nl = strchr(p, '\n');
+    if (nl) *nl = 0;
+    size_t len = strlen(p);
+    if (len && p[len - 1] == '\r') p[--len] = 0;
+    if (header && (p == t || p[0] == '@')) {
+      if (!strncmp(p, "@T ", 3)) SDL_strlcpy(guide.title, p + 3, sizeof(guide.title));
+      if (!strncmp(p, "@A ", 3)) SDL_strlcpy(guide.author, p + 3, sizeof(guide.author));
+    } else {
+      header = false;
+      if (p[0] == 1 && guide.chCount < GUIDE_MAX_CH) {
+        guide.chLine[guide.chCount] = lines;
+        guide.chFirstSec[guide.chCount] = guide.secCount;
+        guide.chSecCount[guide.chCount++] = 0;
+      } else if (p[0] == 2 && guide.secCount < GUIDE_MAX_SEC && guide.chCount) {
+        guide.secLine[guide.secCount++] = lines;
+        guide.chSecCount[guide.chCount - 1]++;
+      }
+      ln[lines++] = (int)(p - t);
+    }
+    p = nl ? nl + 1 : NULL;
+  }
+  guide.text = t; guide.line = ln; guide.lines = lines;
+  int maxLine = lines > GUIDE_ROWS ? lines - GUIDE_ROWS : 0, top = guide_ini_int("GuideLine", 0);
+  guide.readPx = (top < 0 ? 0 : top > maxLine ? maxLine : top) * GUIDE_LINE_H;
+  guide.view = guide_ini_int("GuideView", GUIDE_CHAPTERS);
+  if (guide.view < GUIDE_READ || guide.view > GUIDE_PLACES) guide.view = GUIDE_CHAPTERS;
+  guide.chapter = guide_ini_int("GuideChapter", 0);
+  if (guide.chapter < 0 || guide.chapter >= guide.chCount) guide.chapter = 0;
+  if (guide.view == GUIDE_PLACES && !guide.chSecCount[guide.chapter]) guide.view = GUIDE_CHAPTERS;
+  __atomic_store_n(&guide.ready, lines > 0, __ATOMIC_RELEASE);
+}
+
+static void guide_save(void) {
+  guide.drag = GUIDE_DRAG_NONE;
+  if (!guide.dirty) return;
+  guide.dirty = false;
+  char v[16];
+  snprintf(v, sizeof(v), "%d", guide.readPx / GUIDE_LINE_H);
+  update_ini("[General]", "GuideLine", v);
+  snprintf(v, sizeof(v), "%d", guide.view);
+  update_ini("[General]", "GuideView", v);
+  snprintf(v, sizeof(v), "%d", guide.chapter);
+  update_ini("[General]", "GuideChapter", v);
+}
+
+// Chapter and place the reader is in: the last headings at or above the top line.
+static int guide_current_chapter(void) {
+  int top = guide.readPx / GUIDE_LINE_H + 1, c = 0;
+  for (int k = 0; k < guide.chCount && guide.chLine[k] <= top; k++) c = k;
+  return c;
+}
+static int guide_current_place(int chapter) {
+  int top = guide.readPx / GUIDE_LINE_H + 1, s = -1;
+  for (int k = 0; k < guide.chSecCount[chapter]; k++)
+    if (guide.secLine[guide.chFirstSec[chapter] + k] <= top) s = k;
+  return s;
+}
+// Places grid cells: cell 0 opens the chapter itself, cell k the (k-1)th place.
+static int guide_list_rows(void) {
+  if (guide.view == GUIDE_CHAPTERS) return guide.chCount;
+  return (guide.chSecCount[guide.chapter] + 2) / 2;
+}
+static int guide_max_px(void) {
+  if (guide.view == GUIDE_READ) {
+    int span = guide.lines - GUIDE_ROWS;
+    return span > 0 ? span * GUIDE_LINE_H : 0;
+  }
+  int span = guide_list_rows() * GUIDE_BTN_PITCH - (int)kGuideText.h;
+  return span > 0 ? span : 0;
+}
+static int *guide_pos(void) { return guide.view == GUIDE_READ ? &guide.readPx : &guide.listPx; }
+static void guide_set_pos(int px) {
+  int m = guide_max_px();
+  *guide_pos() = px < 0 ? 0 : px > m ? m : px;
+  guide.dirty = true;
+}
+static void guide_show_row(int row) {   // scroll a list so a row sits near the middle
+  guide.listPx = 0;
+  guide_set_pos(row * GUIDE_BTN_PITCH - (int)kGuideText.h / 2 + GUIDE_BTN_H);
+}
+
+static void guide_text(const char *s, float x, float y, uint32_t color, int maxCols) {
+  if (!tex_guide_font) return;
+  SDL_SetTextureColorMod(tex_guide_font, (color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
+  for (int i = 0; s[i] && i < maxCols; i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (c <= 32 || c > 126) continue;
+    SDL_Rect src = {(c - 32) % 16 * 6, (c - 32) / 16 * 9, 6, 9};
+    SDL_FRect dst = {x + i * 6, y, 6, 9};
+    SDL_RenderCopyF(ss_r, tex_guide_font, &src, &dst);
+  }
+}
+
+// Small stone button with a pixel triangle.
+static void guide_arrow_button(RectFS r, bool up) {
+  draw_tablet(r, false, 3);
+  float cx = floorf(r.x + r.w / 2), cy = floorf(r.y + r.h / 2);
+  for (int i = 0; i < 5; i++) {
+    float row = up ? cy - 2 + i : cy + 2 - i;
+    fill_rect(cx - i, row, 1 + 2 * i, 1, COL_INK);
+  }
+}
+
+// Contents button on the parchment: darker paper, brown rim, gold when current.
+static void guide_list_button(RectFS r, const char *label, bool current, bool more) {
+  fill_round(r.x, r.y + 1, r.w, r.h, 3, COL(150, 116, 60));
+  fill_round(r.x, r.y, r.w, r.h, 3, current ? COL(176, 128, 40) : COL(160, 125, 60));
+  fill_round_grad(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 2,
+                  current ? COL(250, 222, 140) : COL(236, 220, 176),
+                  current ? COL(236, 196, 96) : COL(222, 202, 150),
+                  current ? COL(220, 176, 72) : COL(208, 186, 132), 0, 0);
+  int cols = (int)((r.w - 12 - (more ? 8 : 0)) / 6);
+  guide_text(label, r.x + 6, r.y + floorf((r.h - 9) / 2) + 1, current ? COL(70, 36, 6) : COL(60, 40, 16), cols);
+  if (more) {   // a small chevron: this chapter has places
+    float cx = r.x + r.w - 9, cy = floorf(r.y + r.h / 2);
+    for (int i = 0; i < 4; i++) fill_rect(cx + i, cy - 3 + i, 1, 7 - 2 * i, COL(110, 70, 20));
+  }
+}
+
+static RectFS guide_cell(int index) {   // list cell rectangle at scroll 0
+  if (guide.view == GUIDE_CHAPTERS)
+    return (RectFS){kGuideText.x, kGuideText.y + index * GUIDE_BTN_PITCH, kGuideText.w, GUIDE_BTN_H};
+  float w = (kGuideText.w - GUIDE_COL_GAP) / 2;
+  return (RectFS){kGuideText.x + (index % 2) * (w + GUIDE_COL_GAP),
+                  kGuideText.y + (index / 2) * GUIDE_BTN_PITCH, w, GUIDE_BTN_H};
+}
+
+static void draw_guide(void) {
+  if (!__atomic_load_n(&guide.ready, __ATOMIC_ACQUIRE) && !guide.tried) guide_load();
+  draw_parchment(kGuidePanel);
+  guide_back_r = guide_up_r = guide_down_r = (RectFS){0};
+  if (!__atomic_load_n(&guide.ready, __ATOMIC_ACQUIRE)) {
+    draw_ribbon("GUIDE", kGuidePanel.x + kGuidePanel.w / 2, 8);
+    static const char *const msg[] = {
+      "No guide on the card yet.", "", "Copy guide.txt to", "sdmc:/3ds/Zelda 3DS/",
+      "", "Make it from a GameFAQs walkthrough", "with tools/secondscreen/make_guide.py",
+    };
+    for (int i = 0; i < 7; i++) guide_text(msg[i], kGuideText.x, kGuideText.y + 8 + i * 12, COL_PARCH_INK, GUIDE_COLS);
+    return;
+  }
+  guide_up_r = (RectFS){256, 7, 24, 20};
+  guide_down_r = (RectFS){284, 7, 24, 20};
+  SDL_Rect clip = {(int)kGuideText.x - 2, (int)kGuideText.y, (int)kGuideText.w + 4, (int)kGuideText.h};
+  int pos = *guide_pos();
+  if (guide.view == GUIDE_READ) {
+    guide_back_r = (RectFS){22, 7, 70, 20};
+    draw_tablet(guide_back_r, false, 3);
+    ui_text_center("CONTENTS", guide_back_r.x + guide_back_r.w / 2, guide_back_r.y + 7,
+                   FONT_SMALL, COL_INK, COL_INK_LIT, 0);
+    int ch = guide_current_chapter(), pl = guide_current_place(ch);
+    const char *where = pl >= 0 ? guide_line(guide.secLine[guide.chFirstSec[ch] + pl]) : guide.chCount ? guide_line(guide.chLine[ch]) : "";
+    guide_text(where + (where[0] && where[0] <= 3), 98, 12, COL(122, 42, 16), 16);
+    char page[24];
+    int top = pos / GUIDE_LINE_H;
+    snprintf(page, sizeof(page), "%d/%d", top / (GUIDE_ROWS - 1) + 1, (guide.lines + GUIDE_ROWS - 2) / (GUIDE_ROWS - 1));
+    ui_text(page, 200, 14, FONT_SMALL, COL_PARCH_INK, 0);
+    SDL_RenderSetClipRect(ss_r, &clip);
+    int off = pos % GUIDE_LINE_H;
+    for (int r = 0; r <= GUIDE_ROWS && top + r < guide.lines; r++) {
+      const char *s = guide_line(top + r);
+      bool heading = s[0] >= 1 && s[0] <= 3;
+      float y = kGuideText.y + r * GUIDE_LINE_H - off;
+      guide_text(heading ? s + 1 : s, kGuideText.x, y, heading ? COL(122, 42, 16) : COL(44, 32, 14), GUIDE_COLS);
+      if (heading && s[0] == 1) fill_rect(kGuideText.x, y + 9, kGuideText.w - 4, 1, COL(160, 120, 60));
+    }
+    SDL_RenderSetClipRect(ss_r, NULL);
+  } else {
+    bool places = guide.view == GUIDE_PLACES;
+    guide_back_r = (RectFS){22, 7, 56, 20};
+    draw_tablet(guide_back_r, false, 3);
+    ui_text_center(places ? "BACK" : "READ", guide_back_r.x + guide_back_r.w / 2, guide_back_r.y + 7,
+                   FONT_SMALL, COL_INK, COL_INK_LIT, 0);
+    if (places) guide_text(guide_line(guide.chLine[guide.chapter]) + 1, 84, 12, COL(122, 42, 16), 28);
+    else draw_ribbon("CONTENTS", 166, 6);
+    int ch = guide_current_chapter(), pl = guide_current_place(ch);
+    int cells = places ? guide.chSecCount[guide.chapter] + 1 : guide.chCount;
+    SDL_RenderSetClipRect(ss_r, &clip);
+    for (int i = 0; i < cells; i++) {
+      RectFS r = guide_cell(i);
+      r.y -= pos;
+      if (r.y + r.h < kGuideText.y || r.y > kGuideText.y + kGuideText.h) continue;
+      if (places) {
+        const char *label = i ? guide_line(guide.secLine[guide.chFirstSec[guide.chapter] + i - 1]) + 1 : "Start of chapter";
+        guide_list_button(r, label, guide.chapter == ch && i - 1 == pl, false);
+      } else {
+        guide_list_button(r, guide_line(guide.chLine[i]) + 1, i == ch, guide.chSecCount[i] > 0);
+      }
+    }
+    SDL_RenderSetClipRect(ss_r, NULL);
+  }
+  guide_arrow_button(guide_up_r, true);
+  guide_arrow_button(guide_down_r, false);
+  // scrollbar: a sunken track and a thumb big enough to drag
+  int span = guide_max_px();
+  fill_round(kGuideBar.x + 3, kGuideBar.y, kGuideBar.w - 6, kGuideBar.h, 3, COL(196, 170, 112));
+  fill_rect(kGuideBar.x + 4, kGuideBar.y + 2, 1, kGuideBar.h - 4, COL(170, 140, 84));
+  if (span) {
+    float view = guide.view == GUIDE_READ ? GUIDE_ROWS * GUIDE_LINE_H : kGuideText.h;
+    float th = fmaxf(24.0f, kGuideBar.h * view / (view + span));
+    float ty = kGuideBar.y + (kGuideBar.h - th) * pos / (float)span;
+    fill_round(kGuideBar.x, ty + 1, kGuideBar.w, th, 4, COL(90, 64, 24));
+    fill_round(kGuideBar.x, ty, kGuideBar.w, th, 4, guide.drag == GUIDE_DRAG_THUMB ? COL(196, 140, 52) : COL(150, 112, 46));
+    for (int i = -1; i <= 1; i++)   // grip lines
+      fill_rect(kGuideBar.x + 3, floorf(ty + th / 2) + i * 3, kGuideBar.w - 6, 1, COL(220, 190, 120));
+  }
+}
+
+static RectFS guide_bar_hit(void) {   // generous touch target around the scrollbar
+  return (RectFS){kGuideBar.x - 8, kGuideBar.y - 4, kGuideBar.w + 16, kGuideBar.h + 8};
+}
+
+static void guide_thumb_to(float y) {
+  float view = guide.view == GUIDE_READ ? GUIDE_ROWS * GUIDE_LINE_H : kGuideText.h;
+  int span = guide_max_px();
+  float th = fmaxf(24.0f, kGuideBar.h * view / (view + span));
+  float frac = (y - kGuideBar.y - th / 2) / (kGuideBar.h - th);
+  guide_set_pos((int)(frac * span + 0.5f));
+}
+
+static void guide_open_reading(int line) {
+  guide.view = GUIDE_READ;
+  guide.readPx = 0;
+  guide_set_pos(line * GUIDE_LINE_H);
+}
+
+// Release without a drag: the press was a tap.
+static void guide_tap_action(float x, float y) {
+  if (guide.view == GUIDE_READ) {
+    int page = (GUIDE_ROWS - 1) * GUIDE_LINE_H;
+    guide_set_pos(guide.readPx + (y < kGuideText.y + kGuideText.h / 2 ? -page : page));
+    return;
+  }
+  int cells = guide.view == GUIDE_PLACES ? guide.chSecCount[guide.chapter] + 1 : guide.chCount;
+  for (int i = 0; i < cells; i++) {
+    RectFS r = guide_cell(i);
+    r.y -= guide.listPx;
+    if (!in_rect(&r, x, y)) continue;
+    if (guide.view == GUIDE_CHAPTERS) {
+      if (guide.chSecCount[i]) {
+        guide.view = GUIDE_PLACES; guide.chapter = i;
+        int ch = guide_current_chapter();
+        guide_show_row(ch == i ? (guide_current_place(i) + 1) / 2 : 0);
+      } else {
+        guide_open_reading(guide.chLine[i]);
+      }
+    } else {
+      guide_open_reading(i ? guide.secLine[guide.chFirstSec[guide.chapter] + i - 1] : guide.chLine[guide.chapter]);
+    }
+    return;
+  }
+}
+
+static void guide_tap(float x, float y) {
+  if (!__atomic_load_n(&guide.ready, __ATOMIC_ACQUIRE)) return;
+  int pageList = (int)kGuideText.h - GUIDE_BTN_PITCH;
+  int page = guide.view == GUIDE_READ ? (GUIDE_ROWS - 1) * GUIDE_LINE_H : pageList;
+  RectFS bar = guide_bar_hit();
+  guide.drag = GUIDE_DRAG_NONE;
+  if (in_rect(&guide_up_r, x, y)) { guide_set_pos(*guide_pos() - page); return; }
+  if (in_rect(&guide_down_r, x, y)) { guide_set_pos(*guide_pos() + page); return; }
+  if (in_rect(&guide_back_r, x, y)) {
+    if (guide.view == GUIDE_READ) {          // CONTENTS: back to where the reader is
+      int ch = guide_current_chapter();
+      if (guide.chSecCount[ch]) { guide.view = GUIDE_PLACES; guide.chapter = ch; guide_show_row((guide_current_place(ch) + 1) / 2); }
+      else { guide.view = GUIDE_CHAPTERS; guide_show_row(ch); }
+    } else if (guide.view == GUIDE_PLACES) { // BACK: the chapter list
+      guide.view = GUIDE_CHAPTERS; guide_show_row(guide.chapter);
+    } else {                                 // READ: resume reading
+      guide.view = GUIDE_READ;
+    }
+    guide.dirty = true;
+    return;
+  }
+  if (in_rect(&bar, x, y) && guide_max_px()) {
+    guide.drag = GUIDE_DRAG_THUMB;
+    guide_thumb_to(y);
+    return;
+  }
+  if (in_rect(&kGuideText, x, y)) {
+    guide.drag = GUIDE_DRAG_CONTENT;
+    guide.pressX = x; guide.pressY = y; guide.dragPx0 = *guide_pos(); guide.moved = false;
+  }
+}
+
+// Finger moved while pressed: scroll with it. Returns true when the view changed.
+static bool guide_drag_to(float y) {
+  int before = *guide_pos();
+  if (guide.drag == GUIDE_DRAG_THUMB) {
+    guide_thumb_to(y);
+  } else if (guide.drag == GUIDE_DRAG_CONTENT) {
+    float dy = y - guide.pressY;
+    if (!guide.moved && fabsf(dy) < 4) return false;
+    guide.moved = true;
+    guide_set_pos(guide.dragPx0 - (int)dy);
+  }
+  return *guide_pos() != before;
+}
+
+static void guide_drag_end(void) {
+  if (guide.drag == GUIDE_DRAG_CONTENT && !guide.moved) guide_tap_action(guide.pressX, guide.pressY);
+  guide.drag = GUIDE_DRAG_NONE;
+}
+
+static void draw_tab_button(RectFS r, const char *label, bool active) {
+  draw_tablet(r, active, 4);
+  if (label)
+    ui_text_center(label, r.x + r.w / 2, floorf(r.y + r.h / 2 - 4), FONT_LARGE,
+                   active ? COL(42, 26, 8) : COL_INK,
+                   active ? COL(255, 236, 170) : COL_INK_LIT, 1);
+}
+
+// Dark band of stone tablets at the bottom: GEAR | MAP | ITEMS | GUIDE | cog.
 static void draw_tab_bar(float tab_h) {
-  float y = H - tab_h + 4 * u;
-  float bh = tab_h - 16 * u;
-  float sq = bh;   // square settings button on the right
-  tab_settings_r = (RectFS){W - 8 * u - sq, y, sq, bh};
-  // three equal buttons: GEAR | MAP | ITEMS, left of the settings cog
-  float x0 = 8 * u, xr = tab_settings_r.x - 8 * u, tgap = 8 * u;
-  float bw = (xr - x0 - 2 * tgap) / 3.0f;
+  float top = H - tab_h;
+  fill_rect(0, top, W, 1, COL(0, 0, 0));
+  fill_round_grad(0, top + 1, W, tab_h - 1, 0, COL(42, 26, 16), COL(30, 18, 10),
+                  COL(22, 13, 7), 0, 0);
+  float y = top + 3, bh = tab_h - 6;
+  float sq = 30;   // the settings tablet on the right
+  tab_settings_r = (RectFS){W - 4 - sq, y, sq, bh};
+  // four equal tablets left of the settings cog, 3 px apart
+  float x0 = 4, xr = tab_settings_r.x - 3, tgap = 3;
+  float bw = (xr - x0 - 3 * tgap) / 4.0f;
   tab_gear_r  = (RectFS){x0, y, bw, bh};
   tab_map_r   = (RectFS){x0 + bw + tgap, y, bw, bh};
   tab_items_r = (RectFS){x0 + 2 * (bw + tgap), y, bw, bh};
+  tab_guide_r = (RectFS){x0 + 3 * (bw + tgap), y, bw, bh};
   draw_tab_button(tab_gear_r, "GEAR", tab == TAB_GEAR);
   draw_tab_button(tab_map_r, "MAP", tab == TAB_MAP);
   draw_tab_button(tab_items_r, "ITEMS", tab == TAB_ITEMS);
+  draw_tab_button(tab_guide_r, "GUIDE", tab == TAB_GUIDE);
   draw_tab_button(tab_settings_r, NULL, tab == TAB_SETTINGS);
-  draw_cog(tab_settings_r.x + tab_settings_r.w / 2, tab_settings_r.y + tab_settings_r.h / 2,
-           bh * 0.28f);
+  if (tex_ui_icons) {
+    // the 24 px cog, smoothly scaled to fit inside the tablet's edges
+    SDL_Rect src = {SS_UI_COG * SS_UI_ICON_CELL, 0, SS_UI_ICON_CELL, SS_UI_ICON_CELL};
+    SDL_FRect dst = {tab_settings_r.x + (sq - 18) / 2, y + (bh - 18) / 2, 18, 18};
+    SDL_SetTextureScaleMode(tex_ui_icons, SDL_ScaleModeLinear);
+    SDL_RenderCopyF(ss_r, tex_ui_icons, &src, &dst);
+    SDL_SetTextureScaleMode(tex_ui_icons, SDL_ScaleModeNearest);
+  } else {
+    draw_cog(tab_settings_r.x + tab_settings_r.w / 2, tab_settings_r.y + tab_settings_r.h / 2,
+             bh * 0.28f);
+  }
 }
 
 // public API
@@ -1617,7 +2177,8 @@ static void capture_bottom_hearts(int count, int size, int columns, int step,
                                  int x, int y) {
   if (!ss_is_new_3ds && ss_old_display_pixels)
     BottomHearts_Capture(&ss_worker_hearts[ss_worker_buffer], ss_r,
-      count, size, columns, step, x, y, sram8(0x6d), sram8(0x6c), sram8(0x7b) >= 1);
+      tex_heart_scratch, draw_heart, count, size, columns, step, x, y,
+      sram8(0x6d), sram8(0x6c), sram8(0x7b) >= 1);
 }
 
 static uint32_t bottom_sdl_pixel_format(void) {
@@ -1794,12 +2355,13 @@ static bool ensure_window(void) {
     return false;
   }
   ss_winid = SDL_GetWindowID(ss_win);
-  SDL_GetRendererOutputSize(ss_r, &W, &H);
-#ifdef __3DS__
+  // ponytail: the bottom UI is drawn for the 3DS's 320x240; the desktop shows
+  // that same layout scaled by SDL (mouse/finger events arrive in its units).
   W = 320;
   H = 240;
+#ifndef __3DS__
+  SDL_RenderSetLogicalSize(ss_r, W, H);
 #endif
-  if (W <= 0 || H <= 0) { W = 640; H = 480; }
 #ifdef __3DS__
   for (int i = 0; i < 2; i++) {
     ss_present_pixels[i] = linearMemAlign(
@@ -1976,6 +2538,7 @@ static void draw_bottom_map_patch(void) {
   SDL_Rect clip = {(int)floorf(map_area_r.x), (int)floorf(map_area_r.y),
     (int)ceilf(map_area_r.x + map_area_r.w) - (int)floorf(map_area_r.x),
     (int)ceilf(map_area_r.y + map_area_r.h) - (int)floorf(map_area_r.y)};
+  draw_ground(clip);  // wood behind the parchment's rounded corners
   SDL_RenderSetClipRect(ss_r, &clip);
   draw_overworld(map_area_r, SS_GetLinkX(), SS_GetLinkY(), SS_GetArea());
   SDL_RenderSetClipRect(ss_r, NULL);
@@ -1997,41 +2560,18 @@ static bool bottom_needs_periodic_redraw(void) {
   return tab == TAB_MAP || tab == TAB_ITEMS;
 }
 
+// HUD patch: redraw only the status bar (and its 1 px drop shadow).
 static void draw_bottom_sidebar_patch(void) {
   SS_ReadSram(sram, sizeof(sram));
   bool indoors = SS_IsIndoors();
   int dungeon_info = SS_GetDungeon();
   bool dungeon_mode = indoors && (dungeon_info & 0xff) != 0xff;
-  float tab_h = 84 * u;
-  float side_w = 200 * u;
-  RectFS side = {
-    W - side_w + 4 * u,
-    10 * u,
-    side_w - 14 * u,
-    H - tab_h - 14 * u,
-  };
   SDL_Rect clip = {
-    (int)side.x, (int)side.y, (int)side.w, (int)side.h,
+    (int)kStatusBar.x, (int)kStatusBar.y, (int)kStatusBar.w, (int)kStatusBar.h + 1,
   };
-
+  draw_ground(clip);
   SDL_RenderSetClipRect(ss_r, &clip);
-  SDL_Texture *background = dungeon_mode ? tex_bg_stone : tex_bg_menu;
-  int texture_width = dungeon_mode ? kSSTexStone_W : kSSTexMenu_W;
-  int texture_height = dungeon_mode ? kSSTexStone_H : kSSTexMenu_H;
-  if (background) {
-    float tile_width = texture_width * 2.0f;
-    float tile_height = texture_height * 2.0f;
-    for (float y = 0; y < H; y += tile_height) {
-      for (float x = 0; x < W; x += tile_width) {
-        SDL_FRect destination = {x, y, tile_width, tile_height};
-        SDL_RenderCopyF(ss_r, background, NULL, &destination);
-      }
-    }
-  } else {
-    fill_rect(side.x, side.y, side.w, side.h,
-              dungeon_mode ? COL_BG_STONE : COL_BG_MENU);
-  }
-  draw_sidebar(side.x, side.y, side.w, side.h, dungeon_mode);
+  draw_status_bar(dungeon_mode);
   SDL_RenderSetClipRect(ss_r, NULL);
 
   uint8_t *destination = ss_present_pixels[ss_worker_buffer] +
@@ -2045,11 +2585,12 @@ static void draw_bottom_sidebar_patch(void) {
 // corners and spacing are valid touch targets, not dead pixels.
 static int tab_at_position(float x, float y) {
   if (tab_gear_r.w <= 0 || tab_settings_r.w <= 0 || x < 0 || x >= W ||
-      y < tab_gear_r.y - 4 * u || y >= H)
+      y < tab_gear_r.y - 6 * u || y >= H)
     return -1;
   if (x < (tab_gear_r.x + tab_gear_r.w + tab_map_r.x) * 0.5f) return TAB_GEAR;
   if (x < (tab_map_r.x + tab_map_r.w + tab_items_r.x) * 0.5f) return TAB_MAP;
-  if (x < (tab_items_r.x + tab_items_r.w + tab_settings_r.x) * 0.5f) return TAB_ITEMS;
+  if (x < (tab_items_r.x + tab_items_r.w + tab_guide_r.x) * 0.5f) return TAB_ITEMS;
+  if (x < (tab_guide_r.x + tab_guide_r.w + tab_settings_r.x) * 0.5f) return TAB_GUIDE;
   return TAB_SETTINGS;
 }
 
@@ -2061,6 +2602,7 @@ static void apply_tap(float x, float y) {
 #endif
   if (ui_mode != MODE_GAME) {
     if (tab != TAB_SETTINGS) {
+      if (tab == TAB_GUIDE) guide_save();
       tab = TAB_SETTINGS;
       leave_settings_submenu();
       return;
@@ -2079,10 +2621,13 @@ static void apply_tap(float x, float y) {
   if (requested_tab >= 0) {
     // Content tabs select their view; contact bounce/repeated taps must not
     // toggle Items or Gear back to Map. The settings cog retains its back action.
+    int previous = tab;
     tab = requested_tab == TAB_SETTINGS && tab == TAB_SETTINGS ? TAB_MAP : requested_tab;
+    if (previous == TAB_GUIDE && tab != TAB_GUIDE) guide_save();   // remember the page
     leave_settings_submenu();
     return;
   }
+  if (tab == TAB_GUIDE) { guide_tap(x, y); return; }
 
 settings_tap:
   if (tab == TAB_SETTINGS) {
@@ -2199,6 +2744,13 @@ settings_tap:
         SS_SetHudHidden(hide);
         if (hide) { FILE *f = fopen(".ss_hidehud", "wb"); if (f) fclose(f); }
         else remove(".ss_hidehud");
+#ifdef __3DS__
+      } else if (in_rect(&screen_row_r[4], x, y)) {
+        int level = (Platform3DS_GetStereoLevel() + 1) % 4;
+        Platform3DS_SetStereoLevel(level);
+        update_ini("[General]", "Stereo3D",
+                   level == 0 ? "Off" : level == 1 ? "1" : level == 2 ? "2" : "3");
+#endif
       }
     } else if (developer_mode) {
       if (developer_overlay_mode) {
@@ -2223,6 +2775,12 @@ settings_tap:
         developer_overlay_mode = true;
 #ifdef __3DS__
         request_bottom_redraw(kBottomRedrawFull);
+#endif
+#ifdef __3DS__
+      } else if (in_rect(&developer_row_r[4], x, y)) {
+        bool on = !Platform3DS_GetStereoTerrain();
+        Platform3DS_SetStereoTerrain(on);
+        update_ini("[General]", "Stereo3DTerrain", on ? "1" : "0");
 #endif
       }
     } else {
@@ -2272,7 +2830,7 @@ settings_tap:
   }
   if (tab == TAB_ITEMS && grid_cell > 0) {
     int col = (int)((x - grid_x) / grid_cell);
-    int row = (int)((y - grid_y) / grid_cell);
+    int row = (int)((y - grid_y) / grid_row_h);
     if (x >= grid_x && y >= grid_y && col >= 0 && col <= 4 && row >= 0 && row <= 3) {
       int i = row * 5 + col;
       if (i < 20 && slot_owned(i)) {
@@ -2342,7 +2900,10 @@ bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
 #ifdef __3DS__
     return true;
 #else
-    return e->tfinger.windowID == ss_winid;
+    if (e->tfinger.windowID != ss_winid) return false;
+    if (e->type == SDL_FINGERMOTION) guide_drag_to(e->tfinger.y * H);
+    else guide_drag_end();
+    return true;
 #endif
   case SDL_MOUSEBUTTONDOWN:
     if (e->button.windowID == ss_winid) {
@@ -2352,7 +2913,10 @@ bool SecondScreenSDL_HandleEvent(const SDL_Event *e) {
     }
     return false;
   case SDL_MOUSEBUTTONUP: case SDL_MOUSEMOTION:
-    return e->button.windowID == ss_winid;
+    if (e->button.windowID != ss_winid) return false;
+    if (e->type == SDL_MOUSEMOTION && (e->motion.state & SDL_BUTTON_LMASK)) guide_drag_to((float)e->motion.y);
+    else if (e->type == SDL_MOUSEBUTTONUP) guide_drag_end();
+    return true;
   case SDL_WINDOWEVENT:
     if (e->window.windowID != ss_winid) return false;
     if (e->window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
@@ -2437,9 +3001,9 @@ static void draw_second_screen(int logic_frames) {
 #ifdef __3DS__
     UpdateStatus update_status; Updater_GetStatus(&update_status);
     if (update_status.state == UPDATE_AVAILABLE && tab != TAB_SETTINGS) {
-      fill_round(18 * u, H - 52 * u, W - 36 * u, 36 * u, 6 * u, COL_BOX);
-      const char *notice = "UPDATE AVAILABLE - OPEN SETTINGS";
-      draw_text(notice, W / 2 - text_width(notice, 1.6f * u) / 2, H - 40 * u, 1.6f * u);
+      draw_plaque((RectFS){18 * u, H - 52 * u, W - 36 * u, 36 * u});
+      ui_text_center("UPDATE AVAILABLE - OPEN SETTINGS", W / 2.0f, H - 52 * u + 5,
+                     FONT_LARGE, COL(255, 255, 255), 0, 0);
     }
 #endif
     if (tab == TAB_SETTINGS)
@@ -2459,26 +3023,22 @@ static void draw_second_screen(int logic_frames) {
     }
   }
 
-  draw_tiled(dungeon_mode ? tex_bg_stone : tex_bg_menu,
-             dungeon_mode ? kSSTexStone_W : kSSTexMenu_W,
-             dungeon_mode ? kSSTexStone_H : kSSTexMenu_H,
-             (RectFS){0, 0, W, H},
-             dungeon_mode ? COL_BG_STONE : COL_BG_MENU);
-  float tab_h = 84 * u;
-  float side_w = 200 * u;
-  bool full_width = tab == TAB_GEAR || tab == TAB_SETTINGS;
-  map_area_r = full_width ?
-    (RectFS){10 * u, 10 * u, W - 20 * u, H - tab_h - 14 * u} :
-    (RectFS){10 * u, 10 * u, W - side_w - 14 * u, H - tab_h - 14 * u};
+  // wood ground; content on the left, X/Y/B slots on the right, then the
+  // status bar and the tab tablets along the bottom
+  draw_ground((SDL_Rect){0, 0, W, H});
+  float tab_h = 30;
+  map_area_r = (RectFS){8, 8, 232, 170};
 
   if (tab == TAB_ITEMS)      draw_items(map_area_r);
   else if (tab == TAB_GEAR)  draw_gear(map_area_r);
   else if (tab == TAB_SETTINGS) draw_settings(map_area_r);
+  else if (tab == TAB_GUIDE) draw_guide();
   else if (dungeon_mode)     draw_dungeon(map_area_r, link_x, link_y, area & 0xFF, dungeon_info);
   else                       draw_overworld(map_area_r, link_x, link_y, area);
 
-  if (!full_width)
-    draw_sidebar(W - side_w + 4 * u, 10 * u, side_w - 14 * u, H - tab_h - 14 * u, dungeon_mode);
+  if (tab != TAB_SETTINGS && tab != TAB_GUIDE)
+    draw_quick_slots();
+  draw_status_bar(dungeon_mode);
   draw_tab_bar(tab_h);
 
   present_second_screen();
@@ -2557,9 +3117,32 @@ static bool ensure_second_screen_worker(void) {
   return true;
 }
 
+// GUIDE drags: the touch layer only reports presses, so follow a held contact
+// once per frame and finish the gesture on release.
+static void guide_poll_drag(void) {
+  if (guide.drag == GUIDE_DRAG_NONE) return;
+  bool changed;
+  if (tab == TAB_GUIDE && (hidKeysHeld() & KEY_TOUCH)) {
+    touchPosition tp; hidTouchRead(&tp);
+    changed = guide_drag_to((float)tp.py - (240.0f - H) * 0.5f);
+  } else {
+    guide_drag_end();
+    changed = true;
+  }
+  if (!changed) return;
+  if (!ss_is_new_3ds) {
+    ss_touch_request_ticks = svcGetSystemTick();
+    ss_touch_redraw_pending = true;
+    ss_worker_interactive = true;
+  }
+  request_bottom_redraw(kBottomRedrawFull);
+  prioritize_bottom_touch();
+}
+
 void SecondScreenSDL_BeginFrame(int logic_frames) {
   if (!ss_enabled || Platform3DS_IsSystemClosing())
     return;
+  guide_poll_drag();
   static uint32_t frame_no;
   frame_no++;
   static unsigned update_revision;
@@ -2688,8 +3271,9 @@ void SecondScreenSDL_Update(int logic_frames) {
     }
     uint8_t live[0x80];
     SS_ReadSram(live, sizeof(live));
+    // Every game panel shows the status bar; a frame without it (cinema)
+    // never captured hearts, so valid alone selects the frames to patch.
     if (ss_old_display_valid && ss_display_hearts.valid &&
-        (tab == TAB_MAP || tab == TAB_ITEMS) &&
         mode_for_module(SS_GetModule() & 0xff) == MODE_GAME &&
         ss_display_hearts.capacity == live[0x6c] &&
         ss_display_hearts.half_magic == (live[0x7b] >= 1))
@@ -2806,9 +3390,10 @@ void SecondScreenSDL_Update(int logic_frames) {
 
 static void destroy_textures(void) {
   SDL_Texture **texes[] = {&tex_map[0], &tex_map[1], &tex_icons, &tex_glyphs,
-                           &tex_letters, &tex_face, &tex_floor, &tex_mapicons,
-                           &tex_bg_menu, &tex_bg_parch, &tex_bg_stone,
-                           &tex_triforce};
+                           &tex_letters, &tex_face, &tex_mapicons,
+                           &tex_bg_parch, &tex_bg_wood, &tex_ui_icons,
+                           &tex_heart_scratch, &ui_font[FONT_LARGE].tex,
+                           &ui_font[FONT_SMALL].tex, &tex_triforce, &tex_guide_font};
   for (size_t i = 0; i < sizeof(texes) / sizeof(texes[0]); i++) {
     if (*texes[i]) SDL_DestroyTexture(*texes[i]);
     *texes[i] = NULL;
@@ -2828,9 +3413,8 @@ static void rebuild_renderer(int w2, int h2) {
     ss_enabled = false;
     return;
   }
-  W = w2; H = h2;
-  u = unit_for_size(W, H);
-  printf("second screen resized: %dx%d (u=%.2f)\n", W, H, u);
+  SDL_RenderSetLogicalSize(ss_r, W, H);  // same 320x240 layout, rescaled
+  printf("second screen resized: %dx%d (u=%.2f)\n", w2, h2, u);
   fflush(stdout);
 }
 

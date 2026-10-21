@@ -8,6 +8,9 @@
 <p align="center">
   <a href="#download-and-installation">Download</a> ·
   <a href="#features">Features</a> ·
+  <a href="#screens">Screens</a> ·
+  <a href="#stereoscopic-3d">3D</a> ·
+  <a href="#walkthrough-on-the-bottom-screen">Guide</a> ·
   <a href="#documentation">Documentation</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="#community-and-bug-reports">Community</a>
@@ -21,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img width="1200" alt="alttp" src="docs/images/showcase-rounded.webp" />
+  <img width="1200" alt="alttp" src="docs/images/showcase-albw.webp" />
 </p>
 
 <p align="center">
@@ -49,19 +52,25 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 <table>
   <tr>
     <td width="50%" valign="top"><strong>Return to Hyrule</strong><br>A native dual-screen adaptation based on Zelda3 and its Android ports.</td>
-    <td width="50%" valign="top"><strong>Made for two screens</strong><br>400×240 gameplay above; live maps, gear, items and touch settings below.</td>
+    <td width="50%" valign="top"><strong>Made for two screens</strong><br>400×240 gameplay above; maps, items, gear, a walkthrough and settings below, in a wood-and-parchment style.</td>
   </tr>
   <tr>
     <td width="50%" valign="top"><strong>Choose your view</strong><br>Wide, stretched and original presentation, with persistent per-ROM settings and turbo options.</td>
     <td width="50%" valign="top"><strong>Keep it current</strong><br>Stable / Pre-release updates, on-device ROM extraction and quick diagnostic checkpoints.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><strong>See Hyrule in 3D</strong><br>Stereoscopic depth on Old 3DS and 3DS XL: ledges and cliffs rise, statues and trees stand up from the ground.</td>
+    <td width="50%" valign="top"><strong>Guide in hand</strong><br>Read your own walkthrough on the bottom screen, with chapters, places and drag scrolling.</td>
   </tr>
 </table>
 
 ### Feature details
 
 - Top screen: 400x240 gameplay.
-- Bottom screen: 320x240 live map, dungeon map, gear view, item selection and
-  touch settings.
+- Bottom screen: 320x240 live map, dungeon map, gear view, item selection,
+  walkthrough and touch settings, styled after A Link Between Worlds: wood
+  frame, parchment panels, gold X/Y/B slots and a status bar with hearts,
+  magic, rupees, bombs, arrows and keys on every page.
 - First launch extracts `zelda3_assets.dat` locally from the user's ROM.
 - Display modes: wide mod, stretched original and original aspect.
 - Turbo speed: off, x2, x3, x4 or x5.
@@ -76,6 +85,14 @@ user must provide their own legally obtained USA, unheadered ROM on their own
   and RGB565 display output.
 - PICA200 GPU rendering on Old 3DS, with automatic software fallback for
   unsupported effects. New 3DS uses its existing CPU renderer.
+- Stereoscopic 3D on Old 3DS and 3DS XL: the 3D slider sets the depth, and
+  Settings > Screen > 3D DEPTH picks OFF, LOW, MID or HIGH.
+- 3D depth follows the terrain: ledges, cliffs and stairs give the ground its
+  height, objects stand up from their own base, and sprites stand on the
+  ground under their feet. The terrain is solved on the second CPU core.
+- GUIDE tab: a walkthrough from the SD card with chapter and place buttons,
+  drag scrolling, a draggable scrollbar and the reading position saved per
+  profile.
 - Native 400x240 WIDE mode, fixed-camera edge corrections and persistent
   per-ROM display, zoom, turbo and control settings.
 - Responsive map controls and independent heart updates on Old 3DS.
@@ -85,6 +102,79 @@ user must provide their own legally obtained USA, unheadered ROM on their own
   with persistent tile-row caches and frame-time diagnostics in quick dumps.
 - HOME Menu banner uses a lightweight custom CGFX 3D logo model with the
   supplied hover sound converted to a short PCM WAV.
+
+## Screens
+
+The bottom screen, rendered by the same interface code as on the console.
+
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="docs/images/screens/bottom-map.png" width="320" alt="Overworld map on a parchment scroll beside the X, Y and B item slots"><br><sub>Overworld map</sub></td>
+    <td width="50%" align="center"><img src="docs/images/screens/bottom-dungeon.png" width="320" alt="Eastern Palace map with floor tabs and the current room in gold"><br><sub>Dungeon map</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/images/screens/bottom-items.png" width="320" alt="Item grid with the equipped item ringed in gold"><br><sub>Items: tap one to equip it</sub></td>
+    <td width="50%" align="center"><img src="docs/images/screens/bottom-gear.png" width="320" alt="Equipment, bottles, pendants, crystals and heart pieces"><br><sub>Gear</sub></td>
+  </tr>
+</table>
+
+## Stereoscopic 3D
+
+<p align="center">
+  <img src="docs/images/screens/3d-links-house.gif" width="380" alt="Link's house: the plateau, its cliffs and Link at different depths, flipping between the left and right eye">
+  <img src="docs/images/screens/3d-pyramid.gif" width="380" alt="Dark World pyramid: statues standing up from the ground in 3D, flipping between the left and right eye">
+</p>
+<p align="center"><sub>Left and right eye from console dumps. The depth is exaggerated so it shows on a flat screen.</sub></p>
+
+3D works on Old 3DS and Old 3DS XL, where the PICA200 GPU draws each frame
+twice. New 3DS and 2DS stay in 2D.
+
+1. Open Settings > Screen and set **3D DEPTH** to LOW, MID or HIGH.
+2. Raise the 3D slider.
+
+The HUD stays on the screen plane. With **3D TERRAIN** on (Settings > Developer,
+on by default), depth comes from the game's own collision data: plateaus,
+ledges and stairs sit at different heights and sprites stand on the ground.
+Turn it off for the simpler depth by background layer.
+
+On an Old 3DS XL outdoors with 3D on, the game ran at 45 fps with 3D TERRAIN
+off and 40 fps with it on.
+
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="docs/images/screens/bottom-settings-screen.png" width="320" alt="Screen settings with the 3D DEPTH row set to MID"><br><sub>Settings > Screen > 3D DEPTH</sub></td>
+    <td width="50%" align="center"><img src="docs/images/screens/bottom-settings-developer.png" width="320" alt="Developer settings with the 3D TERRAIN row set to ON"><br><sub>Settings > Developer > 3D TERRAIN</sub></td>
+  </tr>
+</table>
+
+## Walkthrough on the bottom screen
+
+The GUIDE tab reads `sdmc:/3ds/Zelda 3DS/guide.txt`. No walkthrough is
+included, because guides belong to their authors. Make your own copy from a
+plain-text GameFAQs walkthrough:
+
+```sh
+python3 tools/secondscreen/make_guide.py FAQ.txt guide.txt --author "Devin Morgan" --no-toc Overworld
+```
+
+Copy `guide.txt` to `sdmc:/3ds/Zelda 3DS/`, next to your ROM. The converter
+was built and tested with Devin Morgan's FAQ/Walkthrough. Other walkthroughs
+whose chapter headings look like `-= 5. Walkthrough -=` should also work.
+
+- **CONTENTS** lists the chapters. Tap one for its places, then tap a place to
+  jump there.
+- Drag the text to scroll, tap the upper or lower half to turn a page, or drag
+  the scrollbar.
+- Your reading position is saved per profile.
+
+<table>
+  <tr>
+    <td width="33%" align="center"><img src="docs/images/screens/bottom-guide-chapters.png" width="260" alt="Guide contents with chapter buttons"><br><sub>Chapters</sub></td>
+    <td width="33%" align="center"><img src="docs/images/screens/bottom-guide-places.png" width="260" alt="A chapter's places in a two-column grid of buttons"><br><sub>Places</sub></td>
+    <td width="33%" align="center"><img src="docs/images/screens/bottom-guide-reading.png" width="260" alt="Walkthrough text on a parchment page with a scrollbar"><br><sub>Reading</sub></td>
+  </tr>
+</table>
+<p align="center"><sub>Walkthrough text in the screenshots: Devin Morgan's FAQ/Walkthrough from GameFAQs.</sub></p>
 
 <a id="installation"></a>
 
@@ -182,6 +272,9 @@ The Zelda3 engine retains the **MIT license** and copyright notices in
 SDL2, SDL2_mixer and other dependencies retain their own licenses. These
 component licenses do not grant rights to Nintendo game content.
 
+The bottom-screen label font is baked from Nunito (SIL Open Font License 1.1).
+The guide font is the public-domain X11 misc-fixed 6x9 face.
+
 This repository contains only source code, build scripts, redistributable port
 assets and patch/extraction logic. It does not include a ROM, extracted game
 assets, or `zelda3_assets.dat`.
@@ -197,6 +290,9 @@ Triforce improvements.
 
 3D Banner work by [Phibonacci](https://github.com/Phibonacci), based on the 3D
 model by [TiraArt](https://sketchfab.com/TiraArt).
+
+Stereoscopic 3D, terrain depth, the bottom-screen restyle and the GUIDE tab by
+[djaysan](https://github.com/djaysan).
 
 See [3DS controls and diagnostics](platform/3ds/README.md).
 
