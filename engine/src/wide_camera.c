@@ -4,7 +4,12 @@
 
 int WideCamera_IsMapMenu(int module, int submodule) {
   // Dungeon map, world map, and the flute's destination-selection map.
-  return module == 14 && (submodule == 3 || submodule == 7 || submodule == 10);
+  if (module == 14 && (submodule == 3 || submodule == 7 || submodule == 10))
+    return 1;
+  // Game-over menu (letters, text and the choice fairy): everything is drawn
+  // in screen space, so the gameplay camera offsets must not move the fairy
+  // (a sprite) away from the text it points at (background 3).
+  return module == 18 && submodule >= 7 && submodule <= 9;
 }
 
 int WideCamera_Unwrap16(int value, int reference) {
