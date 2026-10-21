@@ -17,12 +17,15 @@
 ; raised on the title screen so the Triforce pops out
 ; spriteParams.y = extra term for fully raised scenery (trees, roofs, bushes)
 ; spriteParams.z = extra forward shift for the HUD and dialog boxes
+; spriteParams.w = extra depth that water tiles sit behind the ground
 .fvec spriteParams
 .constf positionOffset(-1.0, 1.0, 0.0, 0.0)
 .constf one(1.0, 1.0, 1.0, 1.0)
 .constf spriteK(-0.75, 1.75, 0.0, 0.0)
 .constf leanBias(-2.0, -8192.0, 0.0, 0.0)
 .constf kMid(1.5, 8000.0, 30000.0, 4096.0)
+.constf kWater(14000.0, 0.0, 0.0, 0.0)
+.constf kScn(3600.0, 12288.0, 18000.0, 0.0)
 .constf recess(-2500.0, 0.0, 0.0, 0.0)
 .constf ground(1920.0, 0.0, 0.0, 0.0)
 .constf scale(0.000244140625, 0.000244140625, 0.003921568627451, 1.0)
@@ -46,19 +49,31 @@
     max r1, r1, r5
     min r1, r1, r3.wwww
     ; vertex w: 1 = plain layer, 2..4098 = sprite with lean 0..4096,
-    ; 8192..12288 = scenery (tall tiles, bushes) with lean 0..4096
+    ; 8192..12288 = priority-run scenery, 14000..18000 = water,
+    ; 20480..24576 = bush-type scenery (lean 0..4096)
     slt r6, kMid.xxxx, inpos.wwww
     slt r9, kMid.yyyy, inpos.wwww
+    slt r10, kWater.xxxx, inpos.wwww
+    slt r11, kScn.zzzz, inpos.wwww
     add r6, r6, -r9
-    ; scenery: term = lean * (layer term + spriteParams.y), base stays grounded
+    add r9, r9, -r10
+    add r10, r10, -r11
+    add r12, r9, r11
+    ; scenery: depth = lean * (K + spriteParams.y) with K = one fixed layer
+    ; offset (3600, the layer cap) for priority runs and 0 for bushes. It no longer depends on the
+    ; tile's own layer, so a flat tile that follows a leaning neighbour
+    ; computes exactly the same shift along the shared edge (no seams).
+    mul r5, kScn.yyyy, r11
     add r7, leanBias.yyyy, inpos.wwww
+    add r7, r7, -r5
     max r7, recess.yyyy, r7
     min r7, kMid.wwww, r7
     mul r7, scale.xxxx, r7
-    add r5, r1, r8.yyyy
+    mul r5, kScn.xxxx, r9
+    add r5, r5, r8.yyyy
     mul r7, r7, r5
     add r7, r7, -r1
-    mul r7, r7, r9
+    mul r7, r7, r12
     add r1, r1, r7
     ; sprites: term = lean * spriteParams.x (feet on the ground plane)
     add r7, leanBias.xxxx, inpos.wwww
@@ -77,6 +92,9 @@
     slt r2, kMid.zzzz, inpos.zzzz
     mul r2, r2, r8.zzzz
     add r1, r1, r2
+    ; water tiles (w >= 16384) sit further behind the ground
+    mul r10, r10, r8.wwww
+    add r1, r1, -r10
     add r1, recess.xxxx, r1
     ; no parallax for the backdrop and compose quads
     sge r2, inpos.zzzz, r3.zzzz

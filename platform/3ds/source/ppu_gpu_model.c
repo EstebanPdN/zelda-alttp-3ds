@@ -105,11 +105,11 @@ static PicaQuad Solid(int x0,int y0,int x1,int y1,uint16_t rgb,unsigned alpha) {
 }
 static bool TileQuad(PicaFrame *f,unsigned group,unsigned slot,int x,int y,
                      int w,int h,int sx,int sy,bool hf,bool vf,unsigned z,unsigned alpha,
-                     unsigned lean0,unsigned lean1) {
+                     unsigned lean0,unsigned lean1,unsigned lean0r,unsigned lean1r) {
   unsigned col=slot%(PICA_ATLAS_W/8),row=slot/(PICA_ATLAS_W/8);
   int u0=col*8+(hf?8-sx:sx),u1=u0+(hf?-w:w);
   int v0=row*8+(vf?8-sy:sy),v1=v0+(vf?-h:h);
-  PicaQuad q={x,y,x+w,y+h,u0*4,4096-v0*8,u1*4,4096-v1*8,z,255,255,255,alpha,lean0,lean1};
+  PicaQuad q={x,y,x+w,y+h,u0*4,4096-v0*8,u1*4,4096-v1*8,z,255,255,255,alpha,lean0,lean1,lean0r,lean1r};
   return Emit(f,group,q);
 }
 static unsigned Band(PicaFrame *f,unsigned y,unsigned max) {
@@ -164,11 +164,15 @@ static int HudSplit(PicaFrame *f,Ppu *p,BgLayer *bg) {
   for(unsigned c=0;c<32;c++) if(!column[c]) {if(c<16)left++;else right++;}
   g_picaHudDebug[7]=left;g_picaHudDebug[8]=right;g_picaHudDebug[9]=-1;
   if(!left||!right) return -1;
-  int split=-1,bestDistance=1000;
-  for(unsigned c=8;c<24;c++) {
-    if(!column[c])continue;
-    int d=(int)c*8+4-128;if(d<0)d=-d;
-    if(d<bestDistance){bestDistance=d;split=(int)c*8;}
+  // The widest blank run wins (rightmost on ties) so the rupee, bomb, arrow and
+  // key counters all stay on the left and only the hearts move right.
+  int split=-1,bestWidth=0;
+  for(unsigned c=8;c<24;) {
+    if(!column[c]){c++;continue;}
+    unsigned start=c;
+    while(c<24 && column[c])c++;
+    int width=(int)(c-start);
+    if(width>=bestWidth){bestWidth=width;split=(int)(start+width/2)*8;}
   }
   g_picaHudDebug[9]=split;
   return split;
@@ -178,6 +182,54 @@ static unsigned LeanH(int feet,int y,int height);
 static int PopRole(const PicaFrame *f,unsigned tile);
 static unsigned BushLean(const PicaFrame *f,int feet,int y);
 static unsigned BgTileWord(PicaFrame *f,const BgLayer *bg,unsigned wx,unsigned wy);
+enum { TILE_UNKNOWN=0, TILE_GROUND, TILE_OTHER, TILE_LEAN, TILE_WATER };
+typedef struct { uint16_t l0,l1; uint8_t state,type; } TileLeanInfo;
+// Classify the tile at (wx,wy) for this band: water, leaning scenery (bush or
+// tall priority run) with its top/bottom lean, ordinary ground, or something
+// that must stay flat (priority tiles that are not a short run, e.g. rain).
+static const TileLeanInfo *LeanInfo(PicaFrame *f,BgLayer *bg,TileLeanInfo *cache,
+    unsigned col,unsigned wy,int y,unsigned h,unsigned colMask) {
+  TileLeanInfo *out=&cache[(col>>3)&63];
+  if(out->state)return out;
+  unsigned tile=BgTileWord(f,bg,col,wy);
+  unsigned chr=tile&0x1ff;
+  out->l0=out->l1=0;out->type=0;
+  if(f->water && (f->waterBits[chr>>3]&(1u<<(chr&7)))) {out->state=TILE_WATER;return out;}
+  int top=y-(int)(wy&7);
+  int role=PopRole(f,tile);
+  if(role>=0) {
+    int feet=top+((role>>1)?8:16);
+    out->l0=(uint16_t)BushLean(f,feet,y);out->l1=(uint16_t)BushLean(f,feet,y+(int)h);
+    out->state=TILE_LEAN;out->type=1;return out;
+  }
+  if(tile&0x2000) {
+    unsigned below=0,above=0;
+    unsigned rowMask=bg->tilemapHigher?511:255;
+    // Scan the whole run (up to 6 each way) so every row of a column
+    // agrees on where the feet are; a capped scan made rows of tall runs
+    // disagree and tore the column horizontally.
+    while(below<6 && (BgTileWord(f,bg,col,(wy+8*(below+1))&rowMask)&0x2000)) below++;
+    while(above<6 && (BgTileWord(f,bg,col,(wy+rowMask+1-8*(above+1))&rowMask)&0x2000)) above++;
+    // A run this tall in both directions is a full-screen overlay (rain,
+    // fog) or a floor, not an object: keep it flat.
+    if(below+above<6) {
+      int feet=top+8*(int)(below+1);
+      out->l0=(uint16_t)Lean(feet,y);out->l1=(uint16_t)Lean(feet,y+(int)h);
+      out->state=TILE_LEAN;
+    } else {
+      // Flat priority tiles (rain, fog, tall walls) sit at the layer cap.
+      // Encode that as a constant lean so they match their neighbours
+      // exactly: depth = lean*(3600+term)/4096 = 3600.
+      unsigned flat=(unsigned)(4096.f*3600.f/(3600.f+f->sceneryTerm)+0.5f);
+      out->l0=out->l1=(uint16_t)flat;
+      out->state=TILE_LEAN;
+    }
+    return out;
+  }
+  (void)colMask;
+  out->state=TILE_GROUND;
+  return out;
+}
 static bool Backgrounds(PicaFrame *f,unsigned sub) {
   unsigned group=sub*2;
   SelectBands(f,0,0,sub);
@@ -201,6 +253,8 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
     PpuWindowSpans win;
     PpuGetWindowSpans(p,layer,!f->sharedWindow && (p->screenWindowed[sub]&(1u<<layer))!=0,&win);
     int hudSplit=(layer==2 && y<PICA_HUD_ROWS)?HudSplit(f,p,bg):-1;
+    TileLeanInfo info[64];
+    memset(info,0,sizeof(info));
     for(unsigned i=0;i<win.nr;i++) {
       if(win.bits&(1u<<i)) continue;
       int x=win.edges[i],end=win.edges[i+1];
@@ -216,22 +270,40 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
         unsigned w=IntMin(8-(wx&7),end-x);
         unsigned z=layer==0?((tile&0x2000)?0xc000:0x8000):layer==1?((tile&0x2000)?0xb100:0x7100):((tile&0x2000)?0xf200:0x1200);
         int shift=hudSplit<0?0:(x<hudSplit?-(int)p->extraLeftRight:(int)p->extraLeftRight);
-        unsigned lean0=0,lean1=0;
+        unsigned lean0=0,lean1=0,lean0r=0,lean1r=0;
         if(slot>=0 && f->scenery && layer<2) {
-          int role=PopRole(f,tile);
-          int top=(int)y-(int)(wy&7);
-          if(role>=0) {
-            int feet=top+((role>>1)?8:16);
-            lean0=PICA_SCENERY_FLAG|BushLean(f,feet,y);lean1=PICA_SCENERY_FLAG|BushLean(f,feet,y+h);
-          } else if(tile&0x2000) {
-            unsigned below=0;
-            while(below<3 && (BgTileWord(f,bg,wx,(wy+8*(below+1))&(bg->tilemapHigher?511:255))&0x2000)) below++;
-            int feet=top+8*(int)(below+1);
-            lean0=PICA_SCENERY_FLAG|Lean(feet,y);lean1=PICA_SCENERY_FLAG|Lean(feet,y+h);
+          unsigned col=wx&~7u,colMask=bg->tilemapWider?511:255;
+          const TileLeanInfo *c=LeanInfo(f,bg,info,col,wy,(int)y,h,colMask);
+          if(c->state==TILE_WATER) {
+            lean0=lean1=lean0r=lean1r=PICA_WATER_FLAG;
+          } else if(c->state==TILE_LEAN || c->state==TILE_GROUND) {
+            // Each edge takes the larger lean of the tile and its neighbour, so
+            // both tiles agree on the shared edge (no seams); flat ground next
+            // to a leaning tile is stretched a little to follow it.
+            const TileLeanInfo *l=LeanInfo(f,bg,info,(col+colMask+1-8)&colMask,wy,(int)y,h,colMask);
+            const TileLeanInfo *r=LeanInfo(f,bg,info,(col+8)&colMask,wy,(int)y,h,colMask);
+            // Per corner: the larger lean of this tile and the neighbour wins,
+            // and the corner keeps that source's kind (bush or priority run).
+            unsigned corner[4];bool any=c->state==TILE_LEAN;
+            const TileLeanInfo *nb[4]={l,l,r,r};
+            const unsigned own[4]={c->l0,c->l1,c->l0,c->l1};
+            for(unsigned k=0;k<4;k++) {
+              const TileLeanInfo *n=nb[k];
+              unsigned nv=n->state==TILE_LEAN?((k&1)?n->l1:n->l0):0;
+              unsigned ov=own[k];
+              bool useOwn=c->state==TILE_LEAN && ov>=nv;
+              unsigned v=useOwn?ov:nv;
+              unsigned type=useOwn?c->type:(n->state==TILE_LEAN?n->type:0);
+              corner[k]=v|(type?PICA_TYPEB_FLAG:0);
+              if(v)any=true;
+            }
+            if(any) {
+              lean0=PICA_SCENERY_FLAG|corner[0];lean1=corner[1];lean0r=corner[2];lean1r=corner[3];
+            }
           }
         }
         if(slot>=0 && !TileQuad(f,group,slot,x+p->extraLeftRight+shift,y,w,h,wx&7,wy&7,
-            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127),lean0,lean1)) return false;
+            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127),lean0,lean1,lean0r,lean1r)) return false;
         x+=w;
       }
     }
@@ -294,9 +366,12 @@ static void ObjectFeet(PicaFrame *f,const uint16_t *active,unsigned activeCount,
     for(unsigned b=a+1;b<activeCount;b++) {
       unsigned j=active[b]/2;
       if(first[j]>=last[j])continue;
-      // touching counts as overlapping (1 px tolerance on every side)
+      // touching counts as overlapping (1 px tolerance sideways). Vertically a
+      // sprite may float up to 24 px above another one, so a shadow and the
+      // airborne Link/pot/enemy above it form one cluster (the feet then stay
+      // on the shadow and the body rises with the height of the jump).
       if(x0[i]>x1[j]+1||x0[j]>x1[i]+1)continue;
-      if((int)first[i]>(int)last[j]+1||(int)first[j]>(int)last[i]+1)continue;
+      if((int)first[i]>(int)last[j]+24||(int)first[j]>(int)last[i]+24)continue;
       int ra=Root(parent,i),rb=Root(parent,j);
       if(ra!=rb)parent[rb]=ra;
     }
@@ -379,7 +454,7 @@ static bool Objects(PicaFrame *f,unsigned sub) {
         if(l>=r)continue;
         if(!TileQuad(f,sub*2+1,slot,l+p->extraLeftRight,y,r-l,h,l-left,vf?7-(row&7):row&7,
           attr&0x4000,vf,z,sub?255:((attr&0x800)&&(p->mathEnabled&16)?255:127),
-          Lean(feet[index/2],y),Lean(feet[index/2],y+h)))return false;
+          Lean(feet[index/2],y),Lean(feet[index/2],y+h),Lean(feet[index/2],y),Lean(feet[index/2],y+h)))return false;
       }
     }
     y+=h;

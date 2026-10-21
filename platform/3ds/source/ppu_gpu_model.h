@@ -30,6 +30,9 @@ typedef struct {
   // Sprites only: 0..4096 "body lean" at the top/bottom edge (0 = on the
   // ground plane, 4096 = fully raised). Other groups leave these zero.
   uint16_t lean0,lean1;
+  // Scenery only: the same values at the right edge (corner-exact lean so
+  // neighbouring tiles share one edge and leave no seams).
+  uint16_t lean0r,lean1r;
 } PicaQuad;
 enum { PICA_LEAN_ONE=4096, PICA_LEAN_PIXELS=32, PICA_HUD_ROWS=64 };
 // Groups 0/2: main/sub backdrop and BG. 1/3: their OBJ, in OAM order.
@@ -56,12 +59,21 @@ typedef struct {
   // top pops forward. popChar/popRole list tile characters and their place in
   // a 16x16 block (0=TL 1=TR 2=BL 3=BR).
   bool scenery;
+  float sceneryTerm; // shader term for fully raised scenery (depth units)
   unsigned bushPercent; // strength of the liftable-tile lean, 100 = full
+  // waterBits: one bit per 8x8 character (0..511) that is water; those
+  // tiles sit behind the ground.
+  bool water;
+  uint8_t waterBits[64];
   unsigned popCount;
   uint16_t popChar[32];
   uint8_t popRole[32];
 } PicaFrame;
 #define PICA_SCENERY_FLAG 0x8000u
+#define PICA_WATER_FLAG 0x4000u
+// Scenery corners: set when the lean follows a bush (grounded, no layer
+// offset) instead of a priority-tile run; keeps neighbouring corners equal.
+#define PICA_TYPEB_FLAG 0x2000u
 extern int g_picaHudDebug[12]; // diagnostics only
 void PicaAtlasInit(PicaAtlas *cache, uint32_t *pixels);
 void PicaAtlasBegin(PicaAtlas *cache);

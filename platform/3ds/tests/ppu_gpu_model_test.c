@@ -134,7 +134,9 @@ static uint16_t RefRgb(uint32_t c) {return ((c>>19)&31)|(((c>>11)&31)<<5)|(((c>>
 static bool Raster(void *ctx,unsigned group,const PicaQuad *q) {
  (void)ctx;
  if(group==1||group==3) assert(q->lean0<=PICA_LEAN_ONE && q->lean1<=q->lean0);
- else assert(!q->lean0 && !q->lean1);
+ else if(q->lean0&PICA_SCENERY_FLAG) assert((q->lean0&0x1fff)<=PICA_LEAN_ONE && (q->lean1&0x1fff)<=PICA_LEAN_ONE &&
+   (q->lean0r&0x1fff)<=PICA_LEAN_ONE && (q->lean1r&0x1fff)<=PICA_LEAN_ONE);
+ else assert(q->lean0==0 || q->lean0==PICA_WATER_FLAG);
  for(int y=q->y0;y<q->y1;y++) for(int x=q->x0;x<q->x1;x++) {
   assert(x>=0 && x<(int)width && y>=0 && y<240);
   unsigned i=y*512+x;
@@ -214,7 +216,8 @@ int main(int argc,char **argv) {
     PicaCaptureLine(lines+y,p,y);ppu_runLine(p,y+1);
    }
    PicaAtlasBegin(cache);
-   PicaFrame f={.memory=p,.lines=lines,.scratch=scratch,.atlas=cache,.pixels=atlas,.width=width,.height=240,.emit=Raster};
+   PicaFrame f={.memory=p,.lines=lines,.scratch=scratch,.atlas=cache,.pixels=atlas,.width=width,.height=240,.emit=Raster,.scenery=true,.bushPercent=30,.water=true};
+   memset(f.waterBits,0xa5,sizeof(f.waterBits));
    if(!PicaBuildFrame(&f)){fprintf(stderr,"FAIL rejected scene %u: %s\n",scene,f.failure);return 1;}
    shared+=f.sharedWindow;
    for(unsigned group=0;group<PICA_GROUPS;group++)vertices+=f.quads[group]*6;

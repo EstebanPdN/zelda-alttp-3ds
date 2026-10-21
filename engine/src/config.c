@@ -496,6 +496,8 @@ static bool HandleIniConfig(int section, const char *key, char *value) {
                StringEqualsNoCase(key, "Stereo3DScenery") ||
                StringEqualsNoCase(key, "Stereo3DHud") ||
                StringEqualsNoCase(key, "Stereo3DBush") ||
+               StringEqualsNoCase(key, "Stereo3DWater") ||
+               StringEqualsNoCase(key, "Stereo3DMap") ||
                StringEqualsNoCase(key, "ShowFps")) {
       return true;  // parsed by platform_3ds.c
     }

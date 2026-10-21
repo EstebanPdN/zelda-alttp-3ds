@@ -30,7 +30,8 @@ static struct {
   int eyeLocation,spriteLocation;
   float spriteTerm,bodyScale;
   bool bodyScaleSet,hudAnchor,scenery;
-  float sceneryTerm,hudPop;
+  float sceneryTerm,hudPop,waterTerm;
+  bool water;uint8_t waterBits[64];
   unsigned bushPercent;
   unsigned popCount;uint16_t popChar[32];uint8_t popRole[32];
   float eyePx,stereoHalf;
@@ -80,12 +81,19 @@ static bool Emit(void *ctx,unsigned group,const PicaQuad *q) {
   const bool flat=g.spriteTerm>6700.f;
   int16_t top=sprite?(int16_t)(2+(flat?4096:q->lean0)):1;
   int16_t bottom=sprite?(int16_t)(2+(flat?4096:q->lean1)):1;
-  if(!sprite && (q->lean0&PICA_SCENERY_FLAG)) {
-    top=(int16_t)(8192+(q->lean0&0x1fff));bottom=(int16_t)(8192+(q->lean1&0x1fff));
+  int16_t topR=top,bottomR=bottom;
+  if(!sprite && (q->lean0&PICA_WATER_FLAG) && !(q->lean0&PICA_SCENERY_FLAG)) {
+    top=bottom=topR=bottomR=16384;
+  } else if(!sprite && (q->lean0&PICA_SCENERY_FLAG)) {
+    // 8192+lean: priority-run scenery; 20480+lean: bush-type (grounded)
+    top=(int16_t)(8192+((q->lean0&PICA_TYPEB_FLAG)?12288:0)+(q->lean0&0x1fff));
+    bottom=(int16_t)(8192+((q->lean1&PICA_TYPEB_FLAG)?12288:0)+(q->lean1&0x1fff));
+    topR=(int16_t)(8192+((q->lean0r&PICA_TYPEB_FLAG)?12288:0)+(q->lean0r&0x1fff));
+    bottomR=(int16_t)(8192+((q->lean1r&PICA_TYPEB_FLAG)?12288:0)+(q->lean1r&0x1fff));
   }
   Vertex a={q->x0,q->y0,depth,top,q->u0,q->v0,q->r,q->g,q->b,q->a};
   Vertex b=a,c=a,d=a;
-  c.w=d.w=bottom;
+  b.w=topR;c.w=bottom;d.w=bottomR;
   b.x=d.x=q->x1;b.u=d.u=q->u1;
   c.y=d.y=q->y1;c.v=d.v=q->v1;
   Vertex *v=&g.vertices[g.count];
@@ -110,7 +118,7 @@ static void BindState(void) {
   // Depth units here are q->depth>>1. 0x3880 is the SNES BG2 low-priority
   // layer (ground), which stays at screen depth; layers in front pop out.
   if(g.eyeLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.eyeLocation,g.eyePx,-14464.f,2048.f,3600.f);
-  if(g.spriteLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.spriteLocation,(g.spriteTerm>0.f?g.spriteTerm:6700.f)*(g.spriteTerm>6700.f?1.f:(g.bodyScaleSet?g.bodyScale:2.f)),g.sceneryTerm,g.hudPop,0.f);
+  if(g.spriteLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.spriteLocation,(g.spriteTerm>0.f?g.spriteTerm:6700.f)*(g.spriteTerm>6700.f?1.f:(g.bodyScaleSet?g.bodyScale:2.f)),g.sceneryTerm,g.hudPop,g.waterTerm);
   C3D_CullFace(GPU_CULL_NONE);C3D_DepthMap(true,-1.f,0.f);
   C3D_FragOpMode(GPU_FRAGOPMODE_GL);
   C3D_EarlyDepthTest(false,GPU_EARLYDEPTH_GREATER,0);
@@ -331,7 +339,8 @@ static bool GeometryProbe(bool shared) {
   }
   ResetRanges(400,height);PicaAtlasBegin(g.cache);
   PicaFrame frame={.memory=p,.lines=g.lines,.scratch=g.scratch,.atlas=g.cache,
-    .pixels=g.atlas.data,.width=400,.height=height,.emit=Emit,.hudAnchor=g.hudAnchor,.scenery=g.scenery,.bushPercent=g.bushPercent,.popCount=g.popCount};
+    .pixels=g.atlas.data,.width=400,.height=height,.emit=Emit,.hudAnchor=g.hudAnchor,.scenery=g.scenery,.sceneryTerm=g.sceneryTerm,.bushPercent=g.bushPercent,.popCount=g.popCount,.water=g.water};
+  memcpy(frame.waterBits,g.waterBits,sizeof(frame.waterBits));
   memcpy(frame.popChar,g.popChar,sizeof(frame.popChar));memcpy(frame.popRole,g.popRole,sizeof(frame.popRole));
   bool ok=PicaBuildFrame(&frame) && (!shared || frame.sharedWindow) && Clean(g.atlas.data,g.atlas.size) && Clean(g.vertices,g.count*sizeof(Vertex));
   if(ok && C3D_FrameBegin(0)) {
@@ -444,7 +453,8 @@ void PpuGpuLine(Ppu *p,unsigned y) {if(y<g.height){PicaCaptureLine(&g.lines[y],p
 bool PpuGpuFinish(Ppu *p) {
   p->gpuRecording=false;uint64_t start=svcGetSystemTick();
   PicaFrame frame={.memory=g.saved,.lines=g.lines,.scratch=g.scratch,.atlas=g.cache,
-    .pixels=g.atlas.data,.width=g.width,.height=g.height,.emit=Emit,.hudAnchor=g.hudAnchor,.scenery=g.scenery,.bushPercent=g.bushPercent,.popCount=g.popCount};
+    .pixels=g.atlas.data,.width=g.width,.height=g.height,.emit=Emit,.hudAnchor=g.hudAnchor,.scenery=g.scenery,.sceneryTerm=g.sceneryTerm,.bushPercent=g.bushPercent,.popCount=g.popCount,.water=g.water};
+  memcpy(frame.waterBits,g.waterBits,sizeof(frame.waterBits));
   memcpy(frame.popChar,g.popChar,sizeof(frame.popChar));memcpy(frame.popRole,g.popRole,sizeof(frame.popRole));
   bool ok=!p->gpuInvalidWrite && g.captured==g.height;
   if(ok) ok=PicaBuildFrame(&frame);
@@ -486,6 +496,13 @@ void PpuGpuSetSpriteDepth(float term) {g.spriteTerm=term;}
 void PpuGpuSetHudAnchor(bool on) {g.hudAnchor=on;}
 void PpuGpuSetScenery(float term) {g.scenery=term>0.f;g.sceneryTerm=term>0.f?term:0.f;}
 void PpuGpuSetBushPercent(unsigned percent) {g.bushPercent=percent;}
+void PpuGpuSetWater(float term,const uint8_t *bits) {
+  g.water=term>0.f&&bits;g.waterTerm=term>0.f?term:0.f;
+  if(bits)memcpy(g.waterBits,bits,sizeof(g.waterBits));
+}
+static bool g_mode7Frame;
+void PpuGpuSetMode7(bool on) {g_mode7Frame=on;}
+bool PpuGpuMode7Frame(void) {return g_mode7Frame;}
 void PpuGpuSetHudPop(float term) {g.hudPop=term>0.f?term:0.f;}
 void PpuGpuSetPopTiles(const uint16_t *chars,const uint8_t *roles,unsigned count) {
   if(count>32)count=32;
@@ -512,8 +529,8 @@ bool PpuGpuDraw(void) {
   if(ok) {
     g.lastSubmittedSlot=g.slot;g.gpuFrames++;RecordFrame(true);
     if(g.gpuFrames%600==0)
-      Platform3DS_LogRuntime("HUD anchor: calls=%d flag=%d extra=%d hscroll=%d vscroll=%d wh=%d map=%x usedLeft=%d usedRight=%d split=%d",
-        g_picaHudDebug[0],g_picaHudDebug[1],g_picaHudDebug[2],g_picaHudDebug[3],g_picaHudDebug[4],g_picaHudDebug[5],g_picaHudDebug[6],g_picaHudDebug[7],g_picaHudDebug[8],g_picaHudDebug[9]);
+      Platform3DS_LogRuntime("Scenery: on=%d term=%.0f hudPop=%.0f bush=%u pop_tiles=%u first=%03x HUD anchor: calls=%d flag=%d extra=%d hscroll=%d vscroll=%d wh=%d map=%x usedLeft=%d usedRight=%d split=%d",
+        g.scenery,g.sceneryTerm,g.hudPop,g.bushPercent,g.popCount,g.popChar[0],g_picaHudDebug[0],g_picaHudDebug[1],g_picaHudDebug[2],g_picaHudDebug[3],g_picaHudDebug[4],g_picaHudDebug[5],g_picaHudDebug[6],g_picaHudDebug[7],g_picaHudDebug[8],g_picaHudDebug[9]);
     if(g.gpuFrames==1 || g.gpuFrames==120)
       Platform3DS_LogRuntime("PICA200 gameplay submitted=%llu cpu=%llu size=%ux%u vertices=%u prepare=%lu us build=%lu us",
         g.gpuFrames,g.cpuFrames,g.width,g.height,g.count,(unsigned long)g.prepareUs,(unsigned long)g.buildUs);

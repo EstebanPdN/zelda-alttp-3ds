@@ -65,9 +65,12 @@ static bool g_wide_hud_anchor = true;
 /* Scenery lean (trees, roofs, bushes) and HUD pop-forward, percent of the
  * default strength; 0 turns the effect off. */
 const uint16 *GetMap16toMap8Table(void); /* engine/src/overworld.c */
+const uint8 *GetMap8toTileAttr(void); /* engine/src/overworld.c */
 extern uint8 g_ram[131072];              /* engine/src/variables.h */
 static int g_stereo_scenery = 100;
 static int g_stereo_hud = 100;
+static int g_stereo_map = 100; /* Mode 7 map/flight plane tilt, percent */
+static int g_stereo_water = 100; /* water recess, percent */
 static int g_stereo_bush = 30; /* bush lean, percent of the scenery lean */
 static const float kStereoSeparation[4] = { 0.0f, 4.0f, 8.0f, 12.0f };
 static C3D_RenderTarget *g_top_target_right;
@@ -485,6 +488,16 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
     if (pct < 0) pct = 0;
     if (pct > 400) pct = 400;
     g_stereo_scenery = pct;
+  } else if (strcasecmp(key, "Stereo3DMap") == 0) {
+    int pct = atoi(value);
+    if (pct < 0) pct = 0;
+    if (pct > 200) pct = 200;
+    g_stereo_map = pct;
+  } else if (strcasecmp(key, "Stereo3DWater") == 0) {
+    int pct = atoi(value);
+    if (pct < 0) pct = 0;
+    if (pct > 400) pct = 400;
+    g_stereo_water = pct;
   } else if (strcasecmp(key, "Stereo3DBush") == 0) {
     int pct = atoi(value);
     if (pct < 0) pct = 0;
@@ -521,6 +534,8 @@ void Platform3DS_LoadRuntimeSettings(void) {
   g_stereo_scenery = 100;
   g_stereo_hud = 100;
   g_stereo_bush = 30;
+  g_stereo_water = 100;
+  g_stereo_map = 100;
   FILE *file = fopen("zelda3.ini", "rb");
   if (!file) {
     Platform3DS_ApplyAutoDisplayDefaults();
@@ -545,9 +560,9 @@ void Platform3DS_LoadRuntimeSettings(void) {
     LoadRuntimeSetting(Trim(text), Trim(equals + 1));
   }
   fclose(file);
-  Platform3DS_LogRuntime("Stereo settings: depth=%d body=%d scenery=%d hud=%d bush=%d wide_hud=%d",
+  Platform3DS_LogRuntime("Stereo settings: depth=%d body=%d scenery=%d hud=%d bush=%d water=%d map=%d wide_hud=%d",
                          g_stereo_depth, g_stereo_body, g_stereo_scenery,
-                         g_stereo_hud, g_stereo_bush, (int)g_wide_hud_anchor);
+                         g_stereo_hud, g_stereo_bush, g_stereo_water, g_stereo_map, (int)g_wide_hud_anchor);
   Platform3DS_ApplyAutoDisplayDefaults();
 }
 
@@ -1168,6 +1183,18 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
     /* Overworld only: dungeon graphics reuse the same character numbers. */
     const bool indoors = g_ram[0x1B] != 0;
     PpuGpuSetPopTiles(pop_chars, pop_roles, indoors ? 0 : pop_count);
+    /* Water (deep 0x08, shallow 0x09 in the engine's tile-behavior table)
+     * sits slightly behind the ground. */
+    static uint8_t water_bits[64];
+    memset(water_bits, 0, sizeof(water_bits));
+    const uint8 *attr = GetMap8toTileAttr();
+    /* The tile-attribute table describes the overworld; indoors the same
+     * character numbers mean other things. */
+    if (attr && !indoors)
+      for (unsigned c = 0; c < 512; c++)
+        if (attr[c] == 0x08 || attr[c] == 0x09)
+          water_bits[c >> 3] |= (uint8_t)(1u << (c & 7));
+    PpuGpuSetWater(1000.0f * g_stereo_water / 100.0f, water_bits);
   }
   if (gpu_image) {
     /* Pin the HUD only while playing. The pause menu, game-over screen, file
@@ -1284,6 +1311,32 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
       image.tex = eye == 0 ? (C3D_Tex*)PpuGpuOutput() : right_tex;
     Platform3DS_ClearBlackTarget(target);
     C2D_SceneBegin(target);
+    if (stereo && !right_tex && PpuGpuMode7Frame() && g_stereo_map > 0) {
+      /* Mode 7 (world map, bird flight) renders on the CPU as one flat image.
+       * Draw it in thin horizontal strips whose parallax grows toward the
+       * top: the far edge of the map plane sits deep, the near edge close to
+       * the screen, so the plane appears tilted away from the viewer. */
+      const float tilt = 0.9f * g_stereo_map / 100.0f;
+      const int strips = (int)(source_height / 4.0f) > 1 ? (int)(source_height / 4.0f) : 1;
+      const float eye_sign = eye == 0 ? -1.0f : 1.0f;
+      const float base_y = (GSP_SCREEN_WIDTH - draw_height) * 0.5f;
+      const float tex_top = g_top_subtexture.top, tex_bottom = g_top_subtexture.bottom;
+      for (int k = 0; k < strips; k++) {
+        const float t0 = (float)k / strips, t1 = (float)(k + 1) / strips;
+        const float mid = 0.5f * (t0 + t1);
+        Tex3DS_SubTexture strip = g_top_subtexture;
+        strip.top = tex_top + (tex_bottom - tex_top) * t0;
+        strip.bottom = tex_top + (tex_bottom - tex_top) * t1;
+        strip.height = (u16)(source_height / strips + 0.5f);
+        C2D_Image strip_image = { .tex = image.tex, .subtex = &strip };
+        C2D_DrawParams sp = params;
+        sp.pos.x = base_x + eye_sign * kStereoSeparation[g_stereo_depth] * slider * 0.5f *
+                   (1.0f + tilt * (1.0f - 2.0f * mid));
+        sp.pos.y = base_y + draw_height * t0;
+        sp.pos.h = draw_height * (t1 - t0) + (k + 1 < strips ? 0.5f : 0.0f);
+        Platform3DS_DrawMappedImage(strip_image, &sp, ConfigureArgbTextureEnv);
+      }
+    } else
     Platform3DS_DrawMappedImage(image, &params, gpu_image ? ConfigureRgb565TextureEnv : ConfigureArgbTextureEnv);
     if (g_show_fps) {
       char label[28];

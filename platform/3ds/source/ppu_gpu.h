@@ -35,6 +35,9 @@ void PpuGpuSetScenery(float term);
 void PpuGpuSetHudPop(float term);
 // Strength of the bush lean, percent of the scenery lean (100 = full).
 void PpuGpuSetBushPercent(unsigned percent);
+void PpuGpuSetMode7(bool on);
+bool PpuGpuMode7Frame(void);
+void PpuGpuSetWater(float term,const uint8_t *bits64);
 void PpuGpuSetPopTiles(const uint16_t *chars,const uint8_t *roles,unsigned count);
 void PpuGpuWriteDiagnostics(FILE *file);
 const uint32_t *PpuGpuReadback(void);

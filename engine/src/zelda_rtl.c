@@ -904,6 +904,7 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   bool gpu_candidate = (render_flags & kPpuRenderFlags_Old3DS) && PpuGpuCanAttempt();
   // The intro/title Triforce is a sprite; give sprites extra depth there.
   PpuGpuSetSpriteDepth(main_module_index == 0 ? 32000.f : 6700.f);
+  PpuGpuSetMode7(g_zenv.ppu->mode == 7);
   if (gpu_candidate) {
     // The GPU consumes register/tile/OAM state; do not rasterize or rebuild
     // E11's software background cache on a GPU frame.
