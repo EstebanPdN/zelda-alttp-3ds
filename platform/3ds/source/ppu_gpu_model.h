@@ -31,7 +31,7 @@ typedef struct {
   // ground plane, 4096 = fully raised). Other groups leave these zero.
   uint16_t lean0,lean1;
 } PicaQuad;
-enum { PICA_LEAN_ONE=4096, PICA_LEAN_PIXELS=32 };
+enum { PICA_LEAN_ONE=4096, PICA_LEAN_PIXELS=32, PICA_HUD_ROWS=64 };
 // Groups 0/2: main/sub backdrop and BG. 1/3: their OBJ, in OAM order.
 // Groups 4..19: compose flags subtract=1 half=2 clip=4 prevent=8.
 typedef bool PicaEmit(void *context, unsigned group, const PicaQuad *quad);
@@ -48,7 +48,21 @@ typedef struct {
   uint32_t quads[PICA_GROUPS];
   uint16_t bandEnd[PICA_MAX_LINES],commonEnd[PICA_MAX_LINES],layerEnd[PICA_MAX_LINES];
   bool sharedWindow;
+  // Wide mode: pin the left/right halves of the HUD (BG3, top rows) to the
+  // screen edges instead of leaving it centered.
+  bool hudAnchor;
+  // Scenery lean: tall high-priority tiles (trees, roofs, pillars) and the
+  // listed liftable tiles (bushes) keep their base on the ground while the
+  // top pops forward. popChar/popRole list tile characters and their place in
+  // a 16x16 block (0=TL 1=TR 2=BL 3=BR).
+  bool scenery;
+  unsigned bushPercent; // strength of the liftable-tile lean, 100 = full
+  unsigned popCount;
+  uint16_t popChar[32];
+  uint8_t popRole[32];
 } PicaFrame;
+#define PICA_SCENERY_FLAG 0x8000u
+extern int g_picaHudDebug[12]; // diagnostics only
 void PicaAtlasInit(PicaAtlas *cache, uint32_t *pixels);
 void PicaAtlasBegin(PicaAtlas *cache);
 void PicaCaptureLine(PicaLine *out, const Ppu *ppu, unsigned y);

@@ -15,10 +15,14 @@
 .fvec eyeParams
 ; spriteParams.x = layer term of a fully raised sprite point (lean 4096);
 ; raised on the title screen so the Triforce pops out
+; spriteParams.y = extra term for fully raised scenery (trees, roofs, bushes)
+; spriteParams.z = extra forward shift for the HUD and dialog boxes
 .fvec spriteParams
 .constf positionOffset(-1.0, 1.0, 0.0, 0.0)
 .constf one(1.0, 1.0, 1.0, 1.0)
 .constf spriteK(-0.75, 1.75, 0.0, 0.0)
+.constf leanBias(-2.0, -8192.0, 0.0, 0.0)
+.constf kMid(1.5, 8000.0, 30000.0, 4096.0)
 .constf recess(-2500.0, 0.0, 0.0, 0.0)
 .constf ground(1920.0, 0.0, 0.0, 0.0)
 .constf scale(0.000244140625, 0.000244140625, 0.003921568627451, 1.0)
@@ -41,15 +45,26 @@
     add r1, -ground.xxxx, r1
     max r1, r1, r5
     min r1, r1, r3.wwww
-    ; r6 = 1 for sprites (w>=2), 0 for BG layers (w=1)
-    add r6, -one.xxxx, inpos.wwww
-    min r6, r6, one.xxxx
-    ; sprite layer term = lean * spriteParams.x, lean = (w-2)/4096: feet at
-    ; the ground plane (0), upper body raised, same shift for a whole row
-    add r7, inpos.wwww, -one.xxxx
-    add r7, r7, -one.xxxx
-    max r7, r7, recess.yyyy
-    mul r7, r7, scale.xxxx
+    ; vertex w: 1 = plain layer, 2..4098 = sprite with lean 0..4096,
+    ; 8192..12288 = scenery (tall tiles, bushes) with lean 0..4096
+    slt r6, kMid.xxxx, inpos.wwww
+    slt r9, kMid.yyyy, inpos.wwww
+    add r6, r6, -r9
+    ; scenery: term = lean * (layer term + spriteParams.y), base stays grounded
+    add r7, leanBias.yyyy, inpos.wwww
+    max r7, recess.yyyy, r7
+    min r7, kMid.wwww, r7
+    mul r7, scale.xxxx, r7
+    add r5, r1, r8.yyyy
+    mul r7, r7, r5
+    add r7, r7, -r1
+    mul r7, r7, r9
+    add r1, r1, r7
+    ; sprites: term = lean * spriteParams.x (feet on the ground plane)
+    add r7, leanBias.xxxx, inpos.wwww
+    max r7, recess.yyyy, r7
+    min r7, kMid.wwww, r7
+    mul r7, scale.xxxx, r7
     mul r7, r7, r8.xxxx
     add r5, r7, -r1
     mul r5, r5, r6
@@ -58,6 +73,10 @@
     mul r4, spriteK.xxxx, r6
     add r4, one.xxxx, r4
     mul r1, r1, r4
+    ; HUD / dialog (BG3 priority, depth above every sprite) pops forward
+    slt r2, kMid.zzzz, inpos.zzzz
+    mul r2, r2, r8.zzzz
+    add r1, r1, r2
     add r1, recess.xxxx, r1
     ; no parallax for the backdrop and compose quads
     sge r2, inpos.zzzz, r3.zzzz

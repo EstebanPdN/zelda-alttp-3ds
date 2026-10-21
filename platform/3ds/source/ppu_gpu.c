@@ -29,7 +29,10 @@ static struct {
   C3D_RenderTarget *mainTarget,*subTarget,*resultTarget,*resultTargetR;
   int eyeLocation,spriteLocation;
   float spriteTerm,bodyScale;
-  bool bodyScaleSet;
+  bool bodyScaleSet,hudAnchor,scenery;
+  float sceneryTerm,hudPop;
+  unsigned bushPercent;
+  unsigned popCount;uint16_t popChar[32];uint8_t popRole[32];
   float eyePx,stereoHalf;
   bool rightReady;
   DVLB_s *shader;
@@ -77,6 +80,9 @@ static bool Emit(void *ctx,unsigned group,const PicaQuad *q) {
   const bool flat=g.spriteTerm>6700.f;
   int16_t top=sprite?(int16_t)(2+(flat?4096:q->lean0)):1;
   int16_t bottom=sprite?(int16_t)(2+(flat?4096:q->lean1)):1;
+  if(!sprite && (q->lean0&PICA_SCENERY_FLAG)) {
+    top=(int16_t)(8192+(q->lean0&0x1fff));bottom=(int16_t)(8192+(q->lean1&0x1fff));
+  }
   Vertex a={q->x0,q->y0,depth,top,q->u0,q->v0,q->r,q->g,q->b,q->a};
   Vertex b=a,c=a,d=a;
   c.w=d.w=bottom;
@@ -104,7 +110,7 @@ static void BindState(void) {
   // Depth units here are q->depth>>1. 0x3880 is the SNES BG2 low-priority
   // layer (ground), which stays at screen depth; layers in front pop out.
   if(g.eyeLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.eyeLocation,g.eyePx,-14464.f,2048.f,3600.f);
-  if(g.spriteLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.spriteLocation,(g.spriteTerm>0.f?g.spriteTerm:6700.f)*(g.spriteTerm>6700.f?1.f:(g.bodyScaleSet?g.bodyScale:2.f)),0.f,0.f,0.f);
+  if(g.spriteLocation>=0) C3D_FVUnifSet(GPU_VERTEX_SHADER,g.spriteLocation,(g.spriteTerm>0.f?g.spriteTerm:6700.f)*(g.spriteTerm>6700.f?1.f:(g.bodyScaleSet?g.bodyScale:2.f)),g.sceneryTerm,g.hudPop,0.f);
   C3D_CullFace(GPU_CULL_NONE);C3D_DepthMap(true,-1.f,0.f);
   C3D_FragOpMode(GPU_FRAGOPMODE_GL);
   C3D_EarlyDepthTest(false,GPU_EARLYDEPTH_GREATER,0);
@@ -325,7 +331,8 @@ static bool GeometryProbe(bool shared) {
   }
   ResetRanges(400,height);PicaAtlasBegin(g.cache);
   PicaFrame frame={.memory=p,.lines=g.lines,.scratch=g.scratch,.atlas=g.cache,
-    .pixels=g.atlas.data,.width=400,.height=height,.emit=Emit};
+    .pixels=g.atlas.data,.width=400,.height=height,.emit=Emit,.hudAnchor=g.hudAnchor,.scenery=g.scenery,.bushPercent=g.bushPercent,.popCount=g.popCount};
+  memcpy(frame.popChar,g.popChar,sizeof(frame.popChar));memcpy(frame.popRole,g.popRole,sizeof(frame.popRole));
   bool ok=PicaBuildFrame(&frame) && (!shared || frame.sharedWindow) && Clean(g.atlas.data,g.atlas.size) && Clean(g.vertices,g.count*sizeof(Vertex));
   if(ok && C3D_FrameBegin(0)) {
     ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition(g.resultTarget);
@@ -437,7 +444,8 @@ void PpuGpuLine(Ppu *p,unsigned y) {if(y<g.height){PicaCaptureLine(&g.lines[y],p
 bool PpuGpuFinish(Ppu *p) {
   p->gpuRecording=false;uint64_t start=svcGetSystemTick();
   PicaFrame frame={.memory=g.saved,.lines=g.lines,.scratch=g.scratch,.atlas=g.cache,
-    .pixels=g.atlas.data,.width=g.width,.height=g.height,.emit=Emit};
+    .pixels=g.atlas.data,.width=g.width,.height=g.height,.emit=Emit,.hudAnchor=g.hudAnchor,.scenery=g.scenery,.bushPercent=g.bushPercent,.popCount=g.popCount};
+  memcpy(frame.popChar,g.popChar,sizeof(frame.popChar));memcpy(frame.popRole,g.popRole,sizeof(frame.popRole));
   bool ok=!p->gpuInvalidWrite && g.captured==g.height;
   if(ok) ok=PicaBuildFrame(&frame);
   g.buildUs=Us(start);g.prepareUs=g.buildUs+g.syncUs;
@@ -475,6 +483,15 @@ bool PpuGpuOutputActive(void) {return g.output;}
 void *PpuGpuOutput(void) {return g.output?&g.result:NULL;}
 void PpuGpuSetStereo(float half) {g.stereoHalf=half>0.f?half:0.f;}
 void PpuGpuSetSpriteDepth(float term) {g.spriteTerm=term;}
+void PpuGpuSetHudAnchor(bool on) {g.hudAnchor=on;}
+void PpuGpuSetScenery(float term) {g.scenery=term>0.f;g.sceneryTerm=term>0.f?term:0.f;}
+void PpuGpuSetBushPercent(unsigned percent) {g.bushPercent=percent;}
+void PpuGpuSetHudPop(float term) {g.hudPop=term>0.f?term:0.f;}
+void PpuGpuSetPopTiles(const uint16_t *chars,const uint8_t *roles,unsigned count) {
+  if(count>32)count=32;
+  g.popCount=count;
+  for(unsigned i=0;i<count;i++){g.popChar[i]=chars[i];g.popRole[i]=roles[i];}
+}
 void PpuGpuSetBodyScale(float scale) {g.bodyScale=scale>0.f?scale:0.f;g.bodyScaleSet=true;}
 void *PpuGpuOutputRight(void) {return (g.output&&g.rightReady&&g.resultTargetR)?&g.resultR:NULL;}
 bool PpuGpuDraw(void) {
@@ -494,6 +511,9 @@ bool PpuGpuDraw(void) {
   RestoreC2D();g.submitUs=Us(start);g.prepared=false;
   if(ok) {
     g.lastSubmittedSlot=g.slot;g.gpuFrames++;RecordFrame(true);
+    if(g.gpuFrames%600==0)
+      Platform3DS_LogRuntime("HUD anchor: calls=%d flag=%d extra=%d hscroll=%d vscroll=%d wh=%d map=%x usedLeft=%d usedRight=%d split=%d",
+        g_picaHudDebug[0],g_picaHudDebug[1],g_picaHudDebug[2],g_picaHudDebug[3],g_picaHudDebug[4],g_picaHudDebug[5],g_picaHudDebug[6],g_picaHudDebug[7],g_picaHudDebug[8],g_picaHudDebug[9]);
     if(g.gpuFrames==1 || g.gpuFrames==120)
       Platform3DS_LogRuntime("PICA200 gameplay submitted=%llu cpu=%llu size=%ux%u vertices=%u prepare=%lu us build=%lu us",
         g.gpuFrames,g.cpuFrames,g.width,g.height,g.count,(unsigned long)g.prepareUs,(unsigned long)g.buildUs);

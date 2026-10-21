@@ -60,6 +60,15 @@ static int g_stereo_depth = 2;
 /* Body lean: how far character upper bodies pop out, percent of the old flat
  * sprite pop (feet always stay on the ground). 0 = flat, default 200. */
 static int g_stereo_body = 200;
+/* Wide mode HUD: pinned to the screen edges (1) or centered (0). */
+static bool g_wide_hud_anchor = true;
+/* Scenery lean (trees, roofs, bushes) and HUD pop-forward, percent of the
+ * default strength; 0 turns the effect off. */
+const uint16 *GetMap16toMap8Table(void); /* engine/src/overworld.c */
+extern uint8 g_ram[131072];              /* engine/src/variables.h */
+static int g_stereo_scenery = 100;
+static int g_stereo_hud = 100;
+static int g_stereo_bush = 30; /* bush lean, percent of the scenery lean */
 static const float kStereoSeparation[4] = { 0.0f, 4.0f, 8.0f, 12.0f };
 static C3D_RenderTarget *g_top_target_right;
 static unsigned g_current_fps;
@@ -471,6 +480,23 @@ static void LoadRuntimeSetting(const char *key, const char *value) {
       g_stereo_depth = 2;
     else if (strcasecmp(value, "High") == 0 || strcmp(value, "3") == 0)
       g_stereo_depth = 3;
+  } else if (strcasecmp(key, "Stereo3DScenery") == 0) {
+    int pct = atoi(value);
+    if (pct < 0) pct = 0;
+    if (pct > 400) pct = 400;
+    g_stereo_scenery = pct;
+  } else if (strcasecmp(key, "Stereo3DBush") == 0) {
+    int pct = atoi(value);
+    if (pct < 0) pct = 0;
+    if (pct > 400) pct = 400;
+    g_stereo_bush = pct;
+  } else if (strcasecmp(key, "Stereo3DHud") == 0) {
+    int pct = atoi(value);
+    if (pct < 0) pct = 0;
+    if (pct > 400) pct = 400;
+    g_stereo_hud = pct;
+  } else if (strcasecmp(key, "WideHud") == 0) {
+    g_wide_hud_anchor = strcasecmp(value, "Center") != 0 && strcmp(value, "0") != 0;
   } else if (strcasecmp(key, "Stereo3DBody") == 0) {
     int pct = atoi(value);
     if (pct < 0) pct = 0;
@@ -491,6 +517,10 @@ void Platform3DS_LoadRuntimeSettings(void) {
   g_show_fps = false;
   g_stereo_depth = 2;
   g_stereo_body = 200;
+  g_wide_hud_anchor = true;
+  g_stereo_scenery = 100;
+  g_stereo_hud = 100;
+  g_stereo_bush = 30;
   FILE *file = fopen("zelda3.ini", "rb");
   if (!file) {
     Platform3DS_ApplyAutoDisplayDefaults();
@@ -515,6 +545,9 @@ void Platform3DS_LoadRuntimeSettings(void) {
     LoadRuntimeSetting(Trim(text), Trim(equals + 1));
   }
   fclose(file);
+  Platform3DS_LogRuntime("Stereo settings: depth=%d body=%d scenery=%d hud=%d bush=%d wide_hud=%d",
+                         g_stereo_depth, g_stereo_body, g_stereo_scenery,
+                         g_stereo_hud, g_stereo_bush, (int)g_wide_hud_anchor);
   Platform3DS_ApplyAutoDisplayDefaults();
 }
 
@@ -1113,6 +1146,40 @@ void Platform3DS_PresentTopFrame(const uint8_t *pixels, int pitch,
    * parallax (nearer SNES layers shift more). */
   if (gpu_image)
     PpuGpuSetBodyScale(g_stereo_body / 100.0f);
+  if (gpu_image) {
+    PpuGpuSetScenery(3000.0f * g_stereo_scenery / 100.0f);
+    PpuGpuSetHudPop(1200.0f * g_stereo_hud / 100.0f);
+    PpuGpuSetBushPercent((unsigned)g_stereo_bush);
+    /* Liftable bushes (map16 0x36 and 0x72a): the engine's own tile table
+     * gives the four 8x8 characters of each, in TL TR BL BR order. */
+    static uint16_t pop_chars[8];
+    static uint8_t pop_roles[8];
+    static unsigned pop_count;
+    if (!pop_count) {
+      const uint16 *map8 = GetMap16toMap8Table();
+      static const uint16_t kPopMap16[2] = { 0x36, 0x72a };
+      if (map8)
+        for (unsigned i = 0; i < 2; i++)
+          for (unsigned k = 0; k < 4; k++) {
+            pop_chars[pop_count] = map8[kPopMap16[i] * 4 + k] & 0x3ff;
+            pop_roles[pop_count++] = (uint8_t)k;
+          }
+    }
+    /* Overworld only: dungeon graphics reuse the same character numbers. */
+    const bool indoors = g_ram[0x1B] != 0;
+    PpuGpuSetPopTiles(pop_chars, pop_roles, indoors ? 0 : pop_count);
+  }
+  if (gpu_image) {
+    /* Pin the HUD only while playing. The pause menu, game-over screen, file
+     * select and title all use the same layer for full-width menus. */
+    const uint8_t module = g_ram[0x10];
+    const bool playing = module == 6 || module == 7 || module == 8 ||
+                         module == 9 || module == 10 || module == 11 ||
+                         (module >= 15 && module <= 17) || module == 19 ||
+                         (module >= 21 && module <= 23);
+    PpuGpuSetHudAnchor(g_wide_hud_anchor && playing &&
+                       g_display_mode == kPlatform3DSDisplayUltraWideMod);
+  }
   if (gpu_image)
     PpuGpuSetStereo(stereo_wanted ?
       kStereoSeparation[g_stereo_depth] * slider * 0.5f : 0.0f);

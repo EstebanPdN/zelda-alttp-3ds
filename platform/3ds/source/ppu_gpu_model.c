@@ -136,6 +136,48 @@ static bool HasLayer(const PicaFrame *f,unsigned sub,unsigned mask) {
        (!sub || f->lines[y].bytes[offsetof(Ppu,addSubscreen)]))return true;
   return false;
 }
+// HUD anchoring (wide mode). The HUD is the top rows of BG3: item and counters
+// on the left, hearts on the right, a blank tile column between them. Find
+// the blank column nearest the middle and return its pixel x, or -1 when BG3 is
+// not a HUD (dialog boxes, menus and fog have no blank column there, so they
+// stay centered).
+int g_picaHudDebug[12];
+static int HudSplit(PicaFrame *f,Ppu *p,BgLayer *bg) {
+  g_picaHudDebug[0]++;g_picaHudDebug[1]=f->hudAnchor;g_picaHudDebug[2]=p->extraLeftRight;
+  g_picaHudDebug[3]=bg->hScroll&511;g_picaHudDebug[4]=bg->vScroll;
+  g_picaHudDebug[5]=bg->tilemapWider|(bg->tilemapHigher<<1);g_picaHudDebug[6]=bg->tilemapAdr;
+  if(!f->hudAnchor || !p->extraLeftRight || (bg->hScroll&511)!=0) return -1;
+  unsigned mask=bg->tilemapHigher?511:255;
+  unsigned rows=PICA_HUD_ROWS/8;
+  bool column[32];
+  for(unsigned c=0;c<32;c++) column[c]=true;
+  for(unsigned r=0;r<rows;r++) {
+    unsigned wy=(r*8+1+bg->vScroll)&mask;
+    for(unsigned c=0;c<32;c++) {
+      unsigned tile=f->memory->vram[(bg->tilemapAdr+((wy>>3)&31)*32+c+(wy>=256?(bg->tilemapWider?0x800:0x400):0))&0x7fff];
+      // fully transparent tiles are empty, whatever their tilemap value is
+      int slot=Tile(f,(bg->tileAdr+(tile&1023)*8)&0x7fff,(tile&0x1c00)>>8,2);
+      if(slot!=-2) column[c]=false;
+    }
+  }
+  unsigned left=0,right=0;
+  for(unsigned c=0;c<32;c++) if(!column[c]) {if(c<16)left++;else right++;}
+  g_picaHudDebug[7]=left;g_picaHudDebug[8]=right;g_picaHudDebug[9]=-1;
+  if(!left||!right) return -1;
+  int split=-1,bestDistance=1000;
+  for(unsigned c=8;c<24;c++) {
+    if(!column[c])continue;
+    int d=(int)c*8+4-128;if(d<0)d=-d;
+    if(d<bestDistance){bestDistance=d;split=(int)c*8;}
+  }
+  g_picaHudDebug[9]=split;
+  return split;
+}
+static unsigned Lean(int feet,int y);
+static unsigned LeanH(int feet,int y,int height);
+static int PopRole(const PicaFrame *f,unsigned tile);
+static unsigned BushLean(const PicaFrame *f,int feet,int y);
+static unsigned BgTileWord(PicaFrame *f,const BgLayer *bg,unsigned wx,unsigned wy);
 static bool Backgrounds(PicaFrame *f,unsigned sub) {
   unsigned group=sub*2;
   SelectBands(f,0,0,sub);
@@ -158,6 +200,7 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
     if(y+h>224u+p->extraBottomCur) h=224u+p->extraBottomCur-y;
     PpuWindowSpans win;
     PpuGetWindowSpans(p,layer,!f->sharedWindow && (p->screenWindowed[sub]&(1u<<layer))!=0,&win);
+    int hudSplit=(layer==2 && y<PICA_HUD_ROWS)?HudSplit(f,p,bg):-1;
     for(unsigned i=0;i<win.nr;i++) {
       if(win.bits&(1u<<i)) continue;
       int x=win.edges[i],end=win.edges[i+1];
@@ -172,8 +215,23 @@ static bool Backgrounds(PicaFrame *f,unsigned sub) {
         if(slot==-1) return false;
         unsigned w=IntMin(8-(wx&7),end-x);
         unsigned z=layer==0?((tile&0x2000)?0xc000:0x8000):layer==1?((tile&0x2000)?0xb100:0x7100):((tile&0x2000)?0xf200:0x1200);
-        if(slot>=0 && !TileQuad(f,group,slot,x+p->extraLeftRight,y,w,h,wx&7,wy&7,
-            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127),0,0)) return false;
+        int shift=hudSplit<0?0:(x<hudSplit?-(int)p->extraLeftRight:(int)p->extraLeftRight);
+        unsigned lean0=0,lean1=0;
+        if(slot>=0 && f->scenery && layer<2) {
+          int role=PopRole(f,tile);
+          int top=(int)y-(int)(wy&7);
+          if(role>=0) {
+            int feet=top+((role>>1)?8:16);
+            lean0=PICA_SCENERY_FLAG|BushLean(f,feet,y);lean1=PICA_SCENERY_FLAG|BushLean(f,feet,y+h);
+          } else if(tile&0x2000) {
+            unsigned below=0;
+            while(below<3 && (BgTileWord(f,bg,wx,(wy+8*(below+1))&(bg->tilemapHigher?511:255))&0x2000)) below++;
+            int feet=top+8*(int)(below+1);
+            lean0=PICA_SCENERY_FLAG|Lean(feet,y);lean1=PICA_SCENERY_FLAG|Lean(feet,y+h);
+          }
+        }
+        if(slot>=0 && !TileQuad(f,group,slot,x+p->extraLeftRight+shift,y,w,h,wx&7,wy&7,
+            tile&0x4000,tile&0x8000,z,sub?255:((p->mathEnabled&(1u<<layer))?255:127),lean0,lean1)) return false;
         x+=w;
       }
     }
@@ -192,6 +250,24 @@ static unsigned Lean(int feet,int y) {
   if(up<=0)return 0;
   if(up>=PICA_LEAN_PIXELS)return PICA_LEAN_ONE;
   return (unsigned)(up*PICA_LEAN_ONE/PICA_LEAN_PIXELS);
+}
+static unsigned LeanH(int feet,int y,int height) {
+  int up=feet-y;
+  if(up<=0)return 0;
+  if(up>=height)return PICA_LEAN_ONE;
+  return (unsigned)(up*PICA_LEAN_ONE/height);
+}
+static unsigned BushLean(const PicaFrame *f,int feet,int y) {
+  unsigned lean=LeanH(feet,y,32)*f->bushPercent/100;
+  return lean>PICA_LEAN_ONE?PICA_LEAN_ONE:lean;
+}
+static int PopRole(const PicaFrame *f,unsigned tile) {
+  for(unsigned i=0;i<f->popCount;i++)if(f->popChar[i]==(tile&0x3ff))return f->popRole[i];
+  return -1;
+}
+static unsigned BgTileWord(PicaFrame *f,const BgLayer *bg,unsigned wx,unsigned wy) {
+  return f->memory->vram[(bg->tilemapAdr+((wy>>3)&31)*32+((wx>>3)&31)+
+    (wx>=256?0x400:0)+(wy>=256?(bg->tilemapWider?0x800:0x400):0))&0x7fff];
 }
 static int Root(uint8_t *parent,int i) {
   while(parent[i]!=i){parent[i]=parent[parent[i]];i=parent[i];}
