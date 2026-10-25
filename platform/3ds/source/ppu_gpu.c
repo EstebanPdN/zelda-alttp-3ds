@@ -1,5 +1,7 @@
 #include "ppu_gpu.h"
 #include "ppu_gpu_model.h"
+#include "stereo_terrain.h"
+#include "stereo_terrain_worker.h"
 #include "ppu_gpu_c3d.h"
 #include "platform_3ds.h"
 #include "alttp_pica_shader_shbin.h"
@@ -17,26 +19,30 @@ typedef struct {
   bool gpu;
 } FrameRecord;
 static struct {
-  bool initialized,ready,prepared,output,forceCpu,program;
+  bool initialized,ready,prepared,output,forceCpu,program,stereo;
   Ppu *saved,*scratch;
   PicaAtlas *cache;
   PicaLine lines[PICA_MAX_LINES];
-  C3D_Tex atlas, main, sub, result;
+  C3D_Tex atlas, main, sub, result, resultRight;
   C3D_Tex atlasPool[2];
   PicaAtlas *cachePool[2];
   Vertex *vertexPool[2];
   unsigned slot,lastSubmittedSlot;
-  C3D_RenderTarget *mainTarget,*subTarget,*resultTarget;
+  C3D_RenderTarget *mainTarget,*subTarget,*resultTarget,*resultTargetRight;
   DVLB_s *shader;
   shaderProgram_s shaderProgram;
-  int scaleLocation;
+  int scaleLocation,eyeLocation;
   C3D_AttrInfo attributes;
   C3D_BufInfo buffers;
   Vertex *vertices;
   uint32_t *readback;
   Range ranges[PICA_GROUPS];
   unsigned count,width,height,captured;
-  float invWidth,invHeight;
+  float invWidth,invHeight,eyeNdc,stereoPixels;
+  PicaTerrain terrain;
+  uint32_t terrainUs;
+  int terrainMode;
+  bool terrainActive;
   uint64_t frames,gpuFrames,cpuFrames,probePixels,probeErrors;
   uint64_t geometryPixels,geometryErrors;
   uint32_t prepareUs,syncUs,buildUs,submitUs,uploadBytes,firstBad,expected,actual;
@@ -65,10 +71,11 @@ static bool Emit(void *ctx,unsigned group,const PicaQuad *q) {
   if(range->first+range->count!=g.count) return false;
   int16_t depth=q->depth>>1;
   if(!depth) depth=1;
-  Vertex a={q->x0,q->y0,depth,1,q->u0,q->v0,q->r,q->g,q->b,q->a};
+  // Corner depths: a top-left, b top-right, c bottom-left, d bottom-right.
+  Vertex a={q->x0,q->y0,depth,q->parallaxTop,q->u0,q->v0,q->r,q->g,q->b,q->a};
   Vertex b=a,c=a,d=a;
   b.x=d.x=q->x1;b.u=d.u=q->u1;
-  c.y=d.y=q->y1;c.v=d.v=q->v1;
+  c.y=d.y=q->y1;c.v=d.v=q->v1;b.w=q->parallaxTopRight;c.w=q->parallax;d.w=q->parallaxRight;
   Vertex *v=&g.vertices[g.count];
   v[0]=a;v[1]=b;v[2]=c;v[3]=c;v[4]=b;v[5]=d;
   g.count+=6;
@@ -87,7 +94,8 @@ static void ResetTev(void) {
 }
 static void BindState(void) {
   C3D_BindProgram(&g.shaderProgram);C3D_SetAttrInfo(&g.attributes);C3D_SetBufInfo(&g.buffers);
-  C3D_FVUnifSet(GPU_VERTEX_SHADER,g.scaleLocation,g.invWidth,-g.invHeight,-1.f/32768.f,1.f);
+  C3D_FVUnifSet(GPU_VERTEX_SHADER,g.scaleLocation,g.invWidth,-g.invHeight,-1.f/32768.f,0.f);
+  C3D_FVUnifSet(GPU_VERTEX_SHADER,g.eyeLocation,g.eyeNdc,0.f,0.f,0.f);
   C3D_CullFace(GPU_CULL_NONE);C3D_DepthMap(true,-1.f,0.f);
   C3D_FragOpMode(GPU_FRAGOPMODE_GL);
   C3D_EarlyDepthTest(false,GPU_EARLYDEPTH_GREATER,0);
@@ -184,15 +192,20 @@ static void ConfigureCompose(unsigned flags) {
   C3D_TexEnvSrc(e,C3D_Alpha,GPU_CONSTANT,GPU_PREVIOUS,GPU_PREVIOUS);
   C3D_TexEnvColor(e,0xffffffff);C3D_TexEnvFunc(e,C3D_Alpha,GPU_REPLACE);
 }
-static bool DrawComposition(void) {
+static bool DrawComposition(C3D_RenderTarget *target) {
   C3D_FrameSplit(GX_CMDLIST_FLUSH);
-  C3D_RenderTargetClear(g.resultTarget,C3D_CLEAR_COLOR,0,0);
-  if(!C3D_FrameDrawOn(g.resultTarget)) return false;
+  C3D_RenderTargetClear(target,C3D_CLEAR_COLOR,0,0);
+  if(!C3D_FrameDrawOn(target)) return false;
   BindState();Viewport();
   C3D_DepthTest(false,GPU_ALWAYS,GPU_WRITE_COLOR);
   C3D_TexBind(0,&g.main);C3D_TexBind(1,&g.sub);
   for(unsigned i=0;i<16;i++) if(g.ranges[4+i].count) {ConfigureCompose(i);DrawRange(4+i);}
   return true;
+}
+// One eye: layers shifted by eye*parallax in NDC, composition unshifted.
+static bool DrawEye(float eye,C3D_RenderTarget *target) {
+  g.eyeNdc=eye;bool ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1);
+  g.eyeNdc=0;return ok&&DrawComposition(target);
 }
 static uint16_t Pack(uint16_t rgb) { return ((rgb&31)<<11)|((rgb&992)<<1)|((rgb>>9)&62)|1; }
 static uint32_t Encoded(uint16_t rgb,unsigned alpha) {
@@ -231,7 +244,7 @@ static bool ColorProbe(void) {
     PicaQuad q={0,y,512,y+8,0,4096-(int)y*16,4096,4096-(int)(y+8)*16,1,255,255,255,255};
     Emit(NULL,4+flags,&q);
   }
-  bool ok=Clean(g.vertices,g.count*sizeof(Vertex)) && DrawComposition();
+  bool ok=Clean(g.vertices,g.count*sizeof(Vertex)) && DrawComposition(g.resultTarget);
   if(ok) ok=TransferReadback(GX_TRANSFER_FMT_RGB5A1);
   RestoreC2D();C3D_FrameEnd(GX_CMDLIST_FLUSH);
   bool readbackOk=FinishReadback(512*256*2);
@@ -311,7 +324,7 @@ static bool GeometryProbe(bool shared) {
     .pixels=g.atlas.data,.width=400,.height=height,.emit=Emit};
   bool ok=PicaBuildFrame(&frame) && (!shared || frame.sharedWindow) && Clean(g.atlas.data,g.atlas.size) && Clean(g.vertices,g.count*sizeof(Vertex));
   if(ok && C3D_FrameBegin(0)) {
-    ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition();
+    ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition(g.resultTarget);
     if(ok) ok=TransferReadback(GX_TRANSFER_FMT_RGB5A1);
     RestoreC2D();C3D_FrameEnd(GX_CMDLIST_FLUSH);
     bool readbackOk=FinishReadback(512*256*2);
@@ -366,24 +379,29 @@ bool PpuGpuInit(void) {
   }
   if(!SelectBuffers(0))return false;
   if(!Target(&g.main,&g.mainTarget,GPU_RGBA8,true) || !Target(&g.sub,&g.subTarget,GPU_RGBA8,true) || !Target(&g.result,&g.resultTarget,GPU_RGBA5551,false)) return false;
+  // Stereo is optional: without VRAM for the right eye every frame stays mono.
+  if(!Target(&g.resultRight,&g.resultTargetRight,GPU_RGBA5551,false)) Platform3DS_LogRuntime("PICA200 stereo unavailable: right-eye target allocation failed");
   g.shader=DVLB_ParseFile((u32*)alttp_pica_shader_shbin,alttp_pica_shader_shbin_size);
   if(!g.shader||!g.shader->numDVLE || R_FAILED(shaderProgramInit(&g.shaderProgram))) return false;
   g.program=true;
   if(R_FAILED(shaderProgramSetVsh(&g.shaderProgram,&g.shader->DVLE[0]))) return false;
   g.scaleLocation=shaderInstanceGetUniformLocation(g.shaderProgram.vertexShader,"positionScale");
-  if(g.scaleLocation<0) {g.reason="shader-uniform";return false;}
+  g.eyeLocation=shaderInstanceGetUniformLocation(g.shaderProgram.vertexShader,"eyeShift");
+  if(g.scaleLocation<0 || g.eyeLocation<0) {g.reason="shader-uniform";return false;}
   AttrInfo_Init(&g.attributes);
   AttrInfo_AddLoader(&g.attributes,0,GPU_SHORT,4);AttrInfo_AddLoader(&g.attributes,1,GPU_SHORT,2);AttrInfo_AddLoader(&g.attributes,2,GPU_UNSIGNED_BYTE,4);
   g.ready=ColorProbe() && GeometryProbe(false) && GeometryProbe(true);g.output=g.prepared=false;return g.ready;
 }
 void PpuGpuShutdown(void) {
   if(!g.initialized) return;
+  TerrainWorker_Shutdown();
   if(PicaC3DCompatible()) PicaC3DWaitIdle();
   if(g.mainTarget) C3D_RenderTargetDelete(g.mainTarget);
   if(g.subTarget) C3D_RenderTargetDelete(g.subTarget);
   if(g.resultTarget) C3D_RenderTargetDelete(g.resultTarget);
-  C3D_Tex *textures[]={&g.atlasPool[0],&g.atlasPool[1],&g.main,&g.sub,&g.result};
-  for(unsigned i=0;i<5;i++) if(textures[i]->data) C3D_TexDelete(textures[i]);
+  if(g.resultTargetRight) C3D_RenderTargetDelete(g.resultTargetRight);
+  C3D_Tex *textures[]={&g.atlasPool[0],&g.atlasPool[1],&g.main,&g.sub,&g.result,&g.resultRight};
+  for(unsigned i=0;i<6;i++) if(textures[i]->data) C3D_TexDelete(textures[i]);
   if(g.program) shaderProgramFree(&g.shaderProgram);
   if(g.shader) DVLB_Free(g.shader);
   for(unsigned slot=0;slot<2;slot++){if(g.vertexPool[slot])linearFree(g.vertexPool[slot]);free(g.cachePool[slot]);}
@@ -410,8 +428,22 @@ bool PpuGpuBegin(Ppu *p,unsigned height) {
 void PpuGpuLine(Ppu *p,unsigned y) {if(y<g.height){PicaCaptureLine(&g.lines[y],p,y);g.captured++;}}
 bool PpuGpuFinish(Ppu *p) {
   p->gpuRecording=false;uint64_t start=svcGetSystemTick();
+  // Terrain depth only while the previous frame was drawn in stereo. The solve runs
+  // on core 1; this thread only posts jobs and places sprites on the latest result.
+  const PicaTerrain *terrain=NULL;g.terrainUs=0;g.terrainMode=0;
+  bool terrainOn=g.stereoPixels>0 && Platform3DS_GetStereoTerrain();
+  if(terrainOn) {
+    if(!g.terrainActive) TerrainWorker_RequestReset();
+    StereoTerrainSource src;g.terrainMode=StereoTerrain_GetSource(&src);
+    uint64_t t0=svcGetSystemTick();
+    if(g.terrainMode==1) TerrainWorker_Frame(&g.terrain,g.saved,&src);
+    else if(!g.terrainMode) {g.terrain.valid=false;TerrainWorker_RequestReset();}
+    g.terrainUs=Us(t0);   // mode 2 (menus over gameplay) keeps the last terrain as is
+    if(g.terrain.valid) terrain=&g.terrain;
+  }
+  g.terrainActive=terrainOn;
   PicaFrame frame={.memory=g.saved,.lines=g.lines,.scratch=g.scratch,.atlas=g.cache,
-    .pixels=g.atlas.data,.width=g.width,.height=g.height,.emit=Emit};
+    .pixels=g.atlas.data,.width=g.width,.height=g.height,.emit=Emit,.terrain=terrain};
   bool ok=!p->gpuInvalidWrite && g.captured==g.height;
   if(ok) ok=PicaBuildFrame(&frame);
   g.buildUs=Us(start);g.prepareUs=g.buildUs+g.syncUs;
@@ -447,10 +479,18 @@ void PpuGpuCpuFrame(void) {g.prepared=g.output=false;if(g.forceCpu)g.reason="thu
 bool PpuGpuPrepared(void) {return g.prepared;}
 bool PpuGpuOutputActive(void) {return g.output;}
 void *PpuGpuOutput(void) {return g.output?&g.result:NULL;}
+void *PpuGpuOutputRight(void) {return g.output&&g.stereo?&g.resultRight:NULL;}
+void PpuGpuSetStereo(float pixelsPerUnit) {g.stereoPixels=pixelsPerUnit;}
 bool PpuGpuDraw(void) {
   if(!g.prepared) return g.output;
   uint64_t start=svcGetSystemTick();
-  bool ok=DrawLayers(g.mainTarget,0)&&DrawLayers(g.subTarget,1)&&DrawComposition();
+  // Left eye shifts layers left, right eye right: positive parallax recedes behind the screen.
+  // Queue order lets the left composition consume main/sub before the right pass clears them.
+  // Vertex parallax is in eighths of a unit.
+  float k=g.resultTargetRight && g.stereoPixels>0?g.stereoPixels*g.invWidth/8.f:0;
+  bool ok=DrawEye(-k,g.resultTarget);
+  if(ok && k>0) ok=DrawEye(k,g.resultTargetRight);
+  g.stereo=ok && k>0;
   RestoreC2D();g.submitUs=Us(start);g.prepared=false;
   if(ok) {
     g.lastSubmittedSlot=g.slot;g.gpuFrames++;RecordFrame(true);
@@ -472,6 +512,9 @@ void PpuGpuWriteDiagnostics(FILE *f) {
   for(unsigned i=0;i<16;i++) fprintf(f,"%s%lu",i?",":"",(unsigned long)g.probeBandErrors[i]);
   fputc('\n',f);
   fprintf(f,"PICA resource_slots=2 current_slot=%u last_submitted_slot=%u dump_readback=CPU-uncached-VRAM timeout_ms=1000\n",g.slot,g.lastSubmittedSlot);
+  fprintf(f,"PICA stereo_pixels_per_unit=%.2f last_frame_stereo=%u\n",(double)g.stereoPixels,g.stereo);
+  fprintf(f,"PICA terrain mode=%d valid=%u render_thread_us=%lu\n",g.terrainMode,g.terrain.valid,(unsigned long)g.terrainUs);
+  TerrainWorker_Diagnostics(f);
   fputs("PICA recent-frame history: GPU preparation/submit wall spans; CPU rows describe GPU preflight only, not CPU PPU time.\n",f);
   fputs("number,gpu,prepare_us,prior_gpu_wait_us,build_us,submit_us,upload_bytes,vertices,decodes,reason\n",f);
   for(unsigned i=0;i<g.historyCount;i++) {

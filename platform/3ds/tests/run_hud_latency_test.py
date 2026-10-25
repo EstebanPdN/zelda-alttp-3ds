@@ -65,12 +65,17 @@ static void draw_bottom_sidebar_patch(void){assert(priority==0x30);drawn_health=
 static void draw_second_screen(int n){if(!ss_worker_touch_request_ticks)assert(priority>=0x30);drawn_health=live[0x6d];}
 '''+s[a:b]+fn('static void prioritize_bottom_scene(')+fn('static void prioritize_bottom_touch(')
 if 'static s32 bottom_worker_priority(' in s:code+=fn('static s32 bottom_worker_priority(')+fn('static void prioritize_bottom_hud(')
+code+='static void guide_poll_drag(void){}\n'
 code+=fn('static void request_bottom_redraw_on_state_change(')+fn('void SecondScreenSDL_BeginFrame(')+fn('static void second_screen_worker_main(')
 code+=r'''
 typedef struct {int x,y,w,h;} SDL_Rect;
 static int SDL_RenderReadPixels(void *r, const SDL_Rect *rect, int fmt, void *dst, int pitch) {assert(0);return -1;}
 #define SDL_PIXELFORMAT_RGB565 0
+#define SDL_PIXELFORMAT_ARGB8888 1
 typedef void SDL_Renderer;
+typedef void SDL_Texture;
+static int SDL_UpdateTexture(SDL_Texture *t, const SDL_Rect *r, const void *p, int pitch) {assert(0);return -1;}
+static int SDL_RenderCopy(SDL_Renderer *r, SDL_Texture *t, const SDL_Rect *s, const SDL_Rect *d) {assert(0);return -1;}
 '''
 code+='#include "'+str(r/'engine/src/platform/linux/bottom_hearts.h')+'"\n'
 code+=r'''
@@ -134,10 +139,12 @@ int main(void) {
  ss_worker_touch_request_ticks=0;ss_worker_interactive=false;ss_worker_sidebar_patch=false;
  request_bottom_redraw_on_state_change(); // settle the synthetic New-to-Old switch
  ss_redraw_requests=0;ss_frame_ready=false;done_ready=false;priority=0x31;
- ss_display_hearts=(BottomHearts){.valid=true,.count=3,.size=16,.capacity=24,.health=8};
- for(int i=0;i<3;i++)ss_display_hearts.rect[i]=(SDL_Rect){224+i*20,140,16,16};
+ ss_display_hearts=(BottomHearts){.valid=true,.count=3,.size=11,.capacity=24,.health=8};
+ for(int i=0;i<3;i++){
+   ss_display_hearts.rect[i]=(SDL_Rect){15+i*11,188,11,11};
+   for(int p=0;p<11*11;p++){ss_display_hearts.cell[i][0][p]=0;ss_display_hearts.cell[i][1][p]=ss_display_hearts.cell[i][2][p]=0xf800;}
+ }
  ss_old_display_valid=true;
- for(int i=0;i<64;i++){bottom_heart_glyphs[0][i]=0;bottom_heart_glyphs[1][i]=0xffff0000;bottom_heart_glyphs[2][i]=0xffff0000;}
  int old_signals=signals;
  for(int health=24;health>=0;health-=4){
    int old_presents=presents;live[0x6d]=health;SecondScreenSDL_BeginFrame(1);
@@ -152,12 +159,16 @@ int main(void) {
  ss_worker_hearts[0]=ss_display_hearts;ss_worker_hearts[0].health=24;
  ss_front_buffer=0;ss_frame_ready=true;SecondScreenSDL_Update(1);
  assert(ss_display_hearts.health==0 && presents==old_presents+1);
- // A capacity/half-magic mismatch and hidden tabs must not draw a stale layout.
+ // A capacity/half-magic mismatch must not draw a stale layout.
  live[0x6d]=24;live[0x6c]=32;old_presents=presents;
  SecondScreenSDL_Update(1);assert(presents==old_presents);
  live[0x6c]=24;live[0x7b]=1;SecondScreenSDL_Update(1);assert(presents==old_presents);
- live[0x7b]=0;tab=TAB_SETTINGS;SecondScreenSDL_Update(1);assert(presents==old_presents);
- tab=TAB_MAP;SecondScreenSDL_Update(1);assert(presents==old_presents+1);
+ // Every game panel (Settings too) shows the status bar hearts.
+ live[0x7b]=0;tab=TAB_SETTINGS;SecondScreenSDL_Update(1);assert(presents==old_presents+1);
+ // A displayed frame that captured no hearts (cinema) is never patched.
+ ss_display_hearts.valid=false;live[0x6d]=8;old_presents=presents;
+ SecondScreenSDL_Update(1);assert(presents==old_presents);
+ ss_display_hearts.valid=true;tab=TAB_MAP;SecondScreenSDL_Update(1);assert(presents==old_presents+1);
  // A dropped GPU frame retains the image even when no further UI changes.
  gpu_active=false;ss_frame_ready=true;old_presents=presents;
  SecondScreenSDL_Update(1);assert(ss_present_retry && presents==old_presents);
@@ -181,7 +192,7 @@ int main(void) {
   SecondScreenSDL_Update(1);assert(ss_worker_busy&&presents==old_presents);
   assert(signals==old_signals&&waits==old_waits);
  }
- puts("PASS same-frame completion on both models with zero extra jobs/waits; startup and dropped-frame retry on both models; retained hearts while worker busy: no job/priority changes, immediate latest health, no unchanged-glyph upload, worker buffers untouched, completed-map reconciliation, capacity/half-magic/hidden-tab guards; fallback damage/healing invalidation, queued latest health, HUD-before-map dispatch, busy-map fairness, scene/touch priority, New unchanged and idle restoration");
+ puts("PASS same-frame completion on both models with zero extra jobs/waits; startup and dropped-frame retry on both models; retained hearts while worker busy: no job/priority changes, immediate latest health, no unchanged-glyph upload, worker buffers untouched, completed-map reconciliation, capacity/half-magic/no-heart-frame guards, hearts on every game panel; fallback damage/healing invalidation, queued latest health, HUD-before-map dispatch, busy-map fairness, scene/touch priority, New unchanged and idle restoration");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='alttp-hud-latency-') as t:

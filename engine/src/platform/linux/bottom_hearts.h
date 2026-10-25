@@ -1,44 +1,50 @@
 #ifndef ZELDA3_BOTTOM_HEARTS_H_
 #define ZELDA3_BOTTOM_HEARTS_H_
 
-// Old-only retained heart layer. Worker captures the underlying pixels before
-// drawing hearts; main owns a separate display copy and never touches SDL or
-// worker buffers on a damage/healing update. HUD glyph alpha is binary (the
-// SS_DrawTile palette emits either transparent or opaque pixels).
+// Old-only retained heart layer. The worker draws every heart cell in all three
+// states over that cell's own background and keeps the RGB565 results; main
+// owns a separate display copy and never touches SDL or worker buffers on a
+// damage/healing update, it only copies prepared cells. The hearts have soft
+// alpha edges, so cells are rendered by SDL rather than blended here.
+enum { kBottomHeartMaxSize = 12 };
+
 typedef struct BottomHearts {
   bool valid;
   int count, size, health, capacity, half_magic;
   SDL_Rect rect[20];
-  uint16_t under[20][16 * 16];
+  uint16_t cell[20][3][kBottomHeartMaxSize * kBottomHeartMaxSize]; // empty, half, full
 } BottomHearts;
 
-static uint32_t bottom_heart_glyphs[3][64]; // empty, half, full; immutable per ROM
-
-static void BottomHearts_LoadGlyphs(const uint32_t *sheet, int stride,
-                                   const int cells[3], int cols) {
-  for (int g = 0; g < 3; g++)
-    for (int y = 0; y < 8; y++)
-      memcpy(&bottom_heart_glyphs[g][y * 8],
-        sheet + (cells[g] / cols * 8 + y) * stride + cells[g] % cols * 8,
-        8 * sizeof(uint32_t));
-}
-
+// draw(glyph, x, y) renders one heart (0 empty, 1 half, 2 full). scratch is an
+// ARGB8888 BLENDMODE_NONE texture of at least size x size that puts each cell's
+// background back between states; the cell is left as it was found.
 static void BottomHearts_Capture(BottomHearts *h, SDL_Renderer *renderer,
+    SDL_Texture *scratch, void (*draw)(int glyph, int x, int y),
     int count, int size, int columns, int step, int x, int y,
     int health, int capacity, int half_magic) {
   h->valid = false;
-  if (count < 1 || count > 20 || size < 1 || size > 16 || columns < 1)
+  if (count < 1 || count > 20 || size < 1 || size > kBottomHeartMaxSize ||
+      columns < 1 || !scratch || !draw)
     return;
   h->count = count; h->size = size; h->health = health;
   h->capacity = capacity; h->half_magic = half_magic;
+  SDL_Rect src = {0, 0, size, size};
+  uint32_t under[kBottomHeartMaxSize * kBottomHeartMaxSize];
   for (int i = 0; i < count; i++) {
     SDL_Rect rect = {x + i % columns * step, y + i / columns * step, size, size};
     if (rect.x < 0 || rect.y < 0 || rect.x + size > 320 || rect.y + size > 240)
       return;
     h->rect[i] = rect;
-    if (SDL_RenderReadPixels(renderer, &rect, SDL_PIXELFORMAT_RGB565,
-                            h->under[i], size * 2) != 0)
+    if (SDL_RenderReadPixels(renderer, &rect, SDL_PIXELFORMAT_ARGB8888, under, size * 4) != 0 ||
+        SDL_UpdateTexture(scratch, &src, under, size * 4) != 0)
       return;
+    for (int g = 0; g < 3; g++) {
+      draw(g, rect.x, rect.y);
+      if (SDL_RenderReadPixels(renderer, &rect, SDL_PIXELFORMAT_RGB565,
+                              h->cell[i][g], size * 2) != 0)
+        return;
+      SDL_RenderCopy(renderer, scratch, &src, &rect);
+    }
   }
   h->valid = true;
 }
@@ -49,7 +55,7 @@ static int BottomHearts_Glyph(int health, int i) {
 }
 
 // Returns the number of replaced heart cells. No allocation, renderer calls,
-// locks, map work, or changes outside those cells. At most 5,120 pixels.
+// locks, map work, or changes outside those cells. At most 2,880 pixels.
 static int BottomHearts_Apply(BottomHearts *h, uint8_t *pixels, int pitch,
                             int health) {
   if (!h->valid || !pixels) return 0;
@@ -58,16 +64,9 @@ static int BottomHearts_Apply(BottomHearts *h, uint8_t *pixels, int pitch,
     int glyph = BottomHearts_Glyph(health, i);
     if (glyph == BottomHearts_Glyph(h->health, i)) continue;
     changed++;
-    for (int y = 0; y < size; y++) {
-      uint16_t *row = (uint16_t *)(pixels + (h->rect[i].y + y) * pitch) + h->rect[i].x;
-      // Match SDL nearest-neighbor scaling's 16.16 center sample.
-      int sy = ((0x8000 * 8 / size) + y * (0x10000 * 8 / size)) >> 16;
-      for (int x = 0; x < size; x++) {
-        int sx = ((0x8000 * 8 / size) + x * (0x10000 * 8 / size)) >> 16;
-        uint32_t c = bottom_heart_glyphs[glyph][sy * 8 + sx];
-        row[x] = c >> 24 ? ((c >> 8) & 0xf800) | ((c >> 5) & 0x07e0) | ((c >> 3) & 0x001f) : h->under[i][y * size + x];
-      }
-    }
+    for (int y = 0; y < size; y++)
+      memcpy((uint16_t *)(pixels + (h->rect[i].y + y) * pitch) + h->rect[i].x,
+             &h->cell[i][glyph][y * size], size * sizeof(uint16_t));
   }
   h->health = health;
   return changed;

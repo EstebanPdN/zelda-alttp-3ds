@@ -38,31 +38,42 @@ int main(int argc, char **argv) {
       CheckInnerFill(s,x,y,23.25f,21.75f,COL_GOLD);
       cases++;
     }
-    // Every inventory position, including fractional grid coordinates. Empty
-    // synthetic inventory leaves the entire selected border interior visible.
+    // Every inventory position. Only the equipped cell has the bright gold
+    // ring (2 px above its 32 px centre), and the touch grid maps each cell's
+    // centre back to that slot.
     for(equipped=1;equipped<=20;equipped++) {
       set_color(COL_BG_MENU);SDL_RenderClear(ss_r);
       draw_items((RectFS){4.25f,4.125f,230.75f,202.5f});
-      int slot=equipped-1;
-      CheckInnerFill(s,grid_x+(slot%5)*grid_cell+8*u,
-        grid_y+(slot/5)*grid_cell+8*u,grid_cell-16*u,grid_cell-16*u,COL(46,40,16));
+      uint32_t ring=SDL_MapRGB(s->format,227,182,76);
+      for(int slot=0;slot<20;slot++) {
+        int cx=16+(slot%5)*44+16,cy=24+(slot/5)*38+16;
+        assert((ReadPixel(s,cx,cy-18)==ring)==(slot==equipped-1));
+        int col=(int)((cx-grid_x)/grid_cell),row=(int)((cy-grid_y)/grid_row_h);
+        assert(row*5+col==slot);
+      }
       cases++;
     }
-    // Nested frames used by map/gear/settings and tab controls.
+    // Stone/gold tablets used by settings rows and tabs: inset light on the
+    // first row, inset shade on the last two, at fractional positions.
     for(int phase=0;phase<8;phase++) {
       RectFS row={8+phase/8.f,40+phase/8.f,180.375f,24.625f};
+      set_color(COL_BG_MENU);SDL_RenderClear(ss_r);
       draw_settings_row(&row,true);
-      CheckInnerFill(s,row.x+3*u,row.y+3*u,row.w-6*u,row.h-6*u,COL(58,48,12));
+      int cx=(int)floorf(row.x+row.w/2),top=(int)floorf(row.y+.5f),bottom=(int)floorf(row.y+row.h+.5f);
+      assert(ReadPixel(s,cx,top)==SDL_MapRGB(s->format,255,240,192));
+      assert(ReadPixel(s,cx,bottom-1)==SDL_MapRGB(s->format,110,74,20));
+      assert(ReadPixel(s,cx,bottom-2)==SDL_MapRGB(s->format,110,74,20));
+      assert(ReadPixel(s,cx,bottom)==SDL_MapRGB(s->format,0,0,0));
       cases++;
     }
     equipped=12;set_color(COL_BG_MENU);SDL_RenderClear(ss_r);
     draw_items((RectFS){4,4,230,202});
-    slot_bg(248.25f,12.5f,44.5f);
+    draw_round_slot(260.25f,26.5f,40,SLOT_GOLD);
     RectFS row={242.25f,80.125f,72.5f,30.75f};draw_settings_row(&row,true);
-    menu_box((RectFS){242.25f,130.125f,72.5f,72.75f},COL_BOX_BORDER2);
+    draw_plaque((RectFS){242.25f,130.125f,72.5f,72.75f});
     if(argc>model+1) assert(SDL_SaveBMP(s,argv[model+1])==0);
     SDL_DestroyRenderer(ss_r);ss_r=NULL;SDL_FreeSurface(s);
   }
-  printf("PASS %u actual menu/profile cases: Old RGB565 and New ARGB8888, all 20 item selections, settings/map-style nested borders\n",cases);
+  printf("PASS %u actual menu/profile cases: Old RGB565 and New ARGB8888, all 20 item selections and their touch cells, tablet light/shade rows\n",cases);
   SDL_Quit();return 0;
 }
