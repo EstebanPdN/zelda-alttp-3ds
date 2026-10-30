@@ -1990,11 +1990,46 @@ static void PresentSetupStable(void (*draw)(void *context), void *context) {
   PresentSetupConsole();
 }
 
+/* libctru's consoleInit() points STDOUT/STDERR at a devoptab that renders each
+ * character into the console's framebuffer, and only installs it once (its
+ * firstConsoleInit flag). EndSetupConsole() then calls gfxExit(), so that
+ * framebuffer is stale -- but the devoptab stays attached, and every later
+ * printf paints glyphs over the game: the MSU loader's "Loading MSU <file>" did
+ * exactly that on each track change, which read as the track name flashing in
+ * the top-left corner.
+ *
+ * Swallowing every character makes stdout inert without tearing the console
+ * down. consolePrintChar() calls the PrintChar callback before any cursor or
+ * newline handling, so returning true there drops the byte. Only the live
+ * console is touched, never the defaultConsole template: a later consoleInit()
+ * copies that template over the live console and restores the setup screens. */
+static bool SwallowConsoleChar(void *console, int c) {
+  (void)console;
+  (void)c;
+  return true;
+}
+
+static void DetachConsoleStdio(void) {
+  /* consoleGetDefault() is the template; the live console is libctru's copy of
+   * it. consoleSelect() is the only accessor, so swap in the template to read
+   * the current pointer and put it straight back. */
+  PrintConsole *template = consoleGetDefault();
+  if (template == NULL)
+    return;
+  PrintConsole *live = consoleSelect(template);
+  consoleSelect(live);
+  if (live == NULL || live == template)
+    return;
+  live->PrintChar = SwallowConsoleChar;
+  consoleDebugInit(debugDevice_SVC);
+}
+
 static void EndSetupConsole(void) {
   if (!g_setup_console_active)
     return;
   PresentSetupConsole();
   if(!g_setup_audio_preserve)SetupAudioStop();
+  DetachConsoleStdio();
   g_startup_lcd_black = true;
   GSPGPU_SetLcdForceBlack(1);
   gfxExit();

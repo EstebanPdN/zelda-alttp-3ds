@@ -76,7 +76,7 @@ Settings live in `[Sound]` of `zelda3.ini`:
 | Key | Meaning |
 |---|---|
 | `EnableMSU` | `true`/`1` = PCM, `deluxe` = Deluxe variant. Detection fills this in when a track exists and it is not already set. |
-| `MSUPath` | Track directory relative to the working directory. A missing trailing slash is added for you. |
+| `MSUPath` | Track path **prefix** relative to the working directory. No separator is appended, so it must end with `/` for numbered files (`msu/`) or with `alttp_msu-` for the stock naming. |
 | `MSUVolume` | Mix volume, `0%`–`100%`. |
 | `ResumeMSU` | `1` = resume a track when returning to an area instead of restarting it. |
 
@@ -86,7 +86,8 @@ plays MSU at 44100 Hz, so an opuz flag is dropped with a log line.
 
 Sample rate follows MSU: 44100 Hz when MSU is active or on New 3DS, otherwise the
 previous 32000 Hz. The SPC700 interpreter's cost is fixed per frame, so the higher
-rate only adds DSP resampling — and while MSU owns the output that pass is skipped.
+rate only adds DSP resampling, and that pass stays in the path because the sound
+effects share the S-DSP with the music.
 
 Expected startup log:
 
