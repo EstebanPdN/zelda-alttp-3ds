@@ -50,6 +50,11 @@ static inline uint16_t PpuUiWord(const Ppu *p, const uint16_t *vram, unsigned x,
   return vram[address & 0x7fff];
 }
 
+static inline bool PpuUiIsPanelEdge(uint16_t word) {
+  unsigned chr = word & 1023;
+  return chr == 0xfb || chr == 0xfc;
+}
+
 // x is in the complete 400-pixel output. Return a native tile and the pixel
 // within it, or false for transparent space. Panel extensions use the engine's
 // existing border/fill tiles, never resampled lettering or embedded artwork.
@@ -67,11 +72,22 @@ static inline bool PpuUiSample(const Ppu *p, const uint16_t *vram,
     bool right = x >= 248;
     unsigned left = right ? 248 : 8, end = right ? 392 : 240;
     unsigned native_left = right ? 168 : 8, native_end = right ? 248 : 160;
+    unsigned content_left = right ? 288 : 56;
+    // The expanded inventory moves the panels outward: the left ones start at
+    // column 0 and the upper one ends at column 20, the right ones start at 22.
+    if (right) {
+      if (!PpuUiIsPanelEdge(PpuUiWord(p, vram, 168, wy)))
+        native_left = 176, native_end = 256;
+    } else if (PpuUiIsPanelEdge(PpuUiWord(p, vram, 0, wy))) {
+      native_left = 0;
+      if (PpuUiIsPanelEdge(PpuUiWord(p, vram, 160, wy))) native_end = 168;
+      content_left = 48;
+    }
     if (x < left || x >= end) return false;
     uint16_t edge = PpuUiWord(p, vram, native_left, wy);
     unsigned chr = edge & 1023;
-    if (chr != 0xfb && chr != 0xfc) return false; // gap between panels
-    unsigned content_left = right ? 288 : 56, content_end = right ? 352 : 192;
+    if (!PpuUiIsPanelEdge(edge)) return false; // gap between panels
+    unsigned content_end = content_left + native_end - native_left - 16;
     if (x < left + 8) source = native_left + x - left;
     else if (x >= end - 8) source = native_end - 8 + x - (end - 8);
     else if (x >= content_left && x < content_end)
