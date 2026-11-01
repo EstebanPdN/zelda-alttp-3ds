@@ -51,6 +51,7 @@ static inline void NativeFileLabels_Write(uint16_t *vram, unsigned base,
 static inline void NativeFileLabels_Apply(uint16_t *vram, unsigned module,
                                          const char *language, bool localized) {
   if (module < 1 || module > 4) return;
+  if (language && !strcmp(language, "ja")) return;  // its screens have their own words
   unsigned frame_row=module==4?4:2, frame=0x1000+frame_row*32;
   // A complete live plaque is the readiness guard, including translated widths.
   if ((vram[frame+2]&0x3ff)!=0x189) return;

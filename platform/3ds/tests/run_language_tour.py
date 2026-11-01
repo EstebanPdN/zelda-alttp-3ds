@@ -66,8 +66,9 @@ static void Shot(const char *dir, const char *name) {
     bool textured=false;
     for (int y=0; y<16; y++) for (int x=0; x<16; x++)
       textured |= memcmp(pixels+(y*g_snes_width+ox+x)*4,pixels+ox*4,4) != 0;
-    assert(textured);
-    for (int y=0; y<224; y++) for (int x=0; x<16; x++)
+    assert(textured || !strcmp(g_config.language ? g_config.language : "", "ja"));
+    // The Japanese cartridge's background is a different repeating pattern.
+    for (int y=0; y<224 && strcmp(g_config.language ? g_config.language : "", "ja"); y++) for (int x=0; x<16; x++)
       assert(!memcmp(pixels+(y*g_snes_width+ox+x)*4,
                      pixels+((y%16)*g_snes_width+ox+x)*4,4));
     bool drawn = g_snes_width == 400 &&

@@ -1224,7 +1224,7 @@ void Hud_DrawYButtonItems() {  // 8de3d9
   }
   // ITEM, which the French Canadian, German and French cartridges do not
   // draw ($8D:E46C).
-  if (!g_loc_rom && (!LanguageCart_Active() || LanguageCart_UsaLayout())) {
+  if (!g_loc_rom && (!LanguageCart_Active() || LanguageCart_UsaLayout() || LanguageCart_Japanese())) {
     dst[HUDXY(x + 2, 5)] = 0x246E;
     dst[HUDXY(x + 3, 5)] = 0x246F;
   }
@@ -1255,12 +1255,14 @@ void Hud_DrawAbilityBox() {  // 8de6b6
   uint16 ability_text[10];
 
   Hud_DrawBox(dst, x, 21, 19, 29, 1);
+  // The Japanese cartridge's words start a column earlier ($8D:E6F9).
+  int ability_x = LanguageCart_Japanese() ? 3 : 4;
 
   uint8 flags = link_ability_flags;
   for (int i = 0; i < 2; i++, flags <<= 1) {
     for (int j = 0; j < 3; j++, flags <<= 1) {
       if (flags & 0x80)
-        Hud_DrawNxN(dst + HUDXY(4 + j * 5, 22 + i * 2),
+        Hud_DrawNxN(dst + HUDXY(ability_x + j * 5 + (LanguageCart_Japanese() ? i : 0), 22 + i * 2),
                     Hud_Text(ability_text, kHudAbilityText, 0x8df941, 0x8df959, i * 40 + j * 10, 10), 5, 2);
     }
   }
@@ -1271,7 +1273,7 @@ void Hud_DrawAbilityBox() {  // 8de6b6
   }
   // DO text
   // not drawn by the French Canadian, German and French cartridges ($8D:E79C)
-  if (!g_loc_rom && (!LanguageCart_Active() || LanguageCart_UsaLayout())) {
+  if (!g_loc_rom && (!LanguageCart_Active() || LanguageCart_UsaLayout() || LanguageCart_Japanese())) {
     dst[HUDXY(x + 2, 21)] = 0x2482;
     dst[HUDXY(x + 3, 21)] = 0x2483;
   }
@@ -1281,7 +1283,7 @@ void Hud_DrawAbilityBox() {  // 8de6b6
   Hud_DrawItem(dst + HUDXY(12, 27), &kHudItemFlippers[link_item_flippers]);
   Hud_DrawItem(dst + HUDXY(16, 27), &kHudItemMoonPearl[link_item_moon_pearl]);
   if (link_item_gloves)
-    Hud_DrawNxN(dst + HUDXY(4, 22),
+    Hud_DrawNxN(dst + HUDXY(ability_x, 22),
                 Hud_Text(ability_text, kHudGlovesText, 0x8df919, 0x8df931, (link_item_gloves != 1) * 10, 10), 5, 2);
 }
 

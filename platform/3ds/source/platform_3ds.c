@@ -2668,6 +2668,7 @@ typedef struct RomTextLayout {
   size_t message4_size;        // ROM's message list is missing it
   bool eu_commands;
   bool build_only;             // tried only for the language being built
+  bool japanese;               // its own text and compressed font, see below
 } RomTextLayout;
 
 // Extra bytes following each command byte 0x67..0x7f, mirroring
@@ -2698,6 +2699,8 @@ static const uint8 kEuMessage4[] = {
 };
 
 static const RomTextLayout kRomTextLayouts[] = {
+  // "Zelda no Densetsu: Kamigami no Triforce": read by ExtractJapaneseText.
+  { .language_code = "ja", .dialogue_flags = 6, .build_only = true, .japanese = true },
   // Stock US layout: the US ROM itself and the translation hacks based on it.
   {
     .language_code = NULL,
@@ -2797,11 +2800,104 @@ static int EncodeEuTextCommand(uint8 command, uint8 param, uint8 *out) {
   }
 }
 
+// The Japanese cartridge has no dictionary. Its messages run from $1C:8000, each
+// ended by 0xfb: 0xfd and 0xfc take one more byte, 0xfe a command and maybe its
+// argument. Its font at $0E:8000 is 512 letters, with a mask of 5 bytes for each
+// at $0E:B844 saying which of its 40 bytes are stored.
+enum {
+  kJpText = 0xe0000, kJpTextEnd = 0xe8000, kJpFont = 0x70000, kJpFontMasks = 0x73844,
+  kJpLetters = 512, kJpLetterBytes = 44, kJpMessages = 395,
+};
+
+static bool ExtractJapaneseText(const uint8 *rom, size_t rom_size,
+                                OwnedBlock *dialogue_block, OwnedBlock *font_block) {
+  // The USA cartridge added two choice messages, 11 and 12; it has the others
+  // two places later. Written as those messages are in the USA text.
+  static const uint8 kChoice11[] = { 0xfc, 0x00, 0xf9, 0xff, 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xe4, 0xfe, 0x6f };
+  static const uint8 kChoice12[] = { 0xfc, 0x00, 0xf8, 0xff, 0xff, 0xff, 0xff, 0xf9, 0xff, 0xff, 0xe4, 0xfe, 0x6f };
+  if (rom_size < kJpTextEnd)
+    return false;
+  OwnedBlock messages[kJpMessages + 2] = {0};
+  int count = 0;
+  bool ok = true;
+  size_t p = kJpText, start = p;
+  while (ok && p < kJpTextEnd && count < kJpMessages) {
+    uint8 c = rom[p];
+    if (c == 0xfb) {
+      int at = count < 11 ? count : count + 2;
+      ok = CopyBlock(&messages[at], rom + start, p - start);
+      count++;
+      start = ++p;
+    } else if (c == 0xfd || c == 0xfc) {
+      p += 2;
+    } else if (c == 0xfe) {
+      uint8 cmd = rom[p + 1];
+      if (cmd < 0x67 || cmd >= 0x80) {
+        ok = false;
+        break;
+      }
+      p += 2 + kUsCommandArgs[cmd - 0x67];
+    } else {
+      p++;
+    }
+  }
+  ok = ok && count == kJpMessages &&
+       CopyBlock(&messages[11], kChoice11, sizeof(kChoice11)) &&
+       CopyBlock(&messages[12], kChoice12, sizeof(kChoice12));
+  OwnedBlock dictionary = {0}, packed_dictionary = {0}, packed_messages = {0};
+  OwnedBlock dialogue_parts[2] = {0}, font_parts[2] = {0};
+  static const uint8 kNoWord[1] = { 0 };
+  ok = ok && CopyBlock(&dictionary, kNoWord, 1) &&
+       PackBlocks(&dictionary, 1, &packed_dictionary) &&
+       PackBlocks(messages, kJpMessages + 2, &packed_messages);
+  FreeBlocks(&dictionary, 1);
+  FreeBlocks(messages, kJpMessages + 2);
+  if (!ok) {
+    free(packed_dictionary.data);
+    free(packed_messages.data);
+    return false;
+  }
+  dialogue_parts[0] = packed_dictionary;
+  dialogue_parts[1] = packed_messages;
+  ok = PackBlocks(dialogue_parts, 2, dialogue_block);
+  FreeBlocks(dialogue_parts, 2);
+  if (!ok)
+    return false;
+  uint8 *letters = calloc(kJpLetters, kJpLetterBytes);
+  size_t from = kJpFont;
+  for (int g = 0; letters && g < kJpLetters; g++) {
+    const uint8 *mask = rom + kJpFontMasks + g * 5;
+    uint8 *to = letters + g * kJpLetterBytes;
+    // The first stored byte is byte 4 of the letter: its first line is blank.
+    for (int bit = 0; bit < 40; bit++) {
+      if (mask[bit >> 3] & (0x80 >> (bit & 7))) {
+        if (bit + 4 < kJpLetterBytes)
+          to[bit + 4] = rom[from];
+        from++;
+      }
+    }
+  }
+  static const uint8 kNoWidths[1] = { 0 };
+  ok = letters && CopyBlock(&font_parts[0], letters, kJpLetters * kJpLetterBytes) &&
+       CopyBlock(&font_parts[1], kNoWidths, 1) &&
+       PackBlocks(font_parts, 2, font_block);
+  free(letters);
+  FreeBlocks(font_parts, 2);
+  if (!ok) {
+    free(dialogue_block->data);
+    dialogue_block->data = NULL;
+    dialogue_block->size = 0;
+  }
+  return ok;
+}
+
 static bool ExtractTranslationWithLayout(const uint8 *rom, size_t rom_size,
                                          const RomTextLayout *layout,
                                          OwnedBlock *dialogue_block,
                                          OwnedBlock *font_block) {
   enum { kRomSize = 1048576 };
+  if (layout->japanese)
+    return ExtractJapaneseText(rom, rom_size, dialogue_block, font_block);
   dialogue_block->data = NULL;
   dialogue_block->size = 0;
   font_block->data = NULL;

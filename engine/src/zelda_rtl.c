@@ -34,6 +34,7 @@
 #include "dungeon.h"
 #include "config.h"
 #include "quality_of_life.h"
+#include "language_cart.h"
 #ifdef __3DS__
 #include <3ds.h>
 #include "platform_3ds.h"
@@ -1398,7 +1399,7 @@ static void ZeldaDrawPpuLines(Ppu *ppu, int height,
   SimpleHdma_Init(&hdma_chans[1], &g_zenv.dma->channel[7]);
 
   for (int i = 0; i <= height; i++) {
-    if (i == 128 && irq_state) {
+    if (i == (LanguageCart_Japanese() ? 0x38 : 128) && irq_state) {  // $80:8206
       ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8);
       ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8 >> 8);
       ppu_write(ppu, (uint8)BG3VOFS, 0);
@@ -1435,7 +1436,7 @@ static bool ZeldaTryGpuPpu(Ppu *ppu, int height, uint8 irq_state) {
   SimpleHdma_Init(&chans[0], &g_zenv.dma->channel[6]);
   SimpleHdma_Init(&chans[1], &g_zenv.dma->channel[7]);
   for (int i=0; i<=height; i++) {
-    if (i==128 && irq_state) {
+    if (i==(LanguageCart_Japanese() ? 0x38 : 128) && irq_state) {
       ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8);
       ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8 >> 8);
       ppu_write(ppu, (uint8)BG3VOFS, 0);
@@ -3105,6 +3106,7 @@ void ZeldaReadSram() {
     }
     EmuSynchronizeWholeState();
     Localized_AfterSramLoad();
+    LanguageCart_AfterSramLoad(g_zenv.sram, &g_ram[0xf000]);
     return;
   }
 #ifdef __3DS__
@@ -3129,6 +3131,7 @@ void ZeldaReadSram() {
   }
 #endif
   Localized_AfterSramLoad();
+  LanguageCart_AfterSramLoad(g_zenv.sram, &g_ram[0xf000]);
 }
 
 void ZeldaWriteSram() {

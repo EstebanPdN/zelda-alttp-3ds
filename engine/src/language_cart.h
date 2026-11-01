@@ -27,6 +27,16 @@ int LanguageCart_ApplyToAssets(const char *language);
 // the menus), else NULL.
 const uint8 *LanguageCart_Table(uint32 addr, size_t size);
 
+// True while the Japanese cartridge is in use: its file screens, keyboard and
+// names are its own (select_file.c).
+bool LanguageCart_Japanese(void);
+
+// Brings the names in this SRAM and the game in `wram_save` to the font in use.
+void LanguageCart_AfterSramLoad(uint8 *sram, uint8 *wram_save);
+
+// Its bytes at a LoROM address, whatever the layout.
+const uint8 *LanguageCart_RawBytes(uint32 snes_addr, size_t size);
+
 // True while a translated cartridge is in use: the menus read its words.
 bool LanguageCart_Active(void);
 

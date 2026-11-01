@@ -2558,7 +2558,45 @@ enum {
 #define TEXTCMD_PARAM(a) ((a) >> 6)
 #define TEXTCMD_MK(c, x, m) ((c) << 6 | (x) << 1 | (m))
 
+// The Japanese cartridge's text: bit 2 of the dialogue flags. Letters come from
+// a font of 512, so in the character buffer each takes two bytes, 0xf0 or 0xf1
+// and the low byte; commands keep the USA bytes ($8E:EE86). Lone USA letters,
+// such as those of a randomizer message, go to the same letter of this font.
+enum {
+  kTextJp_Page0 = 0xf0,
+  kTextJp_Page1 = 0xf1,
+  kTextJp_Blank = 0xff,
+  kTextJp_Digit0 = 0xa0,
+  kTextJp_LineEnd = 157,  // the first column that a letter cannot start from
+  kTextJp_Width = 11,
+  kTextJp_GlyphBytes = 44,
+};
+
+static uint8 Text_UsLetterToJapanese(uint8 a) {
+  if (a < 26)
+    return 0xaa + a;
+  if (a < 52)
+    return 0xaa + a - 26;
+  if (a >= 0x34 && a < 0x3e)
+    return kTextJp_Digit0 + a - 0x34;
+  switch (a) {
+  case 0x3e: return 0xc7;
+  case 0x3f: return 0xc6;
+  case 0x40: return 0xc9;
+  case 0x41: return 0xcd;
+  case 0x42: return 0xc8;
+  case 0x43: return 0xcc;
+  default: return kTextJp_Blank;
+  }
+}
+
 uint32 Text_DecodeCmd(uint8 a, const uint8 *src) {
+  if (g_zenv.dialogue_flags & 4) {
+    if (a == kTextJp_Page0 || a == kTextJp_Page1)
+      return TEXTCMD_MK((a & 1) << 8 | *src, kTextCmd_IsLetter, 1);
+    if (a < kTextCommandStart_US)
+      return TEXTCMD_MK(Text_UsLetterToJapanese(a), kTextCmd_IsLetter, 0);
+  }
   if ((g_zenv.dialogue_flags & 1) == 0) {
     // US encoding
     if (a < kTextCommandStart_US)
@@ -2621,6 +2659,60 @@ uint32 Text_DecodeCmd(uint8 a, const uint8 *src) {
 }
 
 // Perform initial parsing of the string, expanding words, processing some commands, etc.
+// $8E:EE86 and the commands from $8E:EF7D.
+static void Text_LoadJapanese(MemBlk text) {
+  static const uint8 kCommandArgs[25] = { 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0 };
+  const uint8 *src = text.ptr, *src_end = src + text.size;
+  uint8 *dst = messaging_text_buffer;
+  while (src < src_end) {
+    uint8 c = *src++;
+    if (c < 0xf6 || c == kTextJp_Blank) {
+      *dst++ = kTextJp_Page0;
+      *dst++ = c;
+    } else if (c == 0xfd) {
+      *dst++ = kTextJp_Page1;
+      *dst++ = *src++;
+    } else if (c >= 0xf6 && c <= 0xf9) {
+      *dst++ = kTextCommandStart_US + kTextCmd_Scroll + (c - 0xf6);
+    } else if (c == 0xfa) {
+      *dst++ = kTextCommandStart_US + kTextCmd_Waitkey;
+    } else if (c == 0xfc) {
+      *dst++ = kTextCommandStart_US + kTextCmd_Speed;
+      *dst++ = *src++;
+    } else if (c == 0xfe) {
+      int cmd = *src++ - kTextCommandStart_US;
+      assert(cmd >= 0 && cmd < 25);
+      switch (cmd) {
+      case kTextCmd_Name:
+        dst = Text_WritePlayerName(dst);
+        break;
+      case kTextCmd_Window:
+        text_render_state = *src++;
+        break;
+      case kTextCmd_Number: {
+        uint8 t = *src++;
+        uint8 v = dialogue_number[t >> 1];
+        *dst++ = kTextJp_Page0;
+        *dst++ = kTextJp_Digit0 + ((t & 1) ? v >> 4 : v & 0xf);
+        break;
+      }
+      case kTextCmd_Position:
+        text_msgbox_topleft = Text_Position(*src++);
+        break;
+      case kTextCmd_Color:
+        text_tilemap_cur = ((0x387F & 0xe300) | 0x180) | (*src++ << 10) & 0x3c00;
+        break;
+      default:
+        *dst++ = kTextCommandStart_US + cmd;
+        if (kCommandArgs[cmd])
+          *dst++ = *src++;
+        break;
+      }
+    }
+  }
+  *dst = 0x7f;
+}
+
 void Text_LoadCharacterBuffer() {  // 8ec4e2
   if (Rando_RenderGoalMessage(dialogue_message_index, messaging_text_buffer)) {
     dialogue_msg_read_pos = 0;
@@ -2650,6 +2742,11 @@ void Text_LoadCharacterBuffer() {  // 8ec4e2
   MemBlk dictionary = FindIndexInMemblk(g_zenv.dialogue_blk, 0);
   MemBlk dialogue = FindIndexInMemblk(g_zenv.dialogue_blk, 1);
   MemBlk text_str = FindIndexInMemblk(dialogue, dialogue_message_index);
+  if (g_zenv.dialogue_flags & 4) {
+    Text_LoadJapanese(text_str);
+    dialogue_msg_read_pos = 0;
+    return;
+  }
   const uint8 *src = text_str.ptr, *src_end = src + text_str.size;
   uint8 *dst = messaging_text_buffer;
   while (src < src_end) {
@@ -2715,6 +2812,19 @@ void Text_LoadCharacterBuffer() {  // 8ec4e2
 uint8 *Text_WritePlayerName(uint8 *p) {  // 8ec5b3
   uint8 slot = srm_var1;
   int offs = ((slot>>1) - 1) * 0x500;
+  if (g_zenv.dialogue_flags & 4) {
+    // The name's words become letters of the font; 0xcc is its blank ($8E:EFE9).
+    uint8 *d = p, *end = p;
+    for (int i = 0; i < 6; i++) {
+      uint16 a = WORD(g_zenv.sram[0x3d9 + offs + i * 2]);
+      uint8 g = a & 0xf | (a >> 1) & 0xf0;
+      *d++ = kTextJp_Page0;
+      *d++ = g == 0xcc ? kTextJp_Blank : g;
+      if (g != 0xcc)
+        end = d;
+    }
+    return end;
+  }
   for (int i = 0; i < 6; i++) {
     uint8 *pp = &g_zenv.sram[0x3d9 + offs + i * 2];
     uint16 a = WORD(*pp);
@@ -2933,7 +3043,54 @@ void RenderText_Draw_Finish() {  // 8eca35
   main_module_index = saved_module_for_menu;
 }
 
+// The Japanese font: each letter 11 wide, in two rows of 8 lines. Both parts of
+// a row keep their first 8 columns as pairs of bytes per line, and their last 3
+// as pairs of bytes per column, of the font's own lines ($8E:F2D7 and $8E:F3E5).
+static void VWF_RenderJapanese(int g) {
+  if (g != kTextJp_Blank)
+    sound_effect_2 = 12;
+  vwf_line_speed_cur = vwf_line_speed;
+  if (!vwf_flag_next_line && vwf_arr[vwf_var1] >= kTextJp_LineEnd && vwf_curline < 4) {
+    vwf_curline += 2;
+    vwf_flag_next_line = 1;
+  }
+  if (vwf_flag_next_line) {
+    vwf_line_ptr = kVWF_RenderCharacter_renderPos[vwf_curline>>1];
+    vwf_var1 = kVWF_RenderCharacter_linePositions[vwf_curline>>1];
+    vwf_flag_next_line = 0;
+  }
+  const uint8 *font = FindIndexInMemblk(g_zenv.dialogue_font_blk, 0).ptr + g * kTextJp_GlyphBytes;
+  int i = vwf_var1++;
+  int left = vwf_arr[i];
+  vwf_arr[i + 1] = left + kTextJp_Width;
+  uint8 *mbuf = (uint8 *)messaging_buf;
+  for (int part = 0; part < 2; part++, font += 22) {
+    int base = vwf_line_ptr + part * 0x150;
+    for (int row = 0; row < 8; row++) {
+      for (int col = 0; col < kTextJp_Width; col++) {
+        uint8 p0, p1;
+        if (col < 8) {
+          p0 = font[row * 2] >> (7 - col) & 1;
+          p1 = font[row * 2 + 1] >> (7 - col) & 1;
+        } else {
+          p0 = font[16 + (col - 8) * 2] >> (7 - row) & 1;
+          p1 = font[17 + (col - 8) * 2] >> (7 - row) & 1;
+        }
+        int x = left + col;
+        uint8 *to = &mbuf[base + (x >> 3) * 16 + row * 2];
+        uint8 mask = kVWF_RenderCharacter_setMasks[x & 7];
+        to[0] = p0 ? to[0] | mask : to[0] & ~mask;
+        to[1] = p1 ? to[1] | mask : to[1] & ~mask;
+      }
+    }
+  }
+}
+
 void VWF_RenderSingle(int c) {  // 8ecab8
+  if (g_zenv.dialogue_flags & 4) {
+    VWF_RenderJapanese(c);
+    return;
+  }
   if (c != 0x59)
     sound_effect_2 = 12;
   vwf_line_speed_cur = vwf_line_speed;
