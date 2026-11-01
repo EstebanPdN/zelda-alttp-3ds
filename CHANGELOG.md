@@ -1,5 +1,20 @@
 # Changelog
 
+## v4.1-E1
+
+Experimental pre-release.
+
+- Fixed the invisible item menu with Expanded Inventory in WIDE, which also looked like Link freezing.
+- Fixed the German name keyboard, which typed the wrong letters and functions.
+- Fixed the German copy screen's slot numbers and fairy position.
+- Fixed the Russian Game Over title.
+- Reviewed all 396 messages in every language. Corrected typos, untranslated words, wrong hints and missing letters in Spanish, Portuguese, Italian and Russian.
+- Fixed text cut off by the dialogue box in Portuguese, Italian and Russian.
+- Added missing accented letters to Portuguese and Italian.
+- Translated the last English message in Italian and the remaining English file-screen words.
+- Fixed item names, truncated ending captions and broken file-screen words in Portuguese and Italian.
+- Changed "COGE" to "TOMA" in the Spanish item menu.
+
 ## v4.0
 
 - Added English, Spanish, Portuguese, Italian, French, German and Russian game and menu translations.

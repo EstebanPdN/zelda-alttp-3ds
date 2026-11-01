@@ -2705,7 +2705,7 @@ static const RomTextLayout kRomTextLayouts[] = {
     .dialogue_flags = 2,
     .text_bank1 = 0xe0000, .text_bank2 = 0x75f40,
     .dict_pointers = 0x74703, .dict_pointer_base = 0xc703, .dict_bank = 0x70000,
-    .font_gfx = 0x70000, .font_widths = 0x74adf, .font_widths_count = 99,
+    .font_gfx = 0x70000, .font_widths = 0x74adf, .font_widths_count = 103,
     .command_start = 0x67, .switch_bank = 0x80, .finish = 0xff, .dict_base = 0x88,
     .command_args = kUsCommandArgs,
     .message4 = kUsMessage4, .message4_size = sizeof(kUsMessage4),

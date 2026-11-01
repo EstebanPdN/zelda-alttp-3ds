@@ -787,7 +787,8 @@ void Animate_GAMEOVER_Letters() {  // 88f4ca
 }
 
 void GameOverText_SweepLeft() {  // 88f4f6
-  static const uint8 kGameOverText_Tab1[8] = {0x40, 0x50, 0x60, 0x70, 0x88, 0x98, 0xa8, 0x40};
+  static const uint8 kGameOverText_Tab1Usa[8] = {0x40, 0x50, 0x60, 0x70, 0x88, 0x98, 0xa8, 0x40};
+  const uint8 *kGameOverText_Tab1 = Mods_RomTable(0x88f4ee, kGameOverText_Tab1Usa, 8);
 
   int k = flag_for_boomerang_in_place;
   cur_object_index = k;
@@ -816,7 +817,8 @@ draw:
 }
 
 void GameOverText_UnfurlRight() {  // 88f56d
-  static const uint8 kGameOverText_Tab2[8] = {0x58, 0x60, 0x68, 0x70, 0x88, 0x90, 0x98, 0xa0};
+  static const uint8 kGameOverText_Tab2Usa[8] = {0x58, 0x60, 0x68, 0x70, 0x88, 0x90, 0x98, 0xa0};
+  const uint8 *kGameOverText_Tab2 = Mods_RomTable(0x88f565, kGameOverText_Tab2Usa, 8);
 
   int k = flag_for_boomerang_in_place, end;
   cur_object_index = k;

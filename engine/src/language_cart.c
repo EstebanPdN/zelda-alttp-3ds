@@ -34,6 +34,9 @@ static const uint32 kLanguageTables[] = {
   0x0df569,  // kHudFluteItemText
   0x0df5a9,  // kHudMirrorItemText
   0x0df5c9,  // kHudBowItemText
+  0x08f4ee,  // kGameOverText_Tab1
+  0x08f565,  // kGameOverText_Tab2
+  0x08f5b4,  // kGameOverText_Chars
 };
 
 // Where a cartridge keeps what the game draws from it. Translations of the
@@ -250,6 +253,9 @@ const uint8 *LanguageCart_Table(uint32 addr, size_t size) {
   addr &= 0x7fffff;
   for (size_t i = 0; i < sizeof(kLanguageTables) / sizeof(kLanguageTables[0]); i++) {
     if (kLanguageTables[i] == addr) {
+      // Only the menus' tables are at known places in the other layouts.
+      if (addr >> 16 != 0x0d && !g_layout->usa_layout)
+        return NULL;
       size_t o = CartOffset(addr + g_layout->hud_shift);
       return o + size <= kCartSize ? g_cart + o : NULL;
     }
