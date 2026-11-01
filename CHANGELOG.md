@@ -1,5 +1,14 @@
 # Changelog
 
+## v4.1-E2
+
+Experimental pre-release.
+
+- Added Japanese: the complete game from the official Super Famicom cartridge, with its dialogue, title, file screens, name keyboard, item names, inventory, maps, intro and ending.
+- Translated every menu of the port into Japanese, with a new pixel font, and selected it automatically on Japanese consoles.
+- Saves stay when changing language. A name in kana shows as LINK in other languages once saved.
+- Fixed pressing up from the first file on the copy screen, which could select a slot that does not exist.
+
 ## v4.1-E1
 
 Experimental pre-release.

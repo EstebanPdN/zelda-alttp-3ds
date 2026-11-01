@@ -2,13 +2,14 @@
 // setup and updater views). The game's dialogue is a separate thing: it comes
 // from the ROM and is picked with `Language =` in zelda3.ini.
 //
-// UTF-8 Latin and Cyrillic text uses the Python-generated native pixel font.
+// UTF-8 Latin, Cyrillic and Japanese text uses the Python-generated native pixel fonts.
 #pragma once
 
 enum UiLanguage {
   kUiLanguage_English = 0,
   kUiLanguage_French = 1,
   kUiLanguage_Spanish, kUiLanguage_Portuguese, kUiLanguage_Italian, kUiLanguage_German, kUiLanguage_Russian,
+  kUiLanguage_Japanese,
   kUiLanguageCount,
 };
 

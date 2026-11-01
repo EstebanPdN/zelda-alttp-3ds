@@ -41,6 +41,8 @@ LOADER = r'''
 #include "types.h"
 #include "assets.h"
 #include "mods.h"
+bool Intro_CheckCksum(const uint8 *s) { return false; }
+void Intro_FixCksum(uint8 *s) {}
 const uint8 *g_asset_ptrs[kNumberOfAssets];
 uint32 g_asset_sizes[kNumberOfAssets];
 // This loader fixture has no official localized cartridge.

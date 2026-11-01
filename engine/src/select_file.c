@@ -583,7 +583,7 @@ static void CopyFile_SelectionJapanese(void) {  // 8cd02c
   FileSelect_DrawFairy(0x14, kFaerieY[selectfile_R16]);
   uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
   if (a & 0x2c) {
-    uint8 k = selectfile_R16;
+    int8 k = selectfile_R16;
     if (a & 8) {
       do {
         if (--k < 0) {
@@ -715,7 +715,7 @@ void CopyFile_SelectionAndBlinker() {  // 8cd13f
 
   uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
   if (a & 0x2c) {
-    uint8 k = selectfile_R16;
+    int8 k = selectfile_R16;
     if (a & 8) {
       do {
         if (--k < 0) {

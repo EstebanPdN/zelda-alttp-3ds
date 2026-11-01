@@ -2814,8 +2814,9 @@ uint8 *Text_WritePlayerName(uint8 *p) {  // 8ec5b3
   int offs = ((slot>>1) - 1) * 0x500;
   if (g_zenv.dialogue_flags & 4) {
     // The name's words become letters of the font; 0xcc is its blank ($8E:EFE9).
+    // Four of them: a longer name from another language would leave the lines.
     uint8 *d = p, *end = p;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 4; i++) {
       uint16 a = WORD(g_zenv.sram[0x3d9 + offs + i * 2]);
       uint8 g = a & 0xf | (a >> 1) & 0xf0;
       *d++ = kTextJp_Page0;

@@ -114,6 +114,8 @@ the original authors' licenses or permissions.
 | Portuguese 1.3 | GreenGoblin / Hexagon. |
 | Russian 1.01 | Chief-Net: GD, Guyver, Tigran, alex231 and Mefistotel. |
 | Official French, French Canadian and German releases | Nintendo and the original localization teams. |
+| Japanese game text and font | Official Super Famicom release, Nintendo. |
+| Japanese menu font | PixelMplus 10 and 12, Itou Hiroki; M+ bitmap fonts, Copyright (C) 2002-2013 M+ FONTS PROJECT, free to use, copy and distribute with or without modification, provided "as is" without warranty. |
 
 See [language provenance](platform/3ds/romfs/languages/README.md) for the
 specific patch versions and the local extraction workflow. Thank you also to

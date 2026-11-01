@@ -56,13 +56,13 @@ static void observe_text(const char *str,float x,float y,int scale) {
   if(!*str)return;
   int min_x=10000,min_y=10000,max_x=-1,max_y=-1,cursor=0;const char *p=str;unsigned code;
   while((code=UiFontNextCode(&p))) {
-    int rows=scale==3?15:scale==2?21:11,width=scale==3?7:scale*5;
+    int rows=UiFontGlyphRows(code,scale),width=UiFontGlyphColumns(code,scale);
     for(int yy=0;yy<rows;yy++)for(int xx=0;xx<width;xx++){
-      unsigned bits=scale==3?kNativeUiMediumGlyphs[code][yy]:scale==2?kNativeUiLargeGlyphs[code][yy]:kNativeUiGlyphs[code][yy];
-      if(bits&(1u<<(width-1-xx))){int px=cursor+xx,py=yy-(scale==3?3:2*scale);
+      unsigned bits=UiFontGlyphBits(code,scale,yy);
+      if(bits&(1u<<(width-1-xx))){int px=cursor+xx,py=yy+UiFontGlyphTop(code,scale);
         if(px<min_x)min_x=px;if(py<min_y)min_y=py;if(px>max_x)max_x=px;if(py>max_y)max_y=py;}
     }
-    cursor+=scale==3?(code==' '?5:8):(code==' '?4:6)*scale;
+    cursor+=UiFontAdvance(code,scale);
   }
   if(max_x<0)return;
   TextBox box={(int)lroundf(x)+min_x,(int)lroundf(y)+min_y,max_x-min_x+1,max_y-min_y+1,{0}};

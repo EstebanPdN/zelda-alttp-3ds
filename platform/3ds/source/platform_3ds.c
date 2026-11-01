@@ -2273,13 +2273,24 @@ static uint8_t SetupGlyph(uint32_t code, int row) {
 }
 
 static int SetupTextWidth(const char *text, int scale) {
-  return SetupTextLength(text) * 6 * scale;
+  int width = 0;
+  while (text && *text)
+    width += (UiFontJapaneseIndex(SetupNextChar(&text)) >= 0 ? 11 : 6) * scale;
+  return width;
 }
 
 static void SetupDrawChar(gfxScreen_t screen, uint32_t c, int x, int y,
                           int scale, uint16_t color) {
   if (c == ' ')
     return;
+  int japanese = UiFontJapaneseIndex(c);
+  if (japanese >= 0) {
+    for (int row = 0; row < 10; row++)
+      for (int col = 0; col < 10; col++)
+        if (kUiJapaneseGlyphs10[japanese][row] & (1 << (9 - col)))
+          SetupFillRect(screen, x + col * scale, y + (row - 2) * scale, scale, scale, color);
+    return;
+  }
   for (int row = -2; row < 9; row++) {
     uint8_t bits = SetupGlyph(c, row);
     for (int col = 0; col < 5; col++) {
@@ -2299,8 +2310,9 @@ static void SetupDrawText(gfxScreen_t screen, const char *text, int x, int y,
   while (*text) {
     if (max_width > 0 && cursor + 6 * scale > last)
       break;
-    SetupDrawChar(screen, SetupNextChar(&text), cursor, y, scale, color);
-    cursor += 6 * scale;
+    uint32_t c = SetupNextChar(&text);
+    SetupDrawChar(screen, c, cursor, y, scale, color);
+    cursor += (UiFontJapaneseIndex(c) >= 0 ? 11 : 6) * scale;
   }
 }
 
@@ -2813,8 +2825,8 @@ static bool ExtractJapaneseText(const uint8 *rom, size_t rom_size,
                                 OwnedBlock *dialogue_block, OwnedBlock *font_block) {
   // The USA cartridge added two choice messages, 11 and 12; it has the others
   // two places later. Written as those messages are in the USA text.
-  static const uint8 kChoice11[] = { 0xfc, 0x00, 0xf9, 0xff, 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xe4, 0xfe, 0x6f };
-  static const uint8 kChoice12[] = { 0xfc, 0x00, 0xf8, 0xff, 0xff, 0xff, 0xff, 0xf9, 0xff, 0xff, 0xe4, 0xfe, 0x6f };
+  static const uint8 kChoice11[] = { 0xfc, 0x00, 0xf9, 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xe4, 0xfe, 0x6f };
+  static const uint8 kChoice12[] = { 0xfc, 0x00, 0xf8, 0xff, 0xff, 0xff, 0xf9, 0xff, 0xff, 0xe4, 0xfe, 0x6f };
   if (rom_size < kJpTextEnd)
     return false;
   OwnedBlock messages[kJpMessages + 2] = {0};
@@ -4702,7 +4714,7 @@ static int LanguageFromSystem(void) {
 static bool SetupCanDraw(const char *text) {
   while (text && *text) {
     uint32_t c = SetupNextChar(&text);
-    if (c == ' ')
+    if (c == ' ' || UiFontJapaneseIndex(c) >= 0)
       continue;
     bool drawn = false;
     for (int row = -2; row < 9 && !drawn; row++)
@@ -4755,12 +4767,12 @@ static void SetupStyledButton(int x,int y,int w,int h,bool selected) {
 static void SetupMenuText(gfxScreen_t target,const char *text,int x,int y,int scale,uint16_t color) {
   unsigned code;
   while((code=UiFontNextCode(&text))) {
-    int rows=scale==3?15:scale==2?21:11,width=scale==3?7:5*scale;
+    int rows=UiFontGlyphRows(code,scale),width=UiFontGlyphColumns(code,scale);
     for(int yy=0;yy<rows;yy++)for(int xx=0;xx<width;xx++) {
-      unsigned bits=scale==3?kNativeUiMediumGlyphs[code][yy]:scale==2?kNativeUiLargeGlyphs[code][yy]:kNativeUiGlyphs[code][yy];
-      if(bits&(1u<<(width-1-xx)))SetupPutPixel(target,x+xx,y-(scale==3?3:2*scale)+yy,color);
+      unsigned bits=UiFontGlyphBits(code,scale,yy);
+      if(bits&(1u<<(width-1-xx)))SetupPutPixel(target,x+xx,y+UiFontGlyphTop(code,scale)+yy,color);
     }
-    x+=scale==3?(code==' '?5:8):(code==' '?4:6)*scale;
+    x+=UiFontAdvance(code,scale);
   }
 }
 static void SetupMenuLabel(int x,int y,int w,int h,const char *label,int scale) {
@@ -4816,14 +4828,15 @@ static int SetupWrap(gfxScreen_t target,const char *text,int x,int y,int width,i
       if(n>=(int)sizeof(line))break;
       memcpy(line,text,n);line[n]=0;
       if(UiFontWidth(line,face)>width)break;
-      if(*end==' ')space=end;
+      space=UiFontBreakAt(end,space);
       end=next;length=n;
     }
     if(*end&&space&&space>text){end=space;length=end-text;}
+    else if(*end&&!space){end=UiFontLineEnd(text,end,NULL);length=end-text;}
     if(!length)break;
     memcpy(line,text,length);line[length]=0;
     SetupMenuText(target,line,x,y+lines*(face==2?22:16),face,color);lines++;
-    text=end;while(*text==' ')text++;
+    text=UiFontSkipBreak(end);
   }
   return lines;
 }

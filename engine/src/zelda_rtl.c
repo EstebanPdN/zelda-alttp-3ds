@@ -2782,7 +2782,7 @@ static void DrawStartupLogoFrame(uint32 *pixels) {
   g_rendering_startup_logo=false;
   // Cool silver highlights on the blade only. Track the native sword's
   // descending OAM position; leave the golden hilt and title art untouched.
-  if(main_module_index==0&&submodule_index>=6) {
+  if(main_module_index==0&&submodule_index>=6&&!LanguageCart_Japanese()) {
     int shift=(int16)WORD(g_ram[0xc8])-30; // intro_sword_ypos in ending.c
     int top=84+shift,bottom=165+shift;
     if(top<0)top=0;if(bottom>224)bottom=224;
@@ -2797,7 +2797,9 @@ static void DrawStartupLogoFrame(uint32 *pixels) {
 }
 void ZeldaDrawStartupLogo(uint32 *pixels) {
   int extra=g_zenv.ppu->extraLeftRight;g_zenv.ppu->extraLeftRight=0;
-  for(int f=0;f<2000&&!(main_module_index==0&&submodule_index==8);f++)ZeldaRunFrame(0);
+  // The Japanese title ends a step sooner ($8C:C2A5).
+  int last=LanguageCart_Japanese()?7:8;
+  for(int f=0;f<2000&&!(main_module_index==0&&submodule_index==last);f++)ZeldaRunFrame(0);
   DrawStartupLogoFrame(pixels);
   ZeldaReset(true);g_zenv.ppu->extraLeftRight=extra;ZeldaClearInputLog();
 }

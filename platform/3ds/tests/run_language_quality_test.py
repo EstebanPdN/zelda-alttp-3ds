@@ -64,6 +64,9 @@ int main(int argc, char **argv) {
   LoadDefaultGraphics(); Hud_Rebuild(); Run(60, 0);
   Run(1, 1 << 3); Run(90, 0);
   assert(main_module_index == 14 && overworld_map_state == 4);
+  // The first frame still has the boot's raster split, which clears itself.
+  MenuPixels();
+  Run(1, 0);
   // The panel's inside is black; without it the room is drawn there.
   assert(MenuPixels() > 10000);
   if (!strcmp(argv[2], "de")) {

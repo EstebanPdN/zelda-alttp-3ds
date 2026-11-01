@@ -1,8 +1,8 @@
 # Language patch preparation
 
 The local selector offers English, Spanish, Portuguese, Italian, French,
-German and Russian. Japanese is intentionally excluded. One choice selects
-both the cartridge translation and the port UI. The Settings globe asks for
+German, Russian and Japanese. One choice selects both the cartridge translation
+and the port UI. The Settings globe asks for
 confirmation before opening this selector. Cancelling returns to the current
 screen; confirming discards the transient session/autosave and preserves SRAM.
 
@@ -65,3 +65,16 @@ confirmation, cancellation and selector requests.
 These are source/host checks. Record ARM compilation, isolated Azahar behavior
 and physical Old/New 3DS acceptance separately. Emulator FPS is not hardware
 performance evidence.
+
+## Japanese
+
+`ja.bps` turns the USA cartridge into the official Japanese one (headerless v1.0,
+SHA-1 `e7e852f0159ce612e3911164878a9b08b3cb9060`, title `ZELDANODENSETSU`), the way
+`fr.bps` and `de.bps` do for theirs. It is not a translation of the USA text: the engine
+reads that cartridge's own text format, font, tables and screens. Its message numbers
+are the USA ones less two from 13 on. USA 11 and 12 do not exist there and are made by
+the extractor; nothing in the game reaches them.
+
+The menus' glyphs are in `engine/src/platform/linux/generated_ui_japanese.h`, from
+`tools/ui/generate_japanese_ui_glyphs.py` and the M+ bitmap faces (PixelMplus 10 and 12).
+Run it again after adding characters to `engine/src/ui_strings.c`.

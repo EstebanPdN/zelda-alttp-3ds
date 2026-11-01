@@ -23,12 +23,12 @@ static void UpdateView_Text(uint32_t *p, const uint32_t *letters, const uint32_t
   (void)letters; (void)glyphs;
   unsigned code;
   while((code=UiFontNextCode(&s))) {
-    int rows=scale==2?21:11, top=y-2*scale, width=5*scale;
+    int rows=UiFontGlyphRows(code,scale), top=y+UiFontGlyphTop(code,scale), width=UiFontGlyphColumns(code,scale);
     for(int yy=0;yy<rows;yy++) for(int xx=0;xx<width;xx++) {
-      unsigned bits=scale==2?kNativeUiLargeGlyphs[code][yy]:kNativeUiGlyphs[code][yy];
+      unsigned bits=UiFontGlyphBits(code,scale,yy);
       if(bits&(1u<<(width-1-xx))) UpdateView_Box(p,x+xx,top+yy,1,1,0,0xfff8f8f8);
     }
-    x+=(code==' '?4:6)*scale;
+    x+=UiFontAdvance(code,scale);
   }
 }
 static void UpdateView_Draw(uint32_t *p, const uint32_t *letters, const uint32_t *glyphs,

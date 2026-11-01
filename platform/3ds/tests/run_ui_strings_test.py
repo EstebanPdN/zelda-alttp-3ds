@@ -39,7 +39,7 @@ int main(void){
   assert(strcmp(UI_UpdateError("UNKNOWN DIAGNOSTIC"),"UNKNOWN DIAGNOSTIC")==0);
  }
  UI_SetLanguage(99);assert(UI_GetLanguage()==0);assert(UI_LanguageFromCode(NULL)==0);assert(UI_LanguageFromCode("unknown")==0);
- printf("PASS %u translated strings/names across 7 languages: no missing translations, renderable native glyphs, dungeon title budget, code cycling and localized diagnostics\n",checks);
+ printf("PASS %u translated strings/names across 8 languages: no missing translations, renderable native glyphs, dungeon title budget, code cycling and localized diagnostics\n",checks);
 }
 '''
 file=out/'strings.c';file.write_text('#include <stdbool.h>\n'+source)

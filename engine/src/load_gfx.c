@@ -220,6 +220,8 @@ static const uint8 kSpriteTilesets[144][4] = {
 
 // As the quest's cartridge has the table ($80:DB57).
 static const uint8 *SpriteTileset(int i) {
+  if (LanguageCart_Japanese())
+    return LanguageCart_RawBytes(0x80db97 + i * 4, 4);
   return MODS_U8(kSpriteTilesets, 0x80db57) + i * 4;
 }
 
@@ -654,7 +656,7 @@ void Expand3To4High(uint8 *dst, const uint8 *src, const uint8 *base, int num) { 
 
 void LoadTransAuxGFX() {  // 80d66e
   uint8 *dst = &g_ram[0x6000];
-  const uint8 *p = kAuxTilesets[aux_tile_theme_index];
+  const uint8 *p = AuxTileset(aux_tile_theme_index);
   int len;
 
   if (p[0]) {
@@ -1035,9 +1037,10 @@ void TransferFontToVRAM() {  // 80e556
   // letters (language_cart.h): the dialogue font of the language in use.
   if (LanguageCart_Japanese()) {
     // The first 256 letters, as $8E:F572 makes them: from the second column of
-    // each, 8 wide, tile rows 32 apart. 0xcc is a blank.
+    // each, 8 wide, tile rows 32 apart. 0xcc is a blank. The file screens then
+    // put menu graphics over the last ones; the ending writes with them ($80:E596).
     const uint8 *letters = FindIndexInMemblk(g_zenv.dialogue_font_blk, 0).ptr;
-    for (int g = 0; g < 0xd0; g++) {
+    for (int g = 0; g < 0x100; g++) {
       const uint8 *from = letters + g * 44;
       uint16 *to = &g_zenv.vram[0x7000 + ((g & 0xf) | (g & 0xf0) << 1) * 8];
       for (int part = 0; part < 2; part++, from += 22, to += 16 * 8) {

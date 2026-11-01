@@ -66,7 +66,7 @@ typedef struct CartLayout {
 static const uint8 kPalBgSheets[] = { 113, 114 };
 static const uint8 kPalSprSheets[] = { 97, 105, 106, 107 };
 static const struct CartShift kJapaneseShifts[] = {
-  { 0x8df919, 0x8df9a9, 0x20 },  // gloves and abilities
+  { 0x8df919, 0x8df9f9, 0x20 },  // gloves and abilities
   { 0x8dfe5f, 0x8dfec7, 0x20 },  // the HUD's top row
   { 0x8df5c9, 0x8df601, 0x20 },  // the bow's names
 };
@@ -335,6 +335,20 @@ static uint16 JapaneseNameToUsa(uint16 c) {
   return 0xa9;
 }
 
+// Kana have no letters in the other fonts: such a name becomes LINK, not nothing.
+static void ConvertName(uint8 *name, bool to_japanese) {
+  static const uint16 kLink[4] = { 11, 0xaf, 13, 10 };
+  uint16 *w = (uint16 *)name;
+  bool any = false, was_blank = true;
+  for (int i = 0; i < 6; i++) {
+    was_blank &= w[i] == (to_japanese ? 0xa9 : 0x18c);
+    w[i] = to_japanese ? UsaNameToJapanese(w[i]) : JapaneseNameToUsa(w[i]);
+    any |= w[i] != (to_japanese ? 0x18c : 0xa9);
+  }
+  if (!any && !was_blank && !to_japanese)
+    memcpy(w, kLink, sizeof(kLink));
+}
+
 void LanguageCart_AfterSramLoad(uint8 *sram, uint8 *wram_save) {
   static const uint8 kMark[4] = { 'J', 'P', 'N', 1 };
   enum { kMarkOffs = 0x1ff4 };
@@ -347,17 +361,11 @@ void LanguageCart_AfterSramLoad(uint8 *sram, uint8 *wram_save) {
       uint8 *s = sram + slot * 0x500 + copy * 0xf00;
       if (WORD(s[0x3e5]) != 0x55aa || !Intro_CheckCksum(s))
         continue;
-      for (int i = 0; i < 6; i++) {
-        uint16 *w = (uint16 *)(s + kSrmOffs_Name + i * 2);
-        *w = now ? UsaNameToJapanese(*w) : JapaneseNameToUsa(*w);
-      }
+      ConvertName(s + kSrmOffs_Name, now);
       Intro_FixCksum(s);
     }
   }
-  for (int i = 0; i < 6; i++) {
-    uint16 *w = (uint16 *)(wram_save + kSrmOffs_Name + i * 2);
-    *w = now ? UsaNameToJapanese(*w) : JapaneseNameToUsa(*w);
-  }
+  ConvertName(wram_save + kSrmOffs_Name, now);
   if (now)
     memcpy(sram + kMarkOffs, kMark, 4);
   else
