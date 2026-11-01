@@ -35,6 +35,11 @@
 // show: a mod made for that cartridge carries those sheets whole (kind 1),
 // its tiles over the cartridge's.
 
+// A version 1 ZSPR of Link is a skin as it stands: Mods_ApplyAssetOverlay takes
+// the file directly, its graphics as asset 57 and its colors as
+// kModTable_LinkPalette.
+enum { kZsprHeaderSize = 29, kZsprPixelBytes = 0x7000, kZsprPaletteBytes = 124 };
+
 // Tables of the C code a mod can replace (kind 3).
 enum {
   // The flute's eight spots: x low, x high, y low, y high bytes, 8 of each.
@@ -66,6 +71,11 @@ int Mods_DecompressSheet(uint8 *dst, size_t cap, const uint8 *src, size_t src_si
 
 // Applies one mod file. Its data is copied: the file can be freed after.
 bool Mods_ApplyAssetOverlay(const uint8 *file, size_t size);
+
+// Whether a file of `file_size` bytes opening with `head` is such a ZSPR, and
+// where its graphics and colors are. Its checksum is not needed to use it.
+bool Mods_ZsprLayout(const uint8 *head, size_t head_size, size_t file_size,
+                     uint32 *pixels, uint32 *palette);
 
 // Called right after the assets file is loaded: forgets the sheet marks and
 // the buffers of a previous run, then applies the mod files of a comma

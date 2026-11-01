@@ -8,6 +8,7 @@
 #include "language_cart.h"
 
 enum {
+  kAssetLinkGfx = 57,
   kAssetSprGfx = 64,
   kAssetBgGfx = 65,
   kMaxSheets = 256,
@@ -268,8 +269,50 @@ static void ForgetRomTables(void) {
   g_mod_rom_tables_count = 0;
 }
 
+bool Mods_ZsprLayout(const uint8 *head, size_t head_size, size_t file_size,
+                     uint32 *pixels, uint32 *palette) {
+  if (head_size < kZsprHeaderSize || memcmp(head, "ZSPR\x01", 5) != 0)
+    return false;
+  uint64 p = ModU32(head + 9), c = ModU32(head + 15);
+  if (ModU16(head + 13) != kZsprPixelBytes || ModU16(head + 19) != kZsprPaletteBytes ||
+      ModU16(head + 21) != 1 || p < kZsprHeaderSize ||
+      p + kZsprPixelBytes > c || c + kZsprPaletteBytes > file_size)
+    return false;
+  *pixels = (uint32)p;
+  *palette = (uint32)c;
+  return true;
+}
+
+// A ZSPR is the two entries of a skin package, so it applies the same way.
+static bool ApplyZspr(const uint8 *file, size_t size) {
+  static const uint8 kAssetsSig[48] = { kAssets_Sig };
+  uint32 pixels, palette;
+  if (!Mods_ZsprLayout(file, size, size, &pixels, &palette))
+    return false;
+  enum { kHead = 64 + 2 * 16 };
+  uint8 *mod = malloc(kHead + kZsprPixelBytes + kZsprPaletteBytes);
+  if (!mod)
+    return false;
+  const uint32 head[] = { 2, 2 };
+  const uint32 entries[] = { kAssetLinkGfx, 0, 0, kZsprPixelBytes,
+                             kModTable_LinkPalette, 0, 3, kZsprPaletteBytes };
+  memcpy(mod, kModMagic, 8);
+  for (int i = 0; i < 2; i++)
+    ModPut(mod + 8 + i * 4, head[i], 4);
+  memcpy(mod + 16, kAssetsSig, 48);
+  for (int i = 0; i < 8; i++)
+    ModPut(mod + 64 + i * 4, entries[i], 4);
+  memcpy(mod + kHead, file + pixels, kZsprPixelBytes);
+  memcpy(mod + kHead + kZsprPixelBytes, file + palette, kZsprPaletteBytes);
+  bool ok = Mods_ApplyAssetOverlay(mod, kHead + kZsprPixelBytes + kZsprPaletteBytes);
+  free(mod);
+  return ok;
+}
+
 bool Mods_ApplyAssetOverlay(const uint8 *file, size_t size) {
   static const uint8 kAssetsSig[48] = { kAssets_Sig };
+  if (file && size >= 4 && memcmp(file, "ZSPR", 4) == 0)
+    return ApplyZspr(file, size);
   if (!file || size < 64 || memcmp(file, kModMagic, 8) != 0 ||
       memcmp(file + 16, kAssetsSig, 48) != 0)
     return false;

@@ -1,5 +1,12 @@
 # Changelog
 
+## v4.1-E3
+
+Experimental pre-release.
+
+- Character skins: copy any Link `.zspr` to the `mods` folder and choose it in Mods. No conversion, in every language, with its own name, author and portrait.
+- The Mods menu now lists up to 512 mods instead of 32.
+
 ## v4.1-E2
 
 Experimental pre-release.

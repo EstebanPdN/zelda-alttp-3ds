@@ -3823,7 +3823,7 @@ static const char kModsDirectory[] = "sdmc:/3ds/Zelda 3DS/mods";
 static const char kBundledModsDirectory[] = "romfs:/mods";
 static const char kModSelectionFile[] = "mods.txt";
 
-enum { kMaxMods = 32, kModInfoLines = 7 };
+enum { kMaxMods = 512, kModInfoLines = 7 };
 
 typedef struct ModEntry {
   const char *base;  // kModsDirectory or kBundledModsDirectory
@@ -3961,12 +3961,55 @@ static bool ReadModManifest(const char *base, const char *folder,
          strcmp(mod->file, "..") != 0 && ModFolderValid(folder)&&FileStore_Exists(path,&exists)&&exists;
 }
 
+// The UTF-16 text at p, up to its end or `end`, as UTF-8 that fits `out`.
+// Returns what follows its terminator, NULL if it has none before `end`.
+static const uint8_t *ZsprText(const uint8_t *p,const uint8_t *end,char *out,size_t size) {
+  size_t used=0;out[0]=0;
+  for(;p+2<=end;p+=2) {
+    unsigned c=p[0]|p[1]<<8;
+    if(!c)return p+2;
+    if(c<32||(c>=0xd800&&c<0xe000))c='?';
+    int n=c<0x80?1:c<0x800?2:3;
+    if(used+n>=size)continue;
+    if(n==1)out[used]=(char)c;
+    else if(n==2){out[used]=(char)(0xc0|c>>6);out[used+1]=(char)(0x80|(c&63));}
+    else{out[used]=(char)(0xe0|c>>12);out[used+1]=(char)(0x80|((c>>6)&63));out[used+2]=(char)(0x80|(c&63));}
+    used+=n;out[used]=0;
+  }
+  return NULL;
+}
+
+// A ZSPR needs nothing but its own file: its name and author come from inside.
+// Only its header is read here, as a folder can hold hundreds of them.
+static bool ReadLooseZspr(const char *base,const char *folder,const char *name,size_t len,ModEntry *mod) {
+  char path[400];snprintf(path,sizeof(path),"%s/%s",base,folder);
+  FILE *file=fopen(path,"rb");if(!file)return false;
+  uint8_t head[512];size_t got=fread(head,1,sizeof(head),file);
+  long length=-1;if(fseek(file,0,SEEK_END)==0)length=ftell(file);
+  fclose(file);
+  uint32_t pixels,palette;
+  if(length<0||!Mods_ZsprLayout(head,got,(size_t)length,&pixels,&palette))return false;
+  memset(mod,0,sizeof(*mod));mod->base=base;mod->loose=true;
+  snprintf(mod->folder,sizeof(mod->folder),"%s",folder);snprintf(mod->file,sizeof(mod->file),"%s",name);
+  snprintf(mod->category,sizeof(mod->category),"SKIN");
+  const uint8_t *end=head+(pixels<got?pixels:got);
+  const uint8_t *next=ZsprText(head+kZsprHeaderSize,end,mod->name,sizeof(mod->name));
+  if(next)ZsprText(next,end,mod->info[0],sizeof(mod->info[0]));
+  if(!mod->name[0]) {
+    snprintf(mod->name,sizeof(mod->name),"%.*s",(int)(len-5),name);
+    for(char *c=mod->name;*c;c++)if(*c=='_'||*c=='-')*c=' ';
+  }
+  return true;
+}
+
 // Loose native skin files need no manifest. Restrict auto-classification to
 // Link graphics/palette entries; story and quest mods retain explicit manifests
 // and their save isolation. Validation here never applies the file to the game.
 static bool ReadLooseSkin(const char *base,const char *folder,ModEntry *mod) {
   const char *name=strrchr(folder,'/');name=name?name+1:folder;
-  size_t len=strlen(name);if(len<7||strcasecmp(name+len-6,".z3mod")||len>=sizeof(mod->file))return false;
+  size_t len=strlen(name);
+  if(len>5&&len<sizeof(mod->file)&&!strcasecmp(name+len-5,".zspr"))return ReadLooseZspr(base,folder,name,len,mod);
+  if(len<7||strcasecmp(name+len-6,".z3mod")||len>=sizeof(mod->file))return false;
   char path[400];snprintf(path,sizeof(path),"%s/%s",base,folder);
   FILE *file=fopen(path,"rb");if(!file)return false;
   uint8_t header[64]={0};bool valid=fread(header,1,64,file)==64;
@@ -4010,7 +4053,7 @@ static int ScanModFolder(const char *base, const char *group,
     if (entry->d_name[0] == '.' || n < 0 || (size_t)n >= sizeof(folder) ||
         !ModFolderValid(folder))
       continue;
-    if (ReadModManifest(base, folder, language, &mods[count])||ReadLooseSkin(base,folder,&mods[count]))
+    if (ReadLooseSkin(base,folder,&mods[count])||ReadModManifest(base, folder, language, &mods[count]))
       count++;
     else if (!group)
       count = ScanModFolder(base, folder, language, mods, count, max_mods);
@@ -4081,7 +4124,7 @@ static bool SaveModSelection(const char *profile, const ModEntry *mods,
   snprintf(path, sizeof(path), "%s/%s", profile, kModSelectionFile);
   if (!EnsureDirectory(kProfilesDirectory) || !EnsureDirectory(profile))
     return false;
-  char text[kMaxMods*97];size_t used=0;
+  static char text[kMaxMods*97];size_t used=0;
   for(int i=0;i<count;i++)if(mods[i].enabled) {
     int n=snprintf(text+used,sizeof(text)-used,"%s\n",mods[i].folder);
     if(n<0||(size_t)n>=sizeof(text)-used)return false;used+=n;
@@ -4230,9 +4273,38 @@ static uint32_t ReadLe(const uint8_t *p, int n) {
   return v;
 }
 
+// The forward-facing 16x16 head a ZSPR's own graphics show, for a ZSPR without
+// its own BMP. The same one as SS_RenderLinkFace, in the skin's first palette.
+static bool LoadZsprPreview(const ModEntry *mod) {
+  char path[sizeof(g_mod_preview.path)];
+  snprintf(path,sizeof(path),"%s/%s",mod->base,mod->folder);
+  FILE *file=fopen(path,"rb");if(!file)return false;
+  uint8_t head[kZsprHeaderSize],tiles[18*32],colors[30];
+  bool ok=fread(head,1,sizeof(head),file)==sizeof(head);
+  long length=-1;if(ok&&fseek(file,0,SEEK_END)==0)length=ftell(file);
+  uint32_t pixels,palette;
+  ok=ok&&length>=0&&Mods_ZsprLayout(head,sizeof(head),(size_t)length,&pixels,&palette)&&
+     fseek(file,pixels,SEEK_SET)==0&&fread(tiles,1,sizeof(tiles),file)==sizeof(tiles)&&
+     fseek(file,palette,SEEK_SET)==0&&fread(colors,1,sizeof(colors),file)==sizeof(colors);
+  fclose(file);if(!ok)return false;
+  for(int y=0;y<16;y++)for(int x=0;x<16;x++) {
+    const uint8_t *t=tiles+(x/8+(y/8)*16)*32;int row=y%8,bit=7-x%8;
+    int color=((t[row*2]>>bit)&1)|((t[row*2+1]>>bit)&1)<<1|((t[16+row*2]>>bit)&1)<<2|((t[17+row*2]>>bit)&1)<<3;
+    int i=y*16+x;g_mod_preview.mask[i]=color!=0;
+    if(color) {
+      unsigned word=colors[(color-1)*2]|colors[(color-1)*2+1]<<8;
+      int r=word&31,g=(word>>5)&31,b=(word>>10)&31;
+      g_mod_preview.pixels[i]=SetupRgb565(r<<3|r>>2,g<<3|g>>2,b<<3|b>>2);
+    }
+  }
+  g_mod_preview.width=g_mod_preview.height=16;g_mod_preview.loaded=true;
+  return true;
+}
+
 static bool LoadModPreview(const ModEntry *mod) {
   char path[sizeof(g_mod_preview.path)];
-  if(mod->loose)snprintf(path,sizeof(path),"%s/%.*s.bmp",mod->base,(int)strlen(mod->folder)-6,mod->folder);
+  const char *dot=strrchr(mod->folder,'.');
+  if(mod->loose)snprintf(path,sizeof(path),"%s/%.*s.bmp",mod->base,(int)(dot-mod->folder),mod->folder);
   else snprintf(path, sizeof(path), "%s/%s/preview.bmp", mod->base, mod->folder);
   if (strcmp(path, g_mod_preview.path) == 0)
     return g_mod_preview.loaded;
@@ -4240,7 +4312,7 @@ static bool LoadModPreview(const ModEntry *mod) {
   g_mod_preview.loaded = false;
   FILE *file = fopen(path, "rb");
   if (!file)
-    return false;
+    return mod->loose && !strcasecmp(dot, ".zspr") && LoadZsprPreview(mod);
   static uint8_t data[54 + kPreviewMax * kPreviewMax * 4 + 64];
   size_t size = fread(data, 1, sizeof(data), file);
   fclose(file);

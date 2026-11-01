@@ -1,5 +1,9 @@
 # ZSPR skin conversion
 
+The game reads a `.zspr` copied to `mods/` directly since v4.1-E3, so most people
+never need this tool. It remains for a package with a manifest, such as a mod
+that should be bundled in the RomFS.
+
 `convert_zspr.py` converts a locally supplied version 1 Link ZSPR into one
 folder the 3DS Mods menu can read. It validates the checksum, section bounds,
 metadata termination and exact graphics/palette lengths before writing files.

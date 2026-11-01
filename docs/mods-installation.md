@@ -1,5 +1,20 @@
 # Installing native mods on the 3DS
 
+## Character skins: just copy the file
+
+Download any Link `.zspr`, for example from the
+[snesrev sprite catalog](https://snesrev.github.io/sprites-gfx/snes/zelda3/link/), and
+copy it to `/3ds/Zelda 3DS/mods/`. Nothing else is needed: no conversion, no
+`mod.ini`. Open Mods from the startup home and choose it. The name, author and
+portrait come from the file itself, in every language. It may also sit beside the
+ROM or one group folder down, such as `mods/skins/`. Up to 512 mods are listed.
+
+Only a version 1 Link ZSPR is accepted (`0x7000` graphics bytes, 124 palette
+bytes). A file name with a comma or `..`, or longer than 63 characters, is left out.
+For your own portrait, put `My Skin.bmp` beside `My Skin.zspr`.
+
+## Other mods
+
 Use the application's existing SD directory:
 
 ```
@@ -46,8 +61,8 @@ classification accepts only valid native Link graphics/palette entries.
 
 Story, GAME and QUEST packages keep their explicit manifests and language
 files so category conflicts and separate quest saves remain correct. A raw
-IPS/BPS patch, ZSPR file, ROM or ZIP is not a native `.z3mod` package. Extract
-compatible packages before copying them; rename alone does not convert data.
+IPS/BPS patch, ROM or ZIP is not a mod. Extract compatible packages before
+copying them; renaming a file does not convert its data.
 
 Choose an entry with Select/A/Start. Its green name marks the active choice.
 Original restores that category. Only one entry per category is active. SD

@@ -495,6 +495,25 @@ int main(void) {
   n=ScanMods("us",m,kMaxMods);CHECK(Find(m,n,"Unsafe_Quest.z3mod")<0,"quest requires manifest and save namespace");
   loose=fopen("@TMP@/mods/Truncated.z3mod","wb");fwrite(skin,1,12,loose);fclose(loose);
   n=ScanMods("us",m,kMaxMods);CHECK(Find(m,n,"Truncated.z3mod")<0,"truncated native file rejected");
+  // A ZSPR is a skin as downloaded: its own name and author, no manifest.
+  static unsigned char zspr[29+40+0x7000+124];memset(zspr,0,sizeof(zspr));memcpy(zspr,"ZSPR\x01",5);
+  uint32_t zp=29+40,zc=zp+0x7000;uint16_t zps=0x7000,zcs=124,zt=1;
+  memcpy(zspr+9,&zp,4);memcpy(zspr+13,&zps,2);memcpy(zspr+15,&zc,4);memcpy(zspr+19,&zcs,2);memcpy(zspr+21,&zt,2);
+  const char *zn="Sprite",*za="Artist";for(int i=0;i<6;i++){zspr[29+i*2]=zn[i];zspr[29+14+i*2]=za[i];}
+  loose=fopen("@TMP@/mods/hero-1.zspr","wb");fwrite(zspr,1,sizeof(zspr),loose);fclose(loose);
+  loose=fopen("@TMP@/mods/group/nested.ZSPR","wb");fwrite(zspr,1,sizeof(zspr),loose);fclose(loose);
+  loose=fopen("@TMP@/root.zspr","wb");fwrite(zspr,1,sizeof(zspr),loose);fclose(loose);
+  loose=fopen("@TMP@/mods/short.zspr","wb");fwrite(zspr,1,sizeof(zspr)-1,loose);fclose(loose);
+  zt=2;memcpy(zspr+21,&zt,2);loose=fopen("@TMP@/mods/not-link.zspr","wb");fwrite(zspr,1,sizeof(zspr),loose);fclose(loose);
+  n=ScanMods("us",m,kMaxMods);int zi=Find(m,n,"hero-1.zspr");
+  CHECK(zi>=0&&m[zi].loose&&!strcmp(m[zi].category,"SKIN")&&!strcmp(m[zi].name,"Sprite")&&!strcmp(m[zi].info[0],"Artist"),"ZSPR listed with its own name and author");
+  CHECK(Find(m,n,"group/nested.ZSPR")>=0&&Find(m,n,"root.zspr")>=0,"ZSPR found in a group folder and beside the ROM");
+  CHECK(Find(m,n,"short.zspr")<0&&Find(m,n,"not-link.zspr")<0,"cut or non-Link ZSPR left out");
+  for(int i=0;i<n;i++)m[i].enabled=false;ToggleMod(m,n,zi);
+  CHECK(SaveModSelection(g_active_profile,m,n)&&BuildActiveModList("us",list,sizeof(list))&&strstr(list,"/mods/hero-1.zspr")&&!strstr(list,"zspr/"),"ZSPR choice reaches the engine's list");
+  // A whole catalog fits in the menu and in mods.txt.
+  for(int i=0;i<343;i++){char z[128];snprintf(z,sizeof(z),"@TMP@/mods/many-%03d.zspr",i);zt=1;memcpy(zspr+21,&zt,2);loose=fopen(z,"wb");fwrite(zspr,1,sizeof(zspr),loose);fclose(loose);}
+  n=ScanMods("us",m,kMaxMods);CHECK(n>343&&Find(m,n,"many-342.zspr")>=0,"343 ZSPR files all listed");
   printf("PASS: ROM language, mods found and sorted by category, one on per category, QUEST saves apart, choice kept per profile, mods built into the RomFS\n");
   return 0;
 }
@@ -535,7 +554,9 @@ def main():
         return 1
 
     tmp = out / 'sd'
-    for fixture in ['Root_Hero.z3mod','mods/Loose_Hero.z3mod','mods/Unsafe_Quest.z3mod','mods/Truncated.z3mod']:
+    for fixture in ['Root_Hero.z3mod','mods/Loose_Hero.z3mod','mods/Unsafe_Quest.z3mod','mods/Truncated.z3mod',
+                    'root.zspr','mods/group/nested.ZSPR','mods/hero-1.zspr','mods/short.zspr','mods/not-link.zspr',
+                    *[f'mods/many-{i:03d}.zspr' for i in range(343)]]:
         (tmp/fixture).unlink(missing_ok=True)
     for d in ('mods/a-sprite', 'mods/b-text', 'mods/c-both', 'mods/d-bad', 'mods/.hidden', 'mods/group/e-nested',
               'mods/group/deeper/f-too-deep', 'mods/g-skin', 'mods/h-quest', 'profiles', 'saves'):
@@ -576,7 +597,11 @@ def main():
     text = PLATFORM.read_text()
     a = text.index('// Mods: sdmc:/3ds/Zelda 3DS/mods/')
     b = text.index('typedef struct ModsMenuContext {')
-    slices = (slice_function(text, 'static char *Trim(char *text) {') + text[a:b])
+    mods = (ENGINE / 'src/mods.c').read_text()
+    slices = (slice_function(mods, 'static uint32 ModU16(const uint8 *p) {') +
+              slice_function(mods, 'static uint32 ModU32(const uint8 *p) {') +
+              slice_function(mods, 'bool Mods_ZsprLayout(const uint8 *head') +
+              slice_function(text, 'static char *Trim(char *text) {') + text[a:b])
     slices = slices.replace('"sdmc:/3ds/Zelda 3DS/mods"', '"@TMP@/mods"').replace('"sdmc:/3ds/Zelda 3DS"','"@TMP@"')
     # The RomFS's mods first stay away (the checks before them are those of
     # an SD card alone), then the test points it at its own folder.
