@@ -1873,20 +1873,31 @@ void Overworld_LoadAllPalettes() {  // 82c5b2
   memset(aux_palette_buffer + 0x180 / 2, 0, 128);
   memset(main_palette_buffer, 0, 512);
 
-  overworld_palette_mode = 5;
+  // The Japanese title has its own colours, and no Sp0L ($82:C345).
+  bool japanese = LanguageCart_Japanese();
+  overworld_palette_mode = japanese ? 4 : 5;
   overworld_palette_aux1_bp2to4_hi = 3;
   overworld_palette_aux2_bp5to7_hi = 3;
-  overworld_palette_aux3_bp7_lo = 0;
+  overworld_palette_aux3_bp7_lo = japanese ? 3 : 0;
   palette_sp6r_indoors = 5;
   palette_sp0l = 11;
   palette_swap_flag = 0;
   overworld_palette_aux_or_main = 0;
   Palette_BgAndFixedColor_Black();
-  Palette_Load_Sp0L();
+  if (!japanese)
+    Palette_Load_Sp0L();
   Palette_Load_SpriteMain();
   Palette_Load_OWBGMain();
-  Palette_Load_OWBG1();
-  Palette_Load_OWBG2();
+  if (japanese) {
+    // Its logo's red to yellow is in its own table, entry 3 ($9B:E8EA).
+    uint16 logo[21 * 2];
+    memcpy(logo, LanguageCart_RawBytes(0x9be8ea, sizeof(logo)), sizeof(logo));
+    Palette_LoadMultiple(logo, 0x52, 6, 2);
+    Palette_LoadMultiple(logo, 0xB2, 6, 2);
+  } else {
+    Palette_Load_OWBG1();
+    Palette_Load_OWBG2();
+  }
   Palette_Load_OWBG3();
   Palette_Load_SpriteEnvironment_Dungeon();
   Palette_Load_HUD();

@@ -637,7 +637,11 @@ void IntroZeldaFadein() {  // 8cc25c
   Intro_HandleAllTriforceAnimations();
   if (!(frame_counter & 1))
     return;
-  Palette_FadeIntroOneStep();
+  // The Japanese logo and its plate fade in with everything else ($8C:C274).
+  if (LanguageCart_Japanese())
+    ApplyPaletteFilter_bounce();
+  else
+    Palette_FadeIntroOneStep();
   if (BYTE(palette_filter_countdown) == 0) {
     subsubmodule_index = 42;
     submodule_index++;
@@ -831,6 +835,9 @@ void Intro_RunStep() {  // 8cc448
 
 }
 
+static void InitializeSceneSprite_JapanesePlate(int k);
+static void AnimateSceneSprite_JapanesePlate(int k);
+
 void Intro_AnimOneObj(int k) {  // 8cc534
   switch (intro_sprite_isinited[k]) {
   case 0:
@@ -838,7 +845,7 @@ void Intro_AnimOneObj(int k) {  // 8cc534
   case 1:
     switch (intro_sprite_subtype[k]) {
     case 0: Intro_SpriteType_A_0(k); break;
-    case 1: EXIT_0CCA90(k); break;
+    case 1: InitializeSceneSprite_JapanesePlate(k); break;
     case 2: InitializeSceneSprite_Copyright(k); break;
     case 3: InitializeSceneSprite_Sparkle(k); break;
     case 4:
@@ -850,7 +857,7 @@ void Intro_AnimOneObj(int k) {  // 8cc534
   case 2:
     switch (intro_sprite_subtype[k]) {
     case 0: Intro_SpriteType_B_0(k); break;
-    case 1: EXIT_0CCA90(k); break;
+    case 1: AnimateSceneSprite_JapanesePlate(k); break;
     case 2: AnimateSceneSprite_Copyright(k); break;
     case 3: AnimateSceneSprite_Sparkle(k); break;
     case 4:
@@ -977,6 +984,29 @@ void Intro_CopySpriteType4ToOam(int k) {  // 8cc82f
 
 void EXIT_0CCA90(int k) {  // 8cc84f
   // empty
+}
+
+// The plate under the Japanese logo, its subtitle ($8C:C6FD). The USA sprite does nothing.
+static void InitializeSceneSprite_JapanesePlate(int k) {
+  if (!LanguageCart_Japanese())
+    return;
+  intro_x_lo[k] = 0x80;
+  intro_x_hi[k] = 0;
+  intro_y_lo[k] = 0x7e;
+  intro_y_hi[k] = 0;
+  intro_sprite_isinited[k]++;
+}
+
+static void AnimateSceneSprite_JapanesePlate(int k) {
+  static const IntroSpriteEnt kEnts[6] = {
+    { 0, 0, 0x46, 0x0c, 2},
+    {16, 0, 0x48, 0x0c, 2},
+    {32, 0, 0x4a, 0x0c, 2},
+    {48, 0, 0x4c, 0x0c, 2},
+    {64, 0, 0x4e, 0x0c, 2},
+    {80, 0, 0x60, 0x0c, 2},
+  };
+  AnimateSceneSprite_AddObjectsToOamBuffer(k, kEnts, 6);
 }
 
 void InitializeSceneSprite_Copyright(int k) {  // 8cc850

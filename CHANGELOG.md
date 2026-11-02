@@ -1,5 +1,11 @@
 # Changelog
 
+## v4.1-E5
+
+Experimental pre-release.
+
+- Fixed the Japanese title logo: its colors and the subtitle plate.
+
 ## v4.1-E4
 
 Experimental pre-release.
