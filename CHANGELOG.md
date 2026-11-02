@@ -1,5 +1,15 @@
 # Changelog
 
+## v4.1-E4
+
+Experimental pre-release.
+
+- Fixed the game freezing in German and French when pressing SELECT in the item menu: Link and the buttons stopped while the music and the bottom screen kept going.
+- Fixed a possible hang when moving the X, L or R ring up or down from an empty slot.
+- The Quality of Life fairy option now restores 10 hearts instead of 8.
+- Fixed broken HUD and save-box letters when loading a state saved in another language.
+- Restored the six character skins built into v4.0, missing from the earlier experimental builds. Credits: see CREDITS.md.
+
 ## v4.1-E3
 
 Experimental pre-release.

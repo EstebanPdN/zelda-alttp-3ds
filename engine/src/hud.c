@@ -717,19 +717,33 @@ static void Hud_EquipNextItem(uint8 *item) {  // 8ddee2
   } while (!Hud_DoWeHaveThisItem(*item));
 }
 
+// A column only comes back to its start when the start is owned, and an empty
+// slot or a lost item is not: after one round it looks through all the items,
+// and with none it stays where it was.
+static void Hud_EquipItemInColumn(uint8 *item, bool down) {
+  uint8 start = *item;
+  int column = kNewStyleInventory ? 6 : 5;
+  int rounds = kHudItemCount / column + kHudItemCount;
+  for (int round = 0; round < rounds; round++) {
+    int num = *item == 0 || round >= kHudItemCount / column ? 1 : column;
+    for (int i = 0; i < num; i++) {
+      if (down)
+        Hud_GotoNextItem(item, 1);
+      else
+        Hud_GotoPrevItem(item, 1);
+    }
+    if (Hud_DoWeHaveThisItem(*item))
+      return;
+  }
+  *item = start;
+}
+
 static void Hud_EquipItemAbove(uint8 *item) {  // 8ddeeb
-  do {
-    for(int i = 0; i < (kNewStyleInventory ? 6 : 5); i++)
-      Hud_GotoPrevItem(item, 1);
-  } while (!Hud_DoWeHaveThisItem(*item));
+  Hud_EquipItemInColumn(item, false);
 }
 
 static void Hud_EquipItemBelow(uint8 *item) {  // 8ddf00
-  int num = *item == 0 ? 1 : (kNewStyleInventory ? 6 : 5);
-  do {
-    for (int i = 0; i < num; i++)
-      Hud_GotoNextItem(item, 1);
-  } while (!Hud_DoWeHaveThisItem(*item));
+  Hud_EquipItemInColumn(item, true);
 }
 
 int GetCurrentItemButtonIndex() {
@@ -760,7 +774,8 @@ void Hud_NormalMenu() {  // 8ddf15
 
   // Allow select to open the save/exit thing
   if (joypad1H_last & kJoypadH_Select && sram_progress_indicator) {
-    BG3VOFS_copy2 = -8;
+    // One step of Hud_CloseMenu from here finishes closing, whichever its size.
+    BG3VOFS_copy2 = g_loc_rom ? -10 : -8;
     Hud_CloseMenu();
     DisplaySelectMenu();
     return;

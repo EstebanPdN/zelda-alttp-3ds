@@ -2722,6 +2722,25 @@ void ZeldaFormatSavePath(const char *name, char *path, size_t size) {
 #endif
 }
 
+// A state keeps the screen of the language it was saved in, and the language
+// may have changed since: the HUD's letters and an open save box are drawn again
+// in the current one.
+static void RedrawLanguageAfterLoad(void) {
+  bool save_box = main_module_index == 14 && submodule_index == 11;
+  if (!save_box && main_module_index != 7 && main_module_index != 9)
+    return;
+  LoadHudGraphics();
+  Hud_Rebuild();
+  if (save_box) {
+    // The box stops the game's HUD uploads until it closes.
+    extern bool g_ss_hide_hud;
+    if (!g_ss_hide_hud)
+      memcpy(&g_zenv.vram[word_7E0219], hud_tile_indices_buffer, 165 * sizeof(uint16));
+    main_module_index = saved_module_for_menu;
+    DisplaySelectMenu();
+  }
+}
+
 void SaveLoadSlot(int cmd, int which) {
   char name[128];
   char path[256];
@@ -2747,6 +2766,8 @@ void SaveLoadSlot(int cmd, int which) {
       StateRecorder_Save(&state_recorder, rwops);
 
     SDL_RWclose(rwops);
+    if (cmd == kSaveLoad_Load)
+      RedrawLanguageAfterLoad();
 #ifdef __3DS__
     // Older builds wrote slot 0 even in naming/credits. Recover those boots
     // through the ordinary clean reset, which reloads SRAM from disk.

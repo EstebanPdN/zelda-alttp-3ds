@@ -1130,7 +1130,7 @@ void GameOver_AnimateChoiceFairy() {  // 89f67a
 
 void GameOver_InitializeRevivalFairy() {  // 89f6a4
   ConfigureRevivalAncillae();
-  link_hearts_filler = (enhanced_features1 & kFeatures1_QolFairyHearts) ? 64 : 56;
+  link_hearts_filler = (enhanced_features1 & kFeatures1_QolFairyHearts) ? 80 : 56;
   submodule_index += 1;
   overworld_map_state = 0;
 }

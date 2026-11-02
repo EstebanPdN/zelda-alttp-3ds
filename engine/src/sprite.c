@@ -2081,7 +2081,7 @@ void Sprite_HandleAbsorptionByPlayer(int k) {  // 86d13c
     break;
   case 11:
     SpriteSfx_QueueSfx2WithPan(k, 0x31);
-    link_hearts_filler += (enhanced_features1 & kFeatures1_QolFairyHearts) ? 64 : 56;
+    link_hearts_filler += (enhanced_features1 & kFeatures1_QolFairyHearts) ? 80 : 56;
     break;
   case 12:
     if (Rando_GrantResultIsTerminal(key_result))

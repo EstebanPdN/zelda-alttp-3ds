@@ -36,7 +36,7 @@ The game reads these colors for gameplay, file selection, bunny gear and the
 bottom map marker. The original fifth palette stays in the base assets.
 Unloading a mod releases its table and restores normal palette lookup.
 
-The author's artwork stays external to the source repository and RomFS. This
+The author's artwork stays external to the source repository. This
 converter preserves credits; it does not grant redistribution rights.
 
 ## Verification with locally supplied inputs
