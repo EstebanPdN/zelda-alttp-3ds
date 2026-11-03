@@ -807,6 +807,10 @@ static void ResetWideTracking(void) {
   memset(&g_wide_rooms, 0, sizeof(g_wide_rooms));
 }
 
+void ZeldaWideForgetPlaces(void) {
+  ResetWideTracking();
+}
+
 // The WIDE picture shows tile map cells the SNES picture does not, which the
 // game may have filled for another place or not yet. Draw them from the
 // maps above for the duration of the frame. VRAM is restored after joined

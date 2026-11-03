@@ -392,9 +392,10 @@ static void Hud_GotoNextItem(uint8 *item, uint8 first_item_index) {
   }
 }
 
-// The French Canadian cartridge names floors the French way ($8E:FEAC): RC for
-// the ground floor, then 1, 2... with a raised e, and the basements with SS
-// before the number. The digits are the USA ones, one floor further down.
+// The French cartridges name floors the French way ($8E:FEAC): RC for the
+// ground floor, then 1, 2... with a raised e, and the basements with SS before
+// the number. The digits are the USA ones, one floor further down. The German
+// cartridge keeps the USA routine; its own S and K are at the USA tiles.
 static void Hud_FloorIndicator_Loc() {
   hud_tile_indices_buffer[0xf2 / 2] = 0x24aa;
   hud_tile_indices_buffer[0x134 / 2] = 0x207f;
@@ -435,7 +436,7 @@ void Hud_FloorIndicator() {  // 8afd0c
     a = 0;
   WORD(hud_floor_changed_timer) = a;
 
-  if (g_loc_rom) {
+  if (g_loc_rom && Loc_UsesFrenchFloorNames()) {
     Hud_FloorIndicator_Loc();
     return;
   }

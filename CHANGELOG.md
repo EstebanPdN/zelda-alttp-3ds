@@ -1,5 +1,12 @@
 # Changelog
 
+## v4.1-E6
+
+Experimental pre-release.
+
+- Fixed the German dungeon floor sign, which showed broken letters: it reads 1S, 2S and K1, K2 as on the German cartridge.
+- Fixed garbled graphics beside the room in WIDE with the fixed camera after loading a file once the title's story had played.
+
 ## v4.1-E5
 
 Experimental pre-release.
