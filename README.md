@@ -27,6 +27,7 @@
 <p align="center">
   <a href="https://estebanpdn.github.io/"><img src="docs/images/website.svg" alt="Visit Esteban’s Forge" width="142" height="46"></a>
   <a href="https://discord.gg/BjbzfRYpV"><img src="docs/images/discord-official.svg" alt="Join our Discord community" width="166" height="46"></a>
+  <a href="https://ko-fi.com/estebanpdn"><img src="docs/images/kofi.svg" alt="Support EstebanPdN on Ko-fi" width="190" height="46"></a>
 </p>
 
 Nintendo 3DS dual-screen port of Zelda3.
