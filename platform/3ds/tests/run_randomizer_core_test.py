@@ -18,6 +18,7 @@ HARNESS = r'''
 #include "src/rando/rando_settings.h"
 #include "src/rando/rando_rng.h"
 #include "src/rando/seed_identity.h"
+#include "src/rando/item_ids.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,24 @@ static void generate(SettingsPreset preset, uint64 seed, uint8 digest[32]) {
   RandoSpheres spheres;
   require(Logic_ComputeSpheres(&settings, &placements, &spheres),
           "every placement has a reachable sphere");
+  // Vanilla dungeon items must stay in the cartridge's actual key chests,
+  // not merely preserve a total count that the reachability model assumes.
+  const uint16 keys[][2]={{35,ITEM_SmallKey_PalaceOfDarkness},{47,ITEM_SmallKey_PalaceOfDarkness},
+    {82,ITEM_SmallKey_IcePalace},{97,ITEM_SmallKey_TurtleRock},{100,ITEM_SmallKey_TurtleRock},
+    {103,ITEM_SmallKey_TurtleRock},{104,ITEM_SmallKey_TurtleRock}};
+  Placement_Install(&placements);
+  for(unsigned i=0;i<sizeof(keys)/sizeof(*keys);i++) {
+    const RandoLocationDef *loc=Rando_FindLocationDef(keys[i][0]);
+    require(loc&&loc->vanilla_item_id==keys[i][1],"cartridge key location registry");
+    if(Settings_EffectiveSmallKeysMode(&settings)==kDungeonItemMode_Vanilla)
+      require(Placement_Lookup(keys[i][0],keys[i][1])==keys[i][1],"vanilla key placement");
+  }
+  require(Rando_FindLocationDef(99)->vanilla_item_id==ITEM_Map_TurtleRock,"Turtle Rock map chest");
+  require(Rando_FindLocationDef(126)->vanilla_item_id==ITEM_Compass_GanonsTower,"Ganon's Tower compass chest");
+  const unsigned not_keys[]={44,46,106,107};
+  for(unsigned i=0;i<sizeof(not_keys)/sizeof(*not_keys);i++)
+    require(Rando_FindLocationDef(not_keys[i])->vanilla_item_id==ITEM_Rupee100,"non-key chest must not consume a vanilla key");
+  Placement_Install(NULL);
   PlacementTable_ComputeDigest(&placements, digest);
   for (size_t i = 0; i < sizeof(g_ram); i++)
     require(g_ram[i] == 0, "generation changed game WRAM");

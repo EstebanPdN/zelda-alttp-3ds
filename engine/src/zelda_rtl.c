@@ -182,6 +182,14 @@ static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
                 c->ppu_addr + bAdrOffsets[c->mode & 7][j],
                 v);
     }
+    // Mirror HDMA rewrites absolute scroll registers after BeginWideRender.
+    // Keep the background in the same drawn camera as Link on every line.
+    if ((c->mode & 7) == 2 &&
+        (c->ppu_addr == (uint8)BG1HOFS || c->ppu_addr == (uint8)BG2HOFS)) {
+      int layer = c->ppu_addr == (uint8)BG2HOFS;
+      ppu->bgLayer[layer].hScroll =
+          (ppu->bgLayer[layer].hScroll - ppu->renderObjXOffset) & 0x3ff;
+    }
   }
   c->rep_count--;
 }
@@ -191,7 +199,7 @@ static uint8 GetFixedCameraEffectiveContext(void) {
   if (mod == 14)
     mod = saved_module_for_menu;
   if ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
-      (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
+      (mod == 6 || mod == 8 || mod == 10 || mod == 11 || mod == 15 || mod == 16 || mod == 17 ||
        mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
     mod = player_is_indoors ? 7 : 9;
   return mod == 7 || mod == 9 ? (uint8)mod : 0;
@@ -311,6 +319,7 @@ static void GetWideBounds(uint8 context, int x, int y, WideBounds *b) {
     left = ow_scroll_vars0.xstart;
     right = ow_scroll_vars0.xend;
     bottom = ow_scroll_vars0.yend;
+
   }
   b->left = WideCamera_Unwrap16(left, x);
   b->right = WideCamera_Unwrap16(right, x);
@@ -538,6 +547,7 @@ static WideFrame WideFrameNow(uint32 render_flags, bool commit) {
   f.rows = rows;
   f.view = UpdateWideView(context, fixed && !lantern ? p->extraLeftRight : 0,
                           rows, visible, !lantern, &f.settled, commit);
+
   if(g_private_fade.active) {
     if(g_private_fade.axis==1)f.view.offset_x=(int16)(BG2HOFS_copy2-g_private_fade.source);
     else f.view.delta_y=(int16)(BG2VOFS_copy2-g_private_fade.source);
@@ -576,13 +586,20 @@ static void ConfigurePpuSideSpace(const WideFrame *f) {
     g_zenv.ppu->wideMarginRepeat = 1;
     return;
   }
+  if (g_zenv.ppu->mode == 7 &&
+      ((main_module_index == 14 && (submodule_index == 7 || submodule_index == 10)) || main_module_index == 20)) {
+    // Map coordinates are independent of the area Link was standing in.
+    PpuSetExtraSideSpace(g_zenv.ppu, kPpuExtraLeftRight, kPpuExtraLeftRight, 16);
+    g_zenv.ppu->wideMarginRepeat = 0;
+    return;
+  }
   bool repeat_margins = false;
 //  printf("main %d, sub %d  (%d, %d, %d)\n", main_module_index, submodule_index, BG2HOFS_copy2, room_bounds_x.v[2 | (quadrant_fullsize_x >> 1)], quadrant_fullsize_x >> 1);
   int mod = main_module_index;
   if (mod == 14)
     mod = saved_module_for_menu;
   if ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
-      (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
+      (mod == 6 || mod == 8 || mod == 10 || mod == 11 || mod == 15 || mod == 16 || mod == 17 ||
        mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
     mod = player_is_indoors ? 7 : 9;
   if (mod == 9) {
@@ -634,6 +651,20 @@ typedef struct WideRenderState {
   int16 obj_x, obj_y;
 } WideRenderState;
 
+// Match the game's overlay camera ratios; wind-only overlays do not track
+// Link at all. Work in absolute coordinates to retain half/quarter-pixel phase.
+static int WideOverlayShift(int delta, bool vertical) {
+  uint8 oi = BYTE(overlay_index);
+  if (dungeon_room_index == 0x181 || oi == 0x9c)
+    return delta;
+  if (oi == 0x97 || oi == 0x9d)
+    return 0;
+  unsigned shift = vertical ? (oi == 0xb5 || oi == 0xbe ? 2 : 1) :
+                              (oi == 0x95 || oi == 0x9e ? 2 : 1);
+  int camera = vertical ? BG2VOFS_copy2 : BG2HOFS_copy2;
+  return (camera >> shift) - ((camera - delta) >> shift);
+}
+
 static WideRenderState BeginWideRender(const WideFrame *f) {
   WideRenderState s = {0};
   Ppu *p = g_zenv.ppu;
@@ -647,13 +678,18 @@ static WideRenderState BeginWideRender(const WideFrame *f) {
   s.bg2_v = p->bgLayer[1].vScroll;
   s.obj_x = p->renderObjXOffset;
   s.obj_y = p->renderObjYOffset;
+  // Mirror HDMA scrolls both layers together; ordinary outdoor overlays
+  // retain their native parallax. Indoor layers keep their own behavior.
+  bool parallax = f->context == 9 && !(HDMAEN_copy & 0x40);
   if (s.dx) {
-    p->bgLayer[0].hScroll = (s.bg1_h - s.dx) & 0x3ff;
+    int bg1_dx = parallax ? WideOverlayShift(s.dx, false) : s.dx;
+    p->bgLayer[0].hScroll = (s.bg1_h - bg1_dx) & 0x3ff;
     p->bgLayer[1].hScroll = (s.bg2_h - s.dx) & 0x3ff;
     p->renderObjXOffset = s.obj_x + s.dx;
   }
   if (s.dy) {
-    p->bgLayer[0].vScroll = (s.bg1_v - s.dy) & 0x3ff;
+    int bg1_dy = parallax ? WideOverlayShift(s.dy, true) : s.dy;
+    p->bgLayer[0].vScroll = (s.bg1_v - bg1_dy) & 0x3ff;
     p->bgLayer[1].vScroll = (s.bg2_v - s.dy) & 0x3ff;
     p->renderObjYOffset = s.obj_y + s.dy;
   }
@@ -1183,7 +1219,7 @@ static void UpdatePrivateRoomFade(void) {
 
 static unsigned WideRoomOpenSides(const WideRegion *r, const uint16 *maps,
                                   int y0, int y1) {
-  if (r->context != 7 || !r->private_room) return 0;
+  if (r->context != 7) return 0;
   unsigned open = 0;
   const int edges[2] = {r->room_left, r->room_right};
   for (int side = 0; side < 2; side++) {
@@ -1197,7 +1233,6 @@ static unsigned WideRoomOpenSides(const WideRegion *r, const uint16 *maps,
 
 static bool WideRoomTileVisible(const WideRegion *r, unsigned open, int x, int y) {
   if (r->context != 7 || !WideRegionHas(r, x, y)) return false;
-  if (!r->private_room) return true;
   int rx = (int16)(x - r->x);
   if (rx >= r->room_left && rx < r->room_right) return true;
   return (open & (rx < r->room_left ? 1 : 2)) != 0;
@@ -1661,6 +1696,11 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   g_zenv.ppu->wideUiSaveX = (text_msgbox_topleft & 31) * 8;
   g_zenv.ppu->wideUiSaveY = ((text_msgbox_topleft >> 5) & 31) * 8;
 #endif
+  render_flags &= ~kPpuRenderFlags_WorldMapBorder;
+  if ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
+      g_zenv.ppu->mode == 7 &&
+      ((main_module_index == 14 && (submodule_index == 7 || submodule_index == 10)) || main_module_index == 20))
+    render_flags |= kPpuRenderFlags_WorldMapBorder;
   UpdatePrivateRoomFade();
   uint8 original_brightness = g_zenv.ppu->brightness;
   if(QolBrightRoomActive())g_zenv.ppu->brightness=original_brightness*12/15;

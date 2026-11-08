@@ -83,7 +83,7 @@ locations:
   # ===========================================================================
   # Palace of Darkness (IDs 35..49)
   # ===========================================================================
-  - { id: 35, name: "Palace of Darkness - Shooter Room",      region: PalaceOfDarkness, type: Chest,    vanilla_item: Arrow10,                source: "app/Region/Standard/PalaceOfDarkness.php:50" }
+  - { id: 35, name: "Palace of Darkness - Shooter Room",      region: PalaceOfDarkness, type: Chest,    vanilla_item: SmallKey_PalaceOfDarkness,                source: "app/Region/Standard/PalaceOfDarkness.php:50" }
   - { id: 36, name: "Palace of Darkness - Big Key Chest",     region: PalaceOfDarkness, type: Chest,    vanilla_item: BigKey_PalaceOfDarkness, source: "app/Region/Standard/PalaceOfDarkness.php:51" }
   - { id: 37, name: "Palace of Darkness - The Arena - Ledge", region: PalaceOfDarkness, type: Chest,    vanilla_item: SmallKey_PalaceOfDarkness, source: "app/Region/Standard/PalaceOfDarkness.php:52" }
   - { id: 38, name: "Palace of Darkness - The Arena - Bridge", region: PalaceOfDarkness, type: Chest,   vanilla_item: SmallKey_PalaceOfDarkness, source: "app/Region/Standard/PalaceOfDarkness.php:53" }
@@ -92,10 +92,10 @@ locations:
   - { id: 41, name: "Palace of Darkness - Big Chest",         region: PalaceOfDarkness, type: BigChest, vanilla_item: Hammer,                 source: "app/Region/Standard/PalaceOfDarkness.php:56" }
   - { id: 42, name: "Palace of Darkness - Compass Chest",     region: PalaceOfDarkness, type: Chest,    vanilla_item: Compass_PalaceOfDarkness, source: "app/Region/Standard/PalaceOfDarkness.php:57" }
   - { id: 43, name: "Palace of Darkness - Harmless Hellway",  region: PalaceOfDarkness, type: Chest,    vanilla_item: Rupee100,               source: "app/Region/Standard/PalaceOfDarkness.php:58" }
-  - { id: 44, name: "Palace of Darkness - Dark Basement - Left",  region: PalaceOfDarkness, type: Chest, vanilla_item: SmallKey_PalaceOfDarkness, source: "app/Region/Standard/PalaceOfDarkness.php:59" }
+  - { id: 44, name: "Palace of Darkness - Dark Basement - Left",  region: PalaceOfDarkness, type: Chest, vanilla_item: Rupee100, source: "app/Region/Standard/PalaceOfDarkness.php:59" }
   - { id: 45, name: "Palace of Darkness - Dark Basement - Right", region: PalaceOfDarkness, type: Chest, vanilla_item: SmallKey_PalaceOfDarkness, source: "app/Region/Standard/PalaceOfDarkness.php:60" }
-  - { id: 46, name: "Palace of Darkness - Dark Maze - Top",   region: PalaceOfDarkness, type: Chest,    vanilla_item: SmallKey_PalaceOfDarkness, source: "app/Region/Standard/PalaceOfDarkness.php:61" }
-  - { id: 47, name: "Palace of Darkness - Dark Maze - Bottom", region: PalaceOfDarkness, type: Chest,   vanilla_item: Rupee100,               source: "app/Region/Standard/PalaceOfDarkness.php:62" }
+  - { id: 46, name: "Palace of Darkness - Dark Maze - Top",   region: PalaceOfDarkness, type: Chest,    vanilla_item: Rupee100, source: "app/Region/Standard/PalaceOfDarkness.php:61" }
+  - { id: 47, name: "Palace of Darkness - Dark Maze - Bottom", region: PalaceOfDarkness, type: Chest,   vanilla_item: SmallKey_PalaceOfDarkness,               source: "app/Region/Standard/PalaceOfDarkness.php:62" }
   - { id: 48, name: "Palace of Darkness - Boss",              region: PalaceOfDarkness, type: Drop,     vanilla_item: BossHeartContainer,     source: "app/Region/Standard/PalaceOfDarkness.php:63" }
   - { id: 49, name: "Palace of Darkness - Prize",             region: PalaceOfDarkness, type: Prize_Crystal, vanilla_item: Prize_Crystal1,    source: "app/Region/Standard/PalaceOfDarkness.php:65", notes: "Vanilla = Crystal 1 per ALTTPR; prize-shuffle reassigns." }
 
@@ -146,7 +146,7 @@ locations:
   - { id: 79, name: "Ice Palace - Big Key Chest",             region: IcePalace, type: Chest,        vanilla_item: BigKey_IcePalace,  source: "app/Region/Standard/IcePalace.php:50" }
   - { id: 80, name: "Ice Palace - Compass Chest",             region: IcePalace, type: Chest,        vanilla_item: Compass_IcePalace, source: "app/Region/Standard/IcePalace.php:51" }
   - { id: 81, name: "Ice Palace - Map Chest",                 region: IcePalace, type: Chest,        vanilla_item: Map_IcePalace,     source: "app/Region/Standard/IcePalace.php:52" }
-  - { id: 82, name: "Ice Palace - Spike Room",                region: IcePalace, type: Chest,        vanilla_item: Rupee100,          source: "app/Region/Standard/IcePalace.php:53" }
+  - { id: 82, name: "Ice Palace - Spike Room",                region: IcePalace, type: Chest,        vanilla_item: SmallKey_IcePalace,          source: "app/Region/Standard/IcePalace.php:53" }
   - { id: 83, name: "Ice Palace - Freezor Chest",             region: IcePalace, type: Chest,        vanilla_item: Rupee100,          source: "app/Region/Standard/IcePalace.php:54" }
   - { id: 84, name: "Ice Palace - Iced T Room",               region: IcePalace, type: Chest,        vanilla_item: SmallKey_IcePalace, source: "app/Region/Standard/IcePalace.php:55" }
   - { id: 85, name: "Ice Palace - Big Chest",                 region: IcePalace, type: BigChest,     vanilla_item: BlueMail,          source: "app/Region/Standard/IcePalace.php:56" }
@@ -171,15 +171,15 @@ locations:
   # ===========================================================================
   - { id: 97,  name: "Turtle Rock - Chain Chomps",            region: TurtleRock, type: Chest,    vanilla_item: SmallKey_TurtleRock, source: "app/Region/Standard/TurtleRock.php:60" }
   - { id: 98,  name: "Turtle Rock - Compass Chest",           region: TurtleRock, type: Chest,    vanilla_item: Compass_TurtleRock,  source: "app/Region/Standard/TurtleRock.php:61" }
-  - { id: 99,  name: "Turtle Rock - Roller Room - Left",      region: TurtleRock, type: Chest,    vanilla_item: Rupee100,            source: "app/Region/Standard/TurtleRock.php:62" }
-  - { id: 100, name: "Turtle Rock - Roller Room - Right",     region: TurtleRock, type: Chest,    vanilla_item: Rupee100,            source: "app/Region/Standard/TurtleRock.php:63" }
+  - { id: 99,  name: "Turtle Rock - Roller Room - Left",      region: TurtleRock, type: Chest,    vanilla_item: Map_TurtleRock,            source: "app/Region/Standard/TurtleRock.php:62" }
+  - { id: 100, name: "Turtle Rock - Roller Room - Right",     region: TurtleRock, type: Chest,    vanilla_item: SmallKey_TurtleRock,            source: "app/Region/Standard/TurtleRock.php:63" }
   - { id: 101, name: "Turtle Rock - Big Chest",               region: TurtleRock, type: BigChest, vanilla_item: MirrorShield,        source: "app/Region/Standard/TurtleRock.php:64" }
   - { id: 102, name: "Turtle Rock - Big Key Chest",           region: TurtleRock, type: Chest,    vanilla_item: BigKey_TurtleRock,   source: "app/Region/Standard/TurtleRock.php:65" }
   - { id: 103, name: "Turtle Rock - Crystaroller Room",       region: TurtleRock, type: Chest,    vanilla_item: SmallKey_TurtleRock, source: "app/Region/Standard/TurtleRock.php:66" }
-  - { id: 104, name: "Turtle Rock - Eye Bridge - Bottom Left",  region: TurtleRock, type: Chest, vanilla_item: Rupee100,            source: "app/Region/Standard/TurtleRock.php:67" }
+  - { id: 104, name: "Turtle Rock - Eye Bridge - Bottom Left",  region: TurtleRock, type: Chest, vanilla_item: SmallKey_TurtleRock,            source: "app/Region/Standard/TurtleRock.php:67" }
   - { id: 105, name: "Turtle Rock - Eye Bridge - Bottom Right", region: TurtleRock, type: Chest, vanilla_item: Rupee100,            source: "app/Region/Standard/TurtleRock.php:68" }
-  - { id: 106, name: "Turtle Rock - Eye Bridge - Top Left",   region: TurtleRock, type: Chest,    vanilla_item: SmallKey_TurtleRock, source: "app/Region/Standard/TurtleRock.php:69" }
-  - { id: 107, name: "Turtle Rock - Eye Bridge - Top Right",  region: TurtleRock, type: Chest,    vanilla_item: SmallKey_TurtleRock, source: "app/Region/Standard/TurtleRock.php:70" }
+  - { id: 106, name: "Turtle Rock - Eye Bridge - Top Left",   region: TurtleRock, type: Chest,    vanilla_item: Rupee100, source: "app/Region/Standard/TurtleRock.php:69" }
+  - { id: 107, name: "Turtle Rock - Eye Bridge - Top Right",  region: TurtleRock, type: Chest,    vanilla_item: Rupee100, source: "app/Region/Standard/TurtleRock.php:70" }
   - { id: 108, name: "Turtle Rock - Boss",                    region: TurtleRock, type: Drop,     vanilla_item: BossHeartContainer,  source: "app/Region/Standard/TurtleRock.php:71" }
   - { id: 109, name: "Turtle Rock - Prize",                   region: TurtleRock, type: Prize_Crystal, vanilla_item: Prize_Crystal7, source: "app/Region/Standard/TurtleRock.php:73" }
 
@@ -202,10 +202,10 @@ locations:
   - { id: 123, name: "Ganon's Tower - Hope Room - Right",                 region: GanonsTower, type: Chest,   vanilla_item: Rupee100,             source: "app/Region/Standard/GanonsTower.php:66" }
   - { id: 124, name: "Ganon's Tower - Bob's Chest",                       region: GanonsTower, type: Chest,   vanilla_item: Rupee100,             source: "app/Region/Standard/GanonsTower.php:67" }
   - { id: 125, name: "Ganon's Tower - Tile Room",                         region: GanonsTower, type: Chest,   vanilla_item: SmallKey_GanonsTower, source: "app/Region/Standard/GanonsTower.php:68" }
-  - { id: 126, name: "Ganon's Tower - Compass Room - Top Left",           region: GanonsTower, type: Chest,   vanilla_item: Rupee100,             source: "app/Region/Standard/GanonsTower.php:69" }
+  - { id: 126, name: "Ganon's Tower - Compass Room - Top Left",           region: GanonsTower, type: Chest,   vanilla_item: Compass_GanonsTower,             source: "app/Region/Standard/GanonsTower.php:69" }
   - { id: 127, name: "Ganon's Tower - Compass Room - Top Right",          region: GanonsTower, type: Chest,   vanilla_item: Rupee100,             source: "app/Region/Standard/GanonsTower.php:70" }
   - { id: 128, name: "Ganon's Tower - Compass Room - Bottom Left",        region: GanonsTower, type: Chest,   vanilla_item: Rupee100,             source: "app/Region/Standard/GanonsTower.php:71" }
-  - { id: 129, name: "Ganon's Tower - Compass Room - Bottom Right",       region: GanonsTower, type: Chest,   vanilla_item: Compass_GanonsTower,  source: "app/Region/Standard/GanonsTower.php:72" }
+  - { id: 129, name: "Ganon's Tower - Compass Room - Bottom Right",       region: GanonsTower, type: Chest,   vanilla_item: Rupee100,  source: "app/Region/Standard/GanonsTower.php:72" }
   - { id: 130, name: "Ganon's Tower - Big Key Chest",                     region: GanonsTower, type: Chest,   vanilla_item: BigKey_GanonsTower,   source: "app/Region/Standard/GanonsTower.php:73" }
   - { id: 131, name: "Ganon's Tower - Big Key Room - Left",               region: GanonsTower, type: Chest,   vanilla_item: Rupee100,             source: "app/Region/Standard/GanonsTower.php:74" }
   - { id: 132, name: "Ganon's Tower - Big Key Room - Right",              region: GanonsTower, type: Chest,   vanilla_item: Rupee100,             source: "app/Region/Standard/GanonsTower.php:75" }

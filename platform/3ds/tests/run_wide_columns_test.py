@@ -50,12 +50,13 @@ static void Layers(Ppu *p,int x,int y) {
 static unsigned Check(Ppu *p,const WideFrame *f,int layer,unsigned (*expect)(int,int)) {
  int x=(int16)BG2HOFS_copy2,y=(int16)BG2VOFS_copy2,visual=x-f->view.offset_x;
  unsigned changed=0;
- for(int ty=(y-f->view.delta_y)&~7;ty<y-f->view.delta_y+240;ty+=8)
+ for(int ty=(y+1-f->view.delta_y)&~7;ty<y+1-f->view.delta_y+240;ty+=8)
   for(int tx=(visual-f->view.left)&~7;tx<visual+256+f->view.right;tx+=8) {
    unsigned adr=Address(&p->bgLayer[layer],tx,ty);
-   if(tx+8>x && tx<x+256 && ty+8>y && ty<y+224){assert(p->vram[adr]==original[adr]);continue;}
+   if(tx+8>x && tx<x+256 && ty+8>y+1 && ty<=y+224){assert(p->vram[adr]==original[adr]);continue;}
    unsigned want=expect(tx,ty);
    if(want==0x10000){continue;}
+   if(p->vram[adr]!=want)fprintf(stderr,"TILE context=%d camera=%d/%d layer=%d tile=%d/%d got=%x expected=%x\n",f->context,x,y,layer,tx,ty,p->vram[adr],want);
    assert(p->vram[adr]==want);changed+=original[adr]!=want;
   }
  return changed;
@@ -105,12 +106,12 @@ int main(int argc,char **argv) {
  {
   uint16 seam[4096];for(int i=0;i<4096;i++)seam[i]=1;
   attributes_for_tile[0]=0;attributes_for_tile[1]=1;attributes_for_tile[2]=0x20;
-  assert(!WideOpenSeam(seam,31,seam,32,0,512));
+  assert(!WideOpenSeam(seam,31,seam,32,0,512,NULL));
   for(int y=12;y<15;y++)seam[y*64+31]=seam[y*64+32]=0;
-  assert(!WideOpenSeam(seam,31,seam,32,0,512));
+  assert(!WideOpenSeam(seam,31,seam,32,0,512,NULL));
   seam[15*64+31]=seam[15*64+32]=0;
-  assert(WideOpenSeam(seam,31,seam,32,0,512));
-  seam[14*64+32]=2;assert(!WideOpenSeam(seam,31,seam,32,0,512));
+  assert(WideOpenSeam(seam,31,seam,32,0,512,NULL));
+  seam[14*64+32]=2;assert(!WideOpenSeam(seam,31,seam,32,0,512,NULL));
   memset(g_ram,0,sizeof(g_ram));
  }
 

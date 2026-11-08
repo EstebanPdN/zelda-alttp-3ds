@@ -1861,9 +1861,8 @@ static void randomizer_tap(float x, float y) {
     randomizer_saved_page=0;randomizer_page=4;
   }
   else if(in_rect(&randomizer_rows[7],x,y)) {
-    // Leaving a seed loses its unsaved progress: ask first.
-    if (randomizer_in_seed()) ordinary_confirm_mode = true;
-    else Platform3DS_RequestOrdinaryGame();
+    // Restarting also loses progress in an ordinary game. Always ask first.
+    ordinary_confirm_mode = true;
   }
 #endif
 }

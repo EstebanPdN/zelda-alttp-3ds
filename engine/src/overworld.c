@@ -471,7 +471,15 @@ void MirrorWarp_BuildDewavingHDMATable() {  // 80ff2f
   } while (y != 0);
 
   uint16 t = hdma_table_dynamic[0xc0] | hdma_table_dynamic[0xc8] | hdma_table_dynamic[0xd0] | hdma_table_dynamic[0xd8];
-  if (t == BG2HOFS_copy2) {
+  bool settled = t == BG2HOFS_copy2;
+  if (enhanced_features0 & kFeatures0_WidescreenVisualFixes) {
+    // OR-ing four samples can equal the base while a wave is still visible.
+    // Include the extended bottom rows before ending the effect.
+    settled = true;
+    for (int row = 192; row < 240; row += 2)
+      settled &= hdma_table_dynamic[row] == BG2HOFS_copy2;
+  }
+  if (settled) {
     HDMAEN_copy = 0;
     subsubmodule_index++;
     Overworld_SetFixedColAndScroll();
@@ -1502,6 +1510,9 @@ void Module09_MirrorWarp() {  // 82b1fa
       overworld_map_state = 0;
       return;
     }
+    if ((enhanced_features0 & kFeatures0_MiscBugFixes) &&
+        (sound_effect_ambient_last & 0x3f) == 11)
+      sound_effect_ambient = 5;
     music_control = 8;
     flag_overworld_area_did_change = 8;
     countdown_for_blink = 0x90;

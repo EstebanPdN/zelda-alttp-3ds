@@ -4,6 +4,17 @@
 
 Experimental pre-release.
 
+- Corrected vanilla dungeon-item locations used by new randomizer seeds in Turtle Rock, Palace of Darkness, Ice Palace and Ganon's Tower. Existing saved seeds keep their embedded placements.
+- Normal game now always asks before restarting, including when no randomizer seed is active.
+- Corrected initial overworld actor loading with the WIDE fixed camera, including actors near its edges.
+- Fixed distant Eyegores waking through 256-pixel coordinate wrapping.
+- Extended the dam's flooding window to all 240 scanlines.
+- Enabled WIDE rendering in special overworld areas where the native map bounds provide room, including Zora's River.
+- Covered disconnected dungeon chambers outside the current view.
+- Corrected outdoor overlay parallax and the fixed camera during mirror-wave HDMA.
+- Waited for the full mirror-wave tail before completing the transition, and stopped flute-boy ambience when mirroring away.
+- Fixed missing world-map margins and garbage/blank corners outside the map's artwork.
+
 - Fixed the German dungeon floor sign, which showed broken letters: it reads 1S, 2S and K1, K2 as on the German cartridge.
 - Fixed garbled graphics beside the room in WIDE with the fixed camera after loading a file once the title's story had played.
 

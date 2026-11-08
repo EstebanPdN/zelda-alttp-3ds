@@ -1764,7 +1764,7 @@ void FloodDam_PrepFloodHDMA() {  // 80f734
       } while (a >= 480);
       hdma_table_dynamic[a >> 1] = r12 == 0xffff ? 0xff : r12;
     }
-  } while (++r4 < 225);
+  } while (++r4 < ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) ? 240 : 225));
 }
 
 void ResetStarTileGraphics() {  // 80fda4

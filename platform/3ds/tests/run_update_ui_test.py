@@ -291,7 +291,10 @@ int main(int argc,char**argv){
  int resumes_before=randomizer_resumes;touch(randomizer_rows[0]);assert(randomizer_confirm_mode&&randomizer_resumes==resumes_before);
  draw_settings(panel);touch(language_yes_r);assert(randomizer_resumes==resumes_before+1);
  randomizer_mode=true;randomizer_page=randomizer_home=0;draw_settings(panel);
- int ordinary_before=ordinary_requests;touch(randomizer_rows[7]);assert(ordinary_requests==ordinary_before+1);
+ int ordinary_before=ordinary_requests;touch(randomizer_rows[7]);assert(ordinary_confirm_mode&&ordinary_requests==ordinary_before);
+ draw_settings(panel);touch(language_no_r);assert(!ordinary_confirm_mode&&ordinary_requests==ordinary_before);
+ draw_settings(panel);touch(randomizer_rows[7]);draw_settings(panel);touch(language_yes_r);assert(ordinary_requests==ordinary_before+1);
+ randomizer_mode=true;randomizer_page=randomizer_home=0;draw_settings(panel);
  touch(randomizer_rows[3]);assert(randomizer_page==4);draw_settings(panel);
  int imports_before=import_requests;touch(randomizer_rows[0]);assert(randomizer_confirm_mode&&import_requests==imports_before);
  draw_settings(panel);touch(language_yes_r);assert(import_requests==imports_before+1);

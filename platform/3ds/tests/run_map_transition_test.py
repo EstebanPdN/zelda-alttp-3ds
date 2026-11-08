@@ -41,6 +41,18 @@ int main(int argc,char**argv){
    last_state=phase;
    g_zenv.ppu->wideUi=@LAYOUT@;Render(actual);unsigned repeat=g_zenv.ppu->wideMarginRepeat,ui=g_zenv.ppu->wideUi;
    if(!world&&phase==3)assert(ui==kPpuUiNone&&repeat==1);
+   if(world&&phase==5&&(stable==0||stable==20)) {
+    assert(g_zenv.ppu->extraLeftCur==72&&g_zenv.ppu->extraRightCur==72);
+    if(stable==20)assert(actual[0]==g_zenv.ppu->colorMapRgb[12]&&actual[399]==g_zenv.ppu->colorMapRgb[12]);
+    // Opening the map at an area boundary must not inherit its side clipping.
+    uint16 left=ow_scroll_vars0.xstart,right=ow_scroll_vars0.xend;
+    ow_scroll_vars0.xstart=BG2HOFS_copy2;ow_scroll_vars0.xend=BG2HOFS_copy2;
+    Render(reference);assert(!memcmp(actual,reference,sizeof(actual)));
+    ow_scroll_vars0.xstart=left;ow_scroll_vars0.xend=right;
+    char path[1024];snprintf(path,sizeof(path),"%s/world-r%u-s%d-z%u.raw",argv[2],renderer,scenes[scene],stable);
+    FILE*f=fopen(path,"wb");fwrite(actual,4,400*240,f);fclose(f);
+   }
+
    if(main_module_index==14&&(phase==0||(!world&&phase>=7))&&g_zenv.ppu->brightness&&!g_zenv.ppu->forcedBlank){
     unsigned module=main_module_index,sub=submodule_index;main_module_index=saved_module_for_menu;submodule_index=0;
     unsigned gameplay_module=main_module_index;bool world=!player_is_indoors;
@@ -49,7 +61,7 @@ int main(int argc,char**argv){
     printf("FADE scene=%d tick=%d phase=%u ui=%u repeat=%u different_pixels=%u\n",scenes[scene],tick,phase,ui,repeat,diff);
     if(tick<15||phase>=7){char path[1024];snprintf(path,sizeof(path),"%s/r%u-s%d-f%03d.raw",argv[2],renderer,scenes[scene],tick);FILE*f=fopen(path,"wb");fwrite(actual,4,400*240,f);fclose(f);}
    }
-   if(phase==(world?5:3)&&!closing&&++stable==4){ZeldaRunFrame(world?1:1<<9);closing=true;}else ZeldaRunFrame(0);
+   if(phase==(world?5:3)&&!closing&&++stable==(world?40:4)){ZeldaRunFrame(world?1:1<<9);closing=true;}else ZeldaRunFrame(world&&phase==5&&stable==10?1<<10:0);
    if(main_module_index==gameplay_module&&submodule_index==0)break;
   }
   assert(closing&&main_module_index==gameplay_module&&submodule_index==0);

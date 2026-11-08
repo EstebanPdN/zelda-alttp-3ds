@@ -851,7 +851,10 @@ static void PpuDrawBackground_mode7(Ppu *ppu, uint y, bool sub, PpuZbufType z) {
       int w = ppu->mosaicSize - PpuMosaicPhase(ppu, x);
       do {
         w = IntMin(w, dstz_end - dstz);
-        if ((uint32)(xpos | ypos) > outside_value) {
+        if ((ppu->renderFlags & kPpuRenderFlags_WorldMapBorder) &&
+            (uint32)(xpos | ypos) >= (512u << 8)) {
+          tile = 0x28; // cloud backdrop, not the native unused $ef tile
+        } else if ((uint32)(xpos | ypos) > outside_value) {
           if (!char_fill)
             continue;
           tile = 0;
@@ -866,7 +869,10 @@ static void PpuDrawBackground_mode7(Ppu *ppu, uint y, bool sub, PpuZbufType z) {
       } while (xpos += dx * w, ypos += dy * w, dstz += w, w = ppu->mosaicSize, dstz_end - dstz != 0);
     } else {
       do {
-        if ((uint32)(xpos | ypos) > outside_value) {
+        if ((ppu->renderFlags & kPpuRenderFlags_WorldMapBorder) &&
+            (uint32)(xpos | ypos) >= (512u << 8)) {
+          tile = 0x28; // cloud backdrop, not the native unused $ef tile
+        } else if ((uint32)(xpos | ypos) > outside_value) {
           if (!char_fill)
             continue;
           tile = 0;
@@ -943,8 +949,9 @@ static void PpuDrawMode7Upsampled(Ppu *ppu, uint y) {
 
 #define DRAW_PIXEL(mode) \
     tile = ppu->vram[(ycur >> 25 & 0x7f) * 128 + (xcur >> 25 & 0x7f)] & 0xff;  \
+    if ((ppu->renderFlags & kPpuRenderFlags_WorldMapBorder) && ((xcur | ycur) & 0x80000000)) tile = 0x28; \
     pixel = ppu->vram[tile * 64 + (ycur >> 22 & 7) * 8 + (xcur >> 22 & 7)] >> 8; \
-    pixel = (xcur & 0x80000000) ? 0 : pixel; \
+    pixel = !(ppu->renderFlags & kPpuRenderFlags_WorldMapBorder) && (xcur & 0x80000000) ? 0 : pixel; \
     *(uint32*)dst = (mode ? (ppu->colorMapRgb[pixel] & 0xfefefe) >> 1 : ppu->colorMapRgb[pixel]); \
     xcur += m0, ycur += m2, dst += 4;
 
@@ -1695,15 +1702,17 @@ static void ppu_calculateMode7Starts(Ppu* ppu, int y) {
 static int ppu_getPixelForMode7(Ppu* ppu, int x, int layer, bool priority) {
   if (IS_MOSAIC_ENABLED(ppu, layer))
     x -= x % ppu->mosaicSize;
-  uint8_t rx = ppu->m7xFlip ? 255 - x : x;
+  int rx = ppu->m7xFlip ? 255 - x : x;
   int xPos = (ppu->m7startX + ppu->m7matrix[0] * rx) >> 8;
   int yPos = (ppu->m7startY + ppu->m7matrix[2] * rx) >> 8;
+  bool cloud = (ppu->renderFlags & kPpuRenderFlags_WorldMapBorder) &&
+               ((unsigned)xPos >= 512 || (unsigned)yPos >= 512);
   bool outsideMap = xPos < 0 || xPos >= 1024 || yPos < 0 || yPos >= 1024;
   xPos &= 0x3ff;
   yPos &= 0x3ff;
   if(!ppu->m7largeField) outsideMap = false;
-  uint8_t tile = outsideMap ? 0 : ppu->vram[(yPos >> 3) * 128 + (xPos >> 3)] & 0xff;
-  uint8_t pixel = outsideMap && !ppu->m7charFill ? 0 : ppu->vram[tile * 64 + (yPos & 7) * 8 + (xPos & 7)] >> 8;
+  uint8_t tile = cloud ? 0x28 : outsideMap ? 0 : ppu->vram[(yPos >> 3) * 128 + (xPos >> 3)] & 0xff;
+  uint8_t pixel = !cloud && outsideMap && !ppu->m7charFill ? 0 : ppu->vram[tile * 64 + (yPos & 7) * 8 + (xPos & 7)] >> 8;
   if(layer == 1) {
     if(((bool) (pixel & 0x80)) != priority) return 0;
     return pixel & 0x7f;

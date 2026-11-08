@@ -6376,6 +6376,21 @@ void Overworld_LoadSprites() {  // 89c4ac
 }
 
 void Sprite_ActivateAllProxima() {  // 89c55e
+  if (enhanced_features0 & kFeatures0_ExtendScreen64) {
+    // On an area load the previous frame can still describe an indoor camera.
+    // Scan the union of both possible fixed-camera margins using the current
+    // logical camera; do not recalculate a picture shift while scanning it.
+    // Reserve slots for native-view actors before filling the extra margins.
+    for (int pass = 0; pass < 3; pass++) {
+      int first = pass == 0 ? -0x10 : pass == 1 ? -0xa0 : 0x150;
+      int last = pass == 0 ? 0x140 : pass == 1 ? -0x20 : 0x1a0;
+      for (int x = first; x <= last; x += 16)
+        for (int y = -0x30; y <= 0x120; y += 16)
+          Sprite_Overworld_ProximityMotivatedLoad(BG2HOFS_copy2 + x,
+                                                BG2VOFS_copy2 + y);
+    }
+    return;
+  }
   uint16 bak0 = BG2HOFS_copy2;
   uint8 bak1 = byte_7E069E[1];
   byte_7E069E[1] = 0xff;
