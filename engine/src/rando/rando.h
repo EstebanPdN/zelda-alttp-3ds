@@ -100,7 +100,7 @@
 //      there. (163 is claimed by the unmerged codex/bomb-grass-logic branch.)
 // 165: append import-only Rupee50 metadata; refresh versioned hint vocabulary.
 // 166: imported Pedestal reward and courtyard Triforce Hunt victory.
-#define kGeneratorVersion 166u
+#define kGeneratorVersion 167u
 // The share-string binary layout packs version into 1 byte
 // (rando_share.h: ShareString.version is uint8). Compile-time enforce
 // kGeneratorVersion ≤ 255 so silent truncation can't ship.

@@ -1,5 +1,85 @@
 # Changelog
 
+## v4.1
+
+- Added Japanese game and menus, automatic language selection and a corrected title logo.
+- Added direct `.zspr` skins and support for up to 512 mods.
+- Fixed translations, missing characters and clipped text in Spanish, Portuguese, Italian and Russian.
+- Fixed German name entry, file screens and floor labels, and the Russian Game Over title.
+- Fixed German/French save-menu freezes and item-ring hangs on empty slots.
+- Fixed WIDE expanded inventory and HUD/save-box text after loading across languages.
+- Fairies now restore 10 hearts; Normal game asks before restarting.
+- Fixed initial WIDE actor loading, distant Eyegores waking and disconnected dungeon scenery.
+- Extended WIDE to Zora's River and fixed the dam's flooding window.
+- Fixed outdoor parallax, mirror-wave camera/ending and lingering flute-boy ambience.
+- Fixed world-map margins/corners and stale WIDE scenery after the title story.
+- Corrected dungeon-item locations used by new randomizer seeds.
+
+## v4.1-E6
+
+Experimental pre-release.
+
+- Corrected vanilla dungeon-item locations used by new randomizer seeds in Turtle Rock, Palace of Darkness, Ice Palace and Ganon's Tower. Existing saved seeds keep their embedded placements.
+- Normal game now always asks before restarting, including when no randomizer seed is active.
+- Corrected initial overworld actor loading with the WIDE fixed camera, including actors near its edges.
+- Fixed distant Eyegores waking through 256-pixel coordinate wrapping.
+- Extended the dam's flooding window to all 240 scanlines.
+- Enabled WIDE rendering in special overworld areas where the native map bounds provide room, including Zora's River.
+- Covered disconnected dungeon chambers outside the current view.
+- Corrected outdoor overlay parallax and the fixed camera during mirror-wave HDMA.
+- Waited for the full mirror-wave tail before completing the transition, and stopped flute-boy ambience when mirroring away.
+- Fixed missing world-map margins and garbage/blank corners outside the map's artwork.
+
+- Fixed the German dungeon floor sign, which showed broken letters: it reads 1S, 2S and K1, K2 as on the German cartridge.
+- Fixed garbled graphics beside the room in WIDE with the fixed camera after loading a file once the title's story had played.
+
+## v4.1-E5
+
+Experimental pre-release.
+
+- Fixed the Japanese title logo: its colors and the subtitle plate.
+
+## v4.1-E4
+
+Experimental pre-release.
+
+- Fixed the game freezing in German and French when pressing SELECT in the item menu: Link and the buttons stopped while the music and the bottom screen kept going.
+- Fixed a possible hang when moving the X, L or R ring up or down from an empty slot.
+- The Quality of Life fairy option now restores 10 hearts instead of 8.
+- Fixed broken HUD and save-box letters when loading a state saved in another language.
+- Restored the six character skins built into v4.0, missing from the earlier experimental builds. Credits: see CREDITS.md.
+
+## v4.1-E3
+
+Experimental pre-release.
+
+- Character skins: copy any Link `.zspr` to the `mods` folder and choose it in Mods. No conversion, in every language, with its own name, author and portrait.
+- The Mods menu now lists up to 512 mods instead of 32.
+
+## v4.1-E2
+
+Experimental pre-release.
+
+- Added Japanese: the complete game from the official Super Famicom cartridge, with its dialogue, title, file screens, name keyboard, item names, inventory, maps, intro and ending.
+- Translated every menu of the port into Japanese, with a new pixel font, and selected it automatically on Japanese consoles.
+- Saves stay when changing language. A name in kana shows as LINK in other languages once saved.
+- Fixed pressing up from the first file on the copy screen, which could select a slot that does not exist.
+
+## v4.1-E1
+
+Experimental pre-release.
+
+- Fixed the invisible item menu with Expanded Inventory in WIDE, which also looked like Link freezing.
+- Fixed the German name keyboard, which typed the wrong letters and functions.
+- Fixed the German copy screen's slot numbers and fairy position.
+- Fixed the Russian Game Over title.
+- Reviewed all 396 messages in every language. Corrected typos, untranslated words, wrong hints and missing letters in Spanish, Portuguese, Italian and Russian.
+- Fixed text cut off by the dialogue box in Portuguese, Italian and Russian.
+- Added missing accented letters to Portuguese and Italian.
+- Translated the last English message in Italian and the remaining English file-screen words.
+- Fixed item names, truncated ending captions and broken file-screen words in Portuguese and Italian.
+- Changed "COGE" to "TOMA" in the Spanish item menu.
+
 ## v4.0
 
 - Added English, Spanish, Portuguese, Italian, French, German and Russian game and menu translations.

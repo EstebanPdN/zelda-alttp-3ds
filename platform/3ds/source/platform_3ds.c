@@ -2273,13 +2273,24 @@ static uint8_t SetupGlyph(uint32_t code, int row) {
 }
 
 static int SetupTextWidth(const char *text, int scale) {
-  return SetupTextLength(text) * 6 * scale;
+  int width = 0;
+  while (text && *text)
+    width += (UiFontJapaneseIndex(SetupNextChar(&text)) >= 0 ? 11 : 6) * scale;
+  return width;
 }
 
 static void SetupDrawChar(gfxScreen_t screen, uint32_t c, int x, int y,
                           int scale, uint16_t color) {
   if (c == ' ')
     return;
+  int japanese = UiFontJapaneseIndex(c);
+  if (japanese >= 0) {
+    for (int row = 0; row < 10; row++)
+      for (int col = 0; col < 10; col++)
+        if (kUiJapaneseGlyphs10[japanese][row] & (1 << (9 - col)))
+          SetupFillRect(screen, x + col * scale, y + (row - 2) * scale, scale, scale, color);
+    return;
+  }
   for (int row = -2; row < 9; row++) {
     uint8_t bits = SetupGlyph(c, row);
     for (int col = 0; col < 5; col++) {
@@ -2299,8 +2310,9 @@ static void SetupDrawText(gfxScreen_t screen, const char *text, int x, int y,
   while (*text) {
     if (max_width > 0 && cursor + 6 * scale > last)
       break;
-    SetupDrawChar(screen, SetupNextChar(&text), cursor, y, scale, color);
-    cursor += 6 * scale;
+    uint32_t c = SetupNextChar(&text);
+    SetupDrawChar(screen, c, cursor, y, scale, color);
+    cursor += (UiFontJapaneseIndex(c) >= 0 ? 11 : 6) * scale;
   }
 }
 
@@ -2668,6 +2680,7 @@ typedef struct RomTextLayout {
   size_t message4_size;        // ROM's message list is missing it
   bool eu_commands;
   bool build_only;             // tried only for the language being built
+  bool japanese;               // its own text and compressed font, see below
 } RomTextLayout;
 
 // Extra bytes following each command byte 0x67..0x7f, mirroring
@@ -2698,6 +2711,8 @@ static const uint8 kEuMessage4[] = {
 };
 
 static const RomTextLayout kRomTextLayouts[] = {
+  // "Zelda no Densetsu: Kamigami no Triforce": read by ExtractJapaneseText.
+  { .language_code = "ja", .dialogue_flags = 6, .build_only = true, .japanese = true },
   // Stock US layout: the US ROM itself and the translation hacks based on it.
   {
     .language_code = NULL,
@@ -2705,7 +2720,7 @@ static const RomTextLayout kRomTextLayouts[] = {
     .dialogue_flags = 2,
     .text_bank1 = 0xe0000, .text_bank2 = 0x75f40,
     .dict_pointers = 0x74703, .dict_pointer_base = 0xc703, .dict_bank = 0x70000,
-    .font_gfx = 0x70000, .font_widths = 0x74adf, .font_widths_count = 99,
+    .font_gfx = 0x70000, .font_widths = 0x74adf, .font_widths_count = 103,
     .command_start = 0x67, .switch_bank = 0x80, .finish = 0xff, .dict_base = 0x88,
     .command_args = kUsCommandArgs,
     .message4 = kUsMessage4, .message4_size = sizeof(kUsMessage4),
@@ -2797,11 +2812,104 @@ static int EncodeEuTextCommand(uint8 command, uint8 param, uint8 *out) {
   }
 }
 
+// The Japanese cartridge has no dictionary. Its messages run from $1C:8000, each
+// ended by 0xfb: 0xfd and 0xfc take one more byte, 0xfe a command and maybe its
+// argument. Its font at $0E:8000 is 512 letters, with a mask of 5 bytes for each
+// at $0E:B844 saying which of its 40 bytes are stored.
+enum {
+  kJpText = 0xe0000, kJpTextEnd = 0xe8000, kJpFont = 0x70000, kJpFontMasks = 0x73844,
+  kJpLetters = 512, kJpLetterBytes = 44, kJpMessages = 395,
+};
+
+static bool ExtractJapaneseText(const uint8 *rom, size_t rom_size,
+                                OwnedBlock *dialogue_block, OwnedBlock *font_block) {
+  // The USA cartridge added two choice messages, 11 and 12; it has the others
+  // two places later. Written as those messages are in the USA text.
+  static const uint8 kChoice11[] = { 0xfc, 0x00, 0xf9, 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xe4, 0xfe, 0x6f };
+  static const uint8 kChoice12[] = { 0xfc, 0x00, 0xf8, 0xff, 0xff, 0xff, 0xf9, 0xff, 0xff, 0xe4, 0xfe, 0x6f };
+  if (rom_size < kJpTextEnd)
+    return false;
+  OwnedBlock messages[kJpMessages + 2] = {0};
+  int count = 0;
+  bool ok = true;
+  size_t p = kJpText, start = p;
+  while (ok && p < kJpTextEnd && count < kJpMessages) {
+    uint8 c = rom[p];
+    if (c == 0xfb) {
+      int at = count < 11 ? count : count + 2;
+      ok = CopyBlock(&messages[at], rom + start, p - start);
+      count++;
+      start = ++p;
+    } else if (c == 0xfd || c == 0xfc) {
+      p += 2;
+    } else if (c == 0xfe) {
+      uint8 cmd = rom[p + 1];
+      if (cmd < 0x67 || cmd >= 0x80) {
+        ok = false;
+        break;
+      }
+      p += 2 + kUsCommandArgs[cmd - 0x67];
+    } else {
+      p++;
+    }
+  }
+  ok = ok && count == kJpMessages &&
+       CopyBlock(&messages[11], kChoice11, sizeof(kChoice11)) &&
+       CopyBlock(&messages[12], kChoice12, sizeof(kChoice12));
+  OwnedBlock dictionary = {0}, packed_dictionary = {0}, packed_messages = {0};
+  OwnedBlock dialogue_parts[2] = {0}, font_parts[2] = {0};
+  static const uint8 kNoWord[1] = { 0 };
+  ok = ok && CopyBlock(&dictionary, kNoWord, 1) &&
+       PackBlocks(&dictionary, 1, &packed_dictionary) &&
+       PackBlocks(messages, kJpMessages + 2, &packed_messages);
+  FreeBlocks(&dictionary, 1);
+  FreeBlocks(messages, kJpMessages + 2);
+  if (!ok) {
+    free(packed_dictionary.data);
+    free(packed_messages.data);
+    return false;
+  }
+  dialogue_parts[0] = packed_dictionary;
+  dialogue_parts[1] = packed_messages;
+  ok = PackBlocks(dialogue_parts, 2, dialogue_block);
+  FreeBlocks(dialogue_parts, 2);
+  if (!ok)
+    return false;
+  uint8 *letters = calloc(kJpLetters, kJpLetterBytes);
+  size_t from = kJpFont;
+  for (int g = 0; letters && g < kJpLetters; g++) {
+    const uint8 *mask = rom + kJpFontMasks + g * 5;
+    uint8 *to = letters + g * kJpLetterBytes;
+    // The first stored byte is byte 4 of the letter: its first line is blank.
+    for (int bit = 0; bit < 40; bit++) {
+      if (mask[bit >> 3] & (0x80 >> (bit & 7))) {
+        if (bit + 4 < kJpLetterBytes)
+          to[bit + 4] = rom[from];
+        from++;
+      }
+    }
+  }
+  static const uint8 kNoWidths[1] = { 0 };
+  ok = letters && CopyBlock(&font_parts[0], letters, kJpLetters * kJpLetterBytes) &&
+       CopyBlock(&font_parts[1], kNoWidths, 1) &&
+       PackBlocks(font_parts, 2, font_block);
+  free(letters);
+  FreeBlocks(font_parts, 2);
+  if (!ok) {
+    free(dialogue_block->data);
+    dialogue_block->data = NULL;
+    dialogue_block->size = 0;
+  }
+  return ok;
+}
+
 static bool ExtractTranslationWithLayout(const uint8 *rom, size_t rom_size,
                                          const RomTextLayout *layout,
                                          OwnedBlock *dialogue_block,
                                          OwnedBlock *font_block) {
   enum { kRomSize = 1048576 };
+  if (layout->japanese)
+    return ExtractJapaneseText(rom, rom_size, dialogue_block, font_block);
   dialogue_block->data = NULL;
   dialogue_block->size = 0;
   font_block->data = NULL;
@@ -3715,7 +3823,7 @@ static const char kModsDirectory[] = "sdmc:/3ds/Zelda 3DS/mods";
 static const char kBundledModsDirectory[] = "romfs:/mods";
 static const char kModSelectionFile[] = "mods.txt";
 
-enum { kMaxMods = 32, kModInfoLines = 7 };
+enum { kMaxMods = 512, kModInfoLines = 7 };
 
 typedef struct ModEntry {
   const char *base;  // kModsDirectory or kBundledModsDirectory
@@ -3853,12 +3961,55 @@ static bool ReadModManifest(const char *base, const char *folder,
          strcmp(mod->file, "..") != 0 && ModFolderValid(folder)&&FileStore_Exists(path,&exists)&&exists;
 }
 
+// The UTF-16 text at p, up to its end or `end`, as UTF-8 that fits `out`.
+// Returns what follows its terminator, NULL if it has none before `end`.
+static const uint8_t *ZsprText(const uint8_t *p,const uint8_t *end,char *out,size_t size) {
+  size_t used=0;out[0]=0;
+  for(;p+2<=end;p+=2) {
+    unsigned c=p[0]|p[1]<<8;
+    if(!c)return p+2;
+    if(c<32||(c>=0xd800&&c<0xe000))c='?';
+    int n=c<0x80?1:c<0x800?2:3;
+    if(used+n>=size)continue;
+    if(n==1)out[used]=(char)c;
+    else if(n==2){out[used]=(char)(0xc0|c>>6);out[used+1]=(char)(0x80|(c&63));}
+    else{out[used]=(char)(0xe0|c>>12);out[used+1]=(char)(0x80|((c>>6)&63));out[used+2]=(char)(0x80|(c&63));}
+    used+=n;out[used]=0;
+  }
+  return NULL;
+}
+
+// A ZSPR needs nothing but its own file: its name and author come from inside.
+// Only its header is read here, as a folder can hold hundreds of them.
+static bool ReadLooseZspr(const char *base,const char *folder,const char *name,size_t len,ModEntry *mod) {
+  char path[400];snprintf(path,sizeof(path),"%s/%s",base,folder);
+  FILE *file=fopen(path,"rb");if(!file)return false;
+  uint8_t head[512];size_t got=fread(head,1,sizeof(head),file);
+  long length=-1;if(fseek(file,0,SEEK_END)==0)length=ftell(file);
+  fclose(file);
+  uint32_t pixels,palette;
+  if(length<0||!Mods_ZsprLayout(head,got,(size_t)length,&pixels,&palette))return false;
+  memset(mod,0,sizeof(*mod));mod->base=base;mod->loose=true;
+  snprintf(mod->folder,sizeof(mod->folder),"%s",folder);snprintf(mod->file,sizeof(mod->file),"%s",name);
+  snprintf(mod->category,sizeof(mod->category),"SKIN");
+  const uint8_t *end=head+(pixels<got?pixels:got);
+  const uint8_t *next=ZsprText(head+kZsprHeaderSize,end,mod->name,sizeof(mod->name));
+  if(next)ZsprText(next,end,mod->info[0],sizeof(mod->info[0]));
+  if(!mod->name[0]) {
+    snprintf(mod->name,sizeof(mod->name),"%.*s",(int)(len-5),name);
+    for(char *c=mod->name;*c;c++)if(*c=='_'||*c=='-')*c=' ';
+  }
+  return true;
+}
+
 // Loose native skin files need no manifest. Restrict auto-classification to
 // Link graphics/palette entries; story and quest mods retain explicit manifests
 // and their save isolation. Validation here never applies the file to the game.
 static bool ReadLooseSkin(const char *base,const char *folder,ModEntry *mod) {
   const char *name=strrchr(folder,'/');name=name?name+1:folder;
-  size_t len=strlen(name);if(len<7||strcasecmp(name+len-6,".z3mod")||len>=sizeof(mod->file))return false;
+  size_t len=strlen(name);
+  if(len>5&&len<sizeof(mod->file)&&!strcasecmp(name+len-5,".zspr"))return ReadLooseZspr(base,folder,name,len,mod);
+  if(len<7||strcasecmp(name+len-6,".z3mod")||len>=sizeof(mod->file))return false;
   char path[400];snprintf(path,sizeof(path),"%s/%s",base,folder);
   FILE *file=fopen(path,"rb");if(!file)return false;
   uint8_t header[64]={0};bool valid=fread(header,1,64,file)==64;
@@ -3902,7 +4053,7 @@ static int ScanModFolder(const char *base, const char *group,
     if (entry->d_name[0] == '.' || n < 0 || (size_t)n >= sizeof(folder) ||
         !ModFolderValid(folder))
       continue;
-    if (ReadModManifest(base, folder, language, &mods[count])||ReadLooseSkin(base,folder,&mods[count]))
+    if (ReadLooseSkin(base,folder,&mods[count])||ReadModManifest(base, folder, language, &mods[count]))
       count++;
     else if (!group)
       count = ScanModFolder(base, folder, language, mods, count, max_mods);
@@ -3973,7 +4124,7 @@ static bool SaveModSelection(const char *profile, const ModEntry *mods,
   snprintf(path, sizeof(path), "%s/%s", profile, kModSelectionFile);
   if (!EnsureDirectory(kProfilesDirectory) || !EnsureDirectory(profile))
     return false;
-  char text[kMaxMods*97];size_t used=0;
+  static char text[kMaxMods*97];size_t used=0;
   for(int i=0;i<count;i++)if(mods[i].enabled) {
     int n=snprintf(text+used,sizeof(text)-used,"%s\n",mods[i].folder);
     if(n<0||(size_t)n>=sizeof(text)-used)return false;used+=n;
@@ -4122,9 +4273,38 @@ static uint32_t ReadLe(const uint8_t *p, int n) {
   return v;
 }
 
+// The forward-facing 16x16 head a ZSPR's own graphics show, for a ZSPR without
+// its own BMP. The same one as SS_RenderLinkFace, in the skin's first palette.
+static bool LoadZsprPreview(const ModEntry *mod) {
+  char path[sizeof(g_mod_preview.path)];
+  snprintf(path,sizeof(path),"%s/%s",mod->base,mod->folder);
+  FILE *file=fopen(path,"rb");if(!file)return false;
+  uint8_t head[kZsprHeaderSize],tiles[18*32],colors[30];
+  bool ok=fread(head,1,sizeof(head),file)==sizeof(head);
+  long length=-1;if(ok&&fseek(file,0,SEEK_END)==0)length=ftell(file);
+  uint32_t pixels,palette;
+  ok=ok&&length>=0&&Mods_ZsprLayout(head,sizeof(head),(size_t)length,&pixels,&palette)&&
+     fseek(file,pixels,SEEK_SET)==0&&fread(tiles,1,sizeof(tiles),file)==sizeof(tiles)&&
+     fseek(file,palette,SEEK_SET)==0&&fread(colors,1,sizeof(colors),file)==sizeof(colors);
+  fclose(file);if(!ok)return false;
+  for(int y=0;y<16;y++)for(int x=0;x<16;x++) {
+    const uint8_t *t=tiles+(x/8+(y/8)*16)*32;int row=y%8,bit=7-x%8;
+    int color=((t[row*2]>>bit)&1)|((t[row*2+1]>>bit)&1)<<1|((t[16+row*2]>>bit)&1)<<2|((t[17+row*2]>>bit)&1)<<3;
+    int i=y*16+x;g_mod_preview.mask[i]=color!=0;
+    if(color) {
+      unsigned word=colors[(color-1)*2]|colors[(color-1)*2+1]<<8;
+      int r=word&31,g=(word>>5)&31,b=(word>>10)&31;
+      g_mod_preview.pixels[i]=SetupRgb565(r<<3|r>>2,g<<3|g>>2,b<<3|b>>2);
+    }
+  }
+  g_mod_preview.width=g_mod_preview.height=16;g_mod_preview.loaded=true;
+  return true;
+}
+
 static bool LoadModPreview(const ModEntry *mod) {
   char path[sizeof(g_mod_preview.path)];
-  if(mod->loose)snprintf(path,sizeof(path),"%s/%.*s.bmp",mod->base,(int)strlen(mod->folder)-6,mod->folder);
+  const char *dot=strrchr(mod->folder,'.');
+  if(mod->loose)snprintf(path,sizeof(path),"%s/%.*s.bmp",mod->base,(int)(dot-mod->folder),mod->folder);
   else snprintf(path, sizeof(path), "%s/%s/preview.bmp", mod->base, mod->folder);
   if (strcmp(path, g_mod_preview.path) == 0)
     return g_mod_preview.loaded;
@@ -4132,7 +4312,7 @@ static bool LoadModPreview(const ModEntry *mod) {
   g_mod_preview.loaded = false;
   FILE *file = fopen(path, "rb");
   if (!file)
-    return false;
+    return mod->loose && !strcasecmp(dot, ".zspr") && LoadZsprPreview(mod);
   static uint8_t data[54 + kPreviewMax * kPreviewMax * 4 + 64];
   size_t size = fread(data, 1, sizeof(data), file);
   fclose(file);
@@ -4606,7 +4786,7 @@ static int LanguageFromSystem(void) {
 static bool SetupCanDraw(const char *text) {
   while (text && *text) {
     uint32_t c = SetupNextChar(&text);
-    if (c == ' ')
+    if (c == ' ' || UiFontJapaneseIndex(c) >= 0)
       continue;
     bool drawn = false;
     for (int row = -2; row < 9 && !drawn; row++)
@@ -4659,12 +4839,12 @@ static void SetupStyledButton(int x,int y,int w,int h,bool selected) {
 static void SetupMenuText(gfxScreen_t target,const char *text,int x,int y,int scale,uint16_t color) {
   unsigned code;
   while((code=UiFontNextCode(&text))) {
-    int rows=scale==3?15:scale==2?21:11,width=scale==3?7:5*scale;
+    int rows=UiFontGlyphRows(code,scale),width=UiFontGlyphColumns(code,scale);
     for(int yy=0;yy<rows;yy++)for(int xx=0;xx<width;xx++) {
-      unsigned bits=scale==3?kNativeUiMediumGlyphs[code][yy]:scale==2?kNativeUiLargeGlyphs[code][yy]:kNativeUiGlyphs[code][yy];
-      if(bits&(1u<<(width-1-xx)))SetupPutPixel(target,x+xx,y-(scale==3?3:2*scale)+yy,color);
+      unsigned bits=UiFontGlyphBits(code,scale,yy);
+      if(bits&(1u<<(width-1-xx)))SetupPutPixel(target,x+xx,y+UiFontGlyphTop(code,scale)+yy,color);
     }
-    x+=scale==3?(code==' '?5:8):(code==' '?4:6)*scale;
+    x+=UiFontAdvance(code,scale);
   }
 }
 static void SetupMenuLabel(int x,int y,int w,int h,const char *label,int scale) {
@@ -4720,14 +4900,15 @@ static int SetupWrap(gfxScreen_t target,const char *text,int x,int y,int width,i
       if(n>=(int)sizeof(line))break;
       memcpy(line,text,n);line[n]=0;
       if(UiFontWidth(line,face)>width)break;
-      if(*end==' ')space=end;
+      space=UiFontBreakAt(end,space);
       end=next;length=n;
     }
     if(*end&&space&&space>text){end=space;length=end-text;}
+    else if(*end&&!space){end=UiFontLineEnd(text,end,NULL);length=end-text;}
     if(!length)break;
     memcpy(line,text,length);line[length]=0;
     SetupMenuText(target,line,x,y+lines*(face==2?22:16),face,color);lines++;
-    text=end;while(*text==' ')text++;
+    text=UiFontSkipBreak(end);
   }
   return lines;
 }

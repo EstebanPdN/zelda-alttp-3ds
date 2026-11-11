@@ -91,10 +91,10 @@ int main(int argc,char**argv){
  dung_replacement_tile_state[0]=0xfffe;set(kQolRepeatBlocks,false);assert(InitializePushBlock(0,0));
  puts("OK blocks: repeated native movement, collision and disabling");
  assert(ZeldaLoadTestScenario(38));apply();link_hearts_filler=0;sprite_type[0]=0xe3;
- set(kQolFairyHearts,true);Sprite_HandleAbsorptionByPlayer(0);assert(link_hearts_filler==64);
- GameOver_InitializeRevivalFairy();assert(link_hearts_filler==64);
+ set(kQolFairyHearts,true);Sprite_HandleAbsorptionByPlayer(0);assert(link_hearts_filler==80);
+ GameOver_InitializeRevivalFairy();assert(link_hearts_filler==80);
  set(kQolFairyHearts,false);GameOver_InitializeRevivalFairy();assert(link_hearts_filler==56);
- puts("OK fairies: eight hearts in pickups and automatic revival, original seven when off");
+ puts("OK fairies: ten hearts in pickups and automatic revival, original seven when off");
  uint16 original[1024],patched[1024],again[1024];unsigned changed=0;
  for(int s=0;s<128;s++) {
   set(kQolKakariko,false);assert(Overworld_DecodeScreenMap16(s,original));set(kQolKakariko,true);assert(Overworld_DecodeScreenMap16(s,patched));

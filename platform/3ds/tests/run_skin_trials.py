@@ -13,7 +13,7 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--languages',type=Path,required=True)
 p.add_argument('--refs',type=Path,required=True)
 p.add_argument('--downloads',type=Path,required=True)
-p.add_argument('--mods',type=Path,required=True)
+p.add_argument('--mods',type=Path,help='converted packages; without it each ZSPR is loaded as a mod itself')
 p.add_argument('--work-dir',type=Path,required=True)
 a=p.parse_args()
 work=a.work_dir.resolve()
@@ -121,7 +121,7 @@ for folder in sorted(a.languages.iterdir()):
   outputs=[]
   for mode in [0,1]:
    out=work/'frames'/lang/item['slug']/('mod' if mode else 'zspr');out.mkdir(parents=True,exist_ok=True)
-   result=subprocess.run([str(exe),str(data),str(out),str((a.downloads/item['file']).resolve()),str((a.mods/item['slug']/'skin.z3mod').resolve()),str(mode)],env=env,capture_output=True)
+   result=subprocess.run([str(exe),str(data),str(out),str((a.downloads/item['file']).resolve()),str((a.mods/item['slug']/'skin.z3mod').resolve() if a.mods else (a.downloads/item['file']).resolve()),str(mode)],env=env,capture_output=True)
    (out/'test.log').write_bytes(result.stdout+result.stderr)
    if result.returncode:raise RuntimeError(f'{lang}/{item["slug"]}/{mode} failed: {out/"test.log"}')
    outputs.append(out)

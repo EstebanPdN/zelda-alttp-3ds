@@ -80,7 +80,7 @@ def convert(source, output, url=''):
     lines = [f'Name = {name}', 'Category = SKIN', f'Info = By {author}',
              'Info2 = Character graphics, armor and glove colors.',
              'Info3 = Requires the v4.0 skin trial build.']
-    lines += [f'{language} = skin.z3mod' for language in ['us', 'en', 'es', 'pt', 'it', 'fr', 'de', 'ru', 'fr-c']]
+    lines += [f'{language} = skin.z3mod' for language in ['us', 'en', 'es', 'pt', 'it', 'fr', 'de', 'ru', 'ja', 'fr-c']]
     (output/'mod.ini').write_text('\n'.join(lines) + '\n')
     provenance = dict(name=name, author=author, source=source.name, url=url,
                       source_sha256=hashlib.sha256(data).hexdigest(),

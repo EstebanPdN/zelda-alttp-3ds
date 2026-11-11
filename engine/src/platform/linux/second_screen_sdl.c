@@ -180,6 +180,7 @@ static float         u = 1.0f;
 #include "heart_layout.h"
 #include "heart_pixels.h"
 
+static SDL_Texture *tex_japanese_font[2];
 static SDL_Texture *tex_native_font, *tex_native_font_large, *tex_native_font_medium, *tex_native_sprites, *tex_native_cog;
 static SDL_Texture *tex_map[2], *tex_icons, *tex_glyphs, *tex_letters, *tex_face;
 static SDL_Texture *tex_floor, *tex_mapicons;
@@ -456,6 +457,30 @@ static float tiny_text_width(const char *s, float sc) {
   return UiFontWidth(s, (int)fmaxf(1, floorf(sc + 0.5f)));
 }
 
+// Built when Japanese first appears; other languages never pay for the atlases.
+static void draw_japanese_glyph(unsigned code, int scale, int x, int y, uint32_t c) {
+  SDL_Texture **atlas=tex_japanese_font;
+  int big=scale==2, size=UiFontGlyphRows(code,scale), cell=size+1, per_row=(256-1)/cell;
+  if(!atlas[big]) {
+    int rows=kUiJapaneseGlyphCount/per_row+1, h=rows*cell;
+    uint32_t *pixels=calloc(256*h,sizeof(*pixels));
+    if(!pixels) return;
+    for(int i=0;i<kUiJapaneseGlyphCount;i++) for(int yy=0;yy<size;yy++) {
+      unsigned bits=UiFontGlyphBits(UI_FONT_JAPANESE_CODE+i,scale,yy);
+      for(int xx=0;xx<size;xx++) if(bits&(1u<<(size-1-xx)))
+        pixels[(i/per_row*cell+yy)*256+i%per_row*cell+xx]=0xffffffff;
+    }
+    atlas[big]=make_tex(256,h,pixels,true);
+    free(pixels);
+    if(!atlas[big]) return;
+  }
+  int i=code-UI_FONT_JAPANESE_CODE;
+  SDL_SetTextureColorMod(atlas[big],(c>>16)&255,(c>>8)&255,c&255);
+  SDL_SetTextureAlphaMod(atlas[big],c>>24);
+  SDL_Rect src={i%per_row*cell,i/per_row*cell,size,size},dst={x,y+UiFontGlyphTop(code,scale),size,size};
+  SDL_RenderCopy(ss_r,atlas[big],&src,&dst);
+}
+
 static void draw_tiny_text(const char *s, float x, float y, float sc, uint32_t c) {
   int scale = (int)fmaxf(1, floorf(sc + 0.5f));
 #ifdef ZELDA3_TEST_UI_TEXT
@@ -495,7 +520,16 @@ static void draw_tiny_text(const char *s, float x, float y, float sc, uint32_t c
   int cx=(int)lroundf(x), cy=(int)lroundf(y);
   int accent;
   char ch;
+  const char *glyph_start=s;
   while ((ch=UiFontNext(&s,&accent))) {
+    if (accent==UI_FONT_JAPANESE) {
+      unsigned jp=UiFontNextCode(&glyph_start);
+      draw_japanese_glyph(jp,scale,cx,cy,c);
+      cx+=UiFontAdvance(jp,scale);
+      glyph_start=s;
+      continue;
+    }
+    glyph_start=s;
     unsigned code=(unsigned char)ch;
     if (accent>=0) for (unsigned i=0;i<sizeof(kNativeUiAccents)/sizeof(kNativeUiAccents[0]);i++)
       if (kNativeUiAccents[i].base==ch && kNativeUiAccents[i].accent==accent) { code=kNativeUiAccents[i].code; break; }
@@ -1155,17 +1189,16 @@ static int draw_wrapped_center(const char *text, RectFS area, int scale, uint32_
       size_t bytes = (size_t)(next - start);
       memcpy(line, start, bytes); line[bytes] = 0;
       if (text_width(line, scale) > area.w) break;
-      if (*end == ' ') last_space = end;
+      last_space = UiFontBreakAt(end, last_space);
       end = next; length = bytes;
     }
-    if (*end && last_space) end = last_space;
+    end = UiFontLineEnd(start, end, last_space);
     if (end == start) return lines;
     length = (size_t)(end - start);
     memcpy(line, start, length); line[length] = 0;
     draw_tiny_text(line, area.x + (area.w - text_width(line, scale)) / 2, y, scale, color);
     y += line_h; lines++;
-    start = end;
-    while (*start == ' ') start++;
+    start = UiFontSkipBreak(end);
   }
   return lines;
 }
@@ -1187,17 +1220,16 @@ static int draw_wrapped_left(const char *text, RectFS area, int scale, uint32_t 
       size_t bytes = (size_t)(next - start);
       memcpy(line, start, bytes); line[bytes] = 0;
       if (text_width(line, scale) > area.w) break;
-      if (*end == ' ') last_space = end;
+      last_space = UiFontBreakAt(end, last_space);
       end = next; length = bytes;
     }
-    if (*end && last_space) end = last_space;
+    end = UiFontLineEnd(start, end, last_space);
     if (end == start) return lines;
     length = (size_t)(end - start);
     memcpy(line, start, length); line[length] = 0;
     draw_tiny_text(line, area.x, y, scale, color);
     y += line_h; lines++;
-    start = end;
-    while (*start == ' ') start++;
+    start = UiFontSkipBreak(end);
   }
   return lines;
 }
@@ -1829,9 +1861,8 @@ static void randomizer_tap(float x, float y) {
     randomizer_saved_page=0;randomizer_page=4;
   }
   else if(in_rect(&randomizer_rows[7],x,y)) {
-    // Leaving a seed loses its unsaved progress: ask first.
-    if (randomizer_in_seed()) ordinary_confirm_mode = true;
-    else Platform3DS_RequestOrdinaryGame();
+    // Restarting also loses progress in an ordinary game. Always ask first.
+    ordinary_confirm_mode = true;
   }
 #endif
 }
@@ -3618,7 +3649,7 @@ void SecondScreenSDL_Update(int logic_frames) {
 
 static void destroy_textures(void) {
   SDL_Texture **texes[] = {&tex_map[0], &tex_map[1], &tex_icons, &tex_glyphs,
-                           &tex_letters, &tex_native_font, &tex_native_font_large, &tex_native_font_medium, &tex_native_sprites, &tex_native_cog, &tex_face, &tex_floor, &tex_mapicons,
+                           &tex_japanese_font[0], &tex_japanese_font[1], &tex_letters, &tex_native_font, &tex_native_font_large, &tex_native_font_medium, &tex_native_sprites, &tex_native_cog, &tex_face, &tex_floor, &tex_mapicons,
                            &tex_bg_menu, &tex_bg_parch, &tex_bg_stone, &tex_dungeon_bg,
                            &tex_triforce,&tex_menu_purple};
   for (size_t i = 0; i < sizeof(texes) / sizeof(texes[0]); i++) {

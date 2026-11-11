@@ -16,6 +16,29 @@
 // lists, some longer than the USA ones, with BG3 at $7800 instead of $6000.
 // A translation built from the USA cartridge keeps its words at `us_addr`
 // (0 for the tables no translation changes).
+// The Japanese cartridge's file screens: its stripes, frames and places.
+enum {
+  kJpNameBlank = 0x18c,
+  kJpFileBlank = 0x188,
+};
+
+// Copies the cartridge's stripes for a screen, of `size` bytes, into the upload
+// buffer.
+static uint8 *Jp_Stripes(uint32 addr, size_t size) {
+  uint8 *buf = (uint8 *)vram_upload_data;
+  memcpy(buf, LanguageCart_RawBytes(addr, size), size);
+  return buf;
+}
+
+// Its letters of a name go every second tile, 4 of them ($8C:D05C).
+static void Jp_DrawName(uint8 *at, int bottom, const uint8 *sram) {
+  const uint16 *name = (const uint16 *)(sram + kSrmOffs_Name);
+  for (int i = 0; i < 4; i++, at += 4) {
+    WORD(at[0]) = name[i] + 0x1c00;
+    WORD(at[bottom]) = name[i] + 0x1c10;
+  }
+}
+
 static const uint8 *SelectFile_Table(const uint8 *table, uint32 loc,
                                      uint32 us_addr, size_t size) {
   if (g_loc_rom)
@@ -82,7 +105,7 @@ void SelectFile_Func5_DrawOams(int k) {
 
   OamEnt *oam = oam_buf + kSelectFile_Draw_OamIdx[k] / 4;
   uint8 x = 0x34;
-  uint8 y = kSelectFile_Draw_Y[k];
+  uint8 y = kSelectFile_Draw_Y[k] + (LanguageCart_Japanese() ? 2 : 0);  // $8C:D57E
 
   uint8 sword = sram[kSrmOffs_Sword] - 1;
   uint8 swordchar = kSelectFile_Draw_SwordChar[sign8(sword) ? 0 : sword];
@@ -105,7 +128,7 @@ void SelectFile_Func6_DrawOams2(int k) {
 
   uint8 *sram = g_zenv.sram + 0x500 * k;
   uint8 x = 0x34;
-  uint8 y = kSelectFile_Draw_Y[k];
+  uint8 y = kSelectFile_Draw_Y[k] + (LanguageCart_Japanese() ? 2 : 0);  // $8C:D57E
 
   int died_ctr = WORD(sram[kSrmOffs_DiedCounter]);
   if (died_ctr == 0xffff)
@@ -128,6 +151,22 @@ void SelectFile_Func6_DrawOams2(int k) {
 }
 
 void SelectFile_Func17(int k) {
+  if (LanguageCart_Japanese()) {
+    // $8C:D518 and its tables at $8C:D50C.
+    static const uint16 kNameAt[3] = {0x0a, 0x6e, 0xd2};
+    static const uint16 kHealthAt[3] = {0x1e, 0x82, 0xe6};
+    uint8 *buf = (uint8 *)vram_upload_data;
+    const uint8 *s = g_zenv.sram + 0x500 * k;
+    Jp_DrawName(buf + kNameAt[k], 0x32, s);
+    int at = kHealthAt[k], column = 10;
+    for (int health = s[kSrmOffs_Health] >> 3; health > 0; health--) {
+      WORD(buf[at]) = 0x05c0;
+      at += 2;
+      if (--column == 0)
+        at = kHealthAt[k] + 0x32;
+    }
+    return;
+  }
   static const uint16 kSelectFile_DrawName_VramOffs[3] = {8, 0x5c, 0xb0};
   static const uint16 kSelectFile_DrawName_HealthVramOffs[3] = {0x16, 0x6a, 0xbe};
   uint8 *sram = g_zenv.sram + 0x500 * k;
@@ -152,7 +191,10 @@ void SelectFile_Func17(int k) {
 
 void SelectFile_Func16() {
   static const uint8 kSelectFile_Func16_FaerieY[2] = {175, 191};
-  FileSelect_DrawFairy(0x1c, kSelectFile_Func16_FaerieY[selectfile_R16]);
+  if (LanguageCart_Japanese())  // $8C:D46D
+    FileSelect_DrawFairy(0x14, selectfile_R16 ? 0xc7 : 0xa7);
+  else
+    FileSelect_DrawFairy(0x1c, kSelectFile_Func16_FaerieY[selectfile_R16]);
 
   int k = selectfile_R16;
   if (filtered_joypad_H & 0x2c) {
@@ -180,6 +222,10 @@ void SelectFile_Func16() {
 }
 
 void Module_NamePlayer_1() {
+  if (LanguageCart_Japanese()) {  // its screen 5 is complete ($8C:D7D1)
+    submodule_index++;
+    return;
+  }
   uint16 *dst = SelectFile_Func1();
   dst[0] = 0xffff;
   nmi_load_bg_from_vram = 1;
@@ -219,7 +265,8 @@ void LoadFileSelectGraphics() {  // 80e4e9
   }
 
   Decomp_spr(&g_ram[0x14000], 0x6b);
-  memcpy(bg3 + 0x800, &g_ram[0x14000], 0x300 * sizeof(uint16));
+  // After the Japanese font, which is longer ($80:E583).
+  memcpy(bg3 + (LanguageCart_Japanese() ? 0xd00 : 0x800), &g_ram[0x14000], 0x300 * sizeof(uint16));
 }
 
 void Intro_ValidateSram() {  // 828054
@@ -279,11 +326,12 @@ void Module_SelectFile_0() {  // 8ccd9d
   music_control = 11;
   submodule_index++;
   overworld_palette_aux_or_main = 0x200;
-  palette_main_indoors = 6;
+  // The Japanese cartridge's own colors for these screens ($8C:CC9A).
+  palette_main_indoors = LanguageCart_Japanese() ? 0 : 6;
   nmi_disable_core_updates = 6;
   Palette_Load_DungeonSet();
   Palette_Load_OWBG3();
-  hud_palette = 0;
+  hud_palette = LanguageCart_Japanese() ? 1 : 0;
   Palette_Load_HUD();
   hud_cur_item = 0;
   misc_sprites_graphics_index = 1;
@@ -327,6 +375,11 @@ void Module_EraseFile_1() {  // 8cce53
     0x84, 0x35, 0x11,    2, 0xc0, 0x22, 0x86, 0x35, 0x11, 0x1d, 0xc0, 0x22, 0x96, 0x35, 0x13, 0x42,
        0,    1, 0x93, 0x35, 0x13, 0x43, 0x40, 0x32, 0x95, 0x35, 0x13, 0x5d,    0,    1, 0x94, 0x35,
   };
+  if (LanguageCart_Japanese()) {
+    // The cartridge's screens have no frame beyond their own stripes ($8C:CD9D).
+    submodule_index++;
+    return;
+  }
   uint16 *dst = SelectFile_Func1();
   int gfx0_size = 224;
   const uint8 *gfx0 = g_loc_rom ? Loc_FileSelectStripes(&gfx0_size) :  // $8E:8D5A
@@ -370,6 +423,9 @@ void FileSelect_TriggerNameStripesAndAdvance() {  // 8cceb1
     0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18,
     0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xff,
   };
+  if (LanguageCart_Japanese())
+    Jp_Stripes(0x8cded1, 0x12d);
+  else
   memcpy(vram_upload_data, SelectFile_MovableTable(kSelectFile_Func3_Data, sizeof(kSelectFile_Func3_Data), 0x8ea293, 0x8cced0, 0xe359, 1), 253);
   INIDISP_copy = 0xf;
   nmi_disable_core_updates = 0;
@@ -394,7 +450,8 @@ void FileSelect_Main() {  // 8ccebd
     }
   }
 
-  FileSelect_DrawFairy(0x1c, kSelectFile_Faerie_Y[selectfile_R16]);
+  FileSelect_DrawFairy(0x1c, LanguageCart_Japanese() ? *LanguageCart_RawBytes(0x8ccc67 + selectfile_R16, 1) :
+                       kSelectFile_Faerie_Y[selectfile_R16]);
   nmi_load_bg_from_vram = 1;
 
   uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
@@ -498,11 +555,114 @@ void CopyFile_ConfirmSelection() {  // 8cd0b9
 }
 
 void FilePicker_DeleteHeaderStripe() {  // 8cd0c6
+  if (LanguageCart_Japanese()) {  // $8C:CFBB
+    static const uint8 kAt[2] = {0x04, 0x16 + 4};
+    for (int j = 0; j < 2; j++) {
+      uint16 *dst = (uint16 *)((uint8 *)vram_upload_data + kAt[j]);
+      for (int i = 0; i != 7; i++)
+        dst[i] = kJpFileBlank;
+    }
+    return;
+  }
   static const uint16 kFilePicker_DeleteHeaderStripe_Dst[2] = {4, 0x1e};
   for (int j = 1; j >= 0; j--) {
     uint16 *dst = vram_upload_data + kFilePicker_DeleteHeaderStripe_Dst[j] / 2;
     for (int i = 0; i != 11; i++)
       dst[i] = 0xa9;
+  }
+}
+
+static void CopyFile_SelectionJapanese(void) {  // 8cd02c
+  static const uint8 kFaerieY[4] = {0x47, 0x67, 0x87, 0xc7};
+  static const uint16 kNameAt[3] = {0x2c, 0x58, 0x84};
+  vram_upload_offset = 0xc0;
+  uint8 *buf = Jp_Stripes(0x8ce2d7, 0xc1);
+  for (int k = 0; k != 3; k++)
+    if (selectfile_arr1[k] & 1)
+      Jp_DrawName(buf + kNameAt[k], 0x16, g_zenv.sram + 0x500 * k);
+  FileSelect_DrawFairy(0x14, kFaerieY[selectfile_R16]);
+  uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
+  if (a & 0x2c) {
+    int8 k = selectfile_R16;
+    if (a & 8) {
+      do {
+        if (--k < 0) {
+          k = 3;
+          break;
+        }
+      } while (!selectfile_arr1[k]);
+    } else {
+      do {
+        k++;
+        if (k >= 4)
+          k = 0;
+      } while (k != 3 && !selectfile_arr1[k]);
+    }
+    selectfile_R16 = k;
+    sound_effect_2 = 0x20;
+  } else if (a != 0) {
+    sound_effect_1 = 0x2c;
+    if (selectfile_R16 == 3) {
+      ReturnToFileSelect();
+      return;
+    }
+    selectfile_R20 = selectfile_R16 * 2;
+    memcpy(buf + 0x24, LanguageCart_RawBytes(0x8ccfdf, 0x47), 0x47);
+    if (selectfile_R16 != 2) {
+      static const uint8 kAt[2] = {0x00, 0x0c};
+      uint8 *to = buf + 0x24 + kAt[selectfile_R16];
+      to[0] = to[6] = 0x62;
+      to[1] = 0x25;
+      to[7] = 0x45;
+    }
+    submodule_index++;
+    selectfile_R16 = 0;
+  }
+}
+
+static void CopyFile_TargetJapanese(void) {  // 8cd178
+  static const uint8 kFaerieX[3] = {0x8c, 0x8c, 0x14};
+  static const uint8 kFaerieY[3] = {0x47, 0x67, 0xc7};
+  static const uint8 kRowAt[2] = {0x28, 0x54};
+  vram_upload_offset = 0x7c;
+  uint8 *buf = Jp_Stripes(0x8ce398, 0x7d);
+  for (int k = 0, j = 0; k != 3; k++) {
+    if (k * 2 == selectfile_R20)
+      continue;
+    uint8 *at = buf + kRowAt[j++];
+    WORD(at[0]) = 0x1d41 + k;
+    WORD(at[0x16]) = 0x1d51 + k;
+    if (selectfile_arr1[k])
+      Jp_DrawName(at + 4, 0x16, g_zenv.sram + 0x500 * k);
+  }
+  FileSelect_DrawFairy(kFaerieX[selectfile_R16], kFaerieY[selectfile_R16]);
+  uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
+  if (a & 0x2c) {
+    uint8 k = selectfile_R16;
+    if (a & 8) {
+      if (sign8(--k))
+        k = 2;
+    } else {
+      if (++k >= 3)
+        k = 0;
+    }
+    selectfile_R16 = k;
+    sound_effect_2 = 0x20;
+  } else if (a) {
+    sound_effect_1 = 0x2c;
+    if (selectfile_R16 == 2) {
+      ReturnToFileSelect();
+      selectfile_R16 = 0;
+      return;
+    }
+    selectfile_R18 = selectfile_arr2[selectfile_R16];
+    memcpy(buf + 0x24, LanguageCart_RawBytes(0x8cd12a, 0x39), 0x39);
+    if (selectfile_R16 == 0) {
+      buf[0x25] = 0xb4;
+      buf[0x2b] = 0xd4;
+    }
+    submodule_index++;
+    selectfile_R16 = 0;
   }
 }
 
@@ -531,6 +691,10 @@ void CopyFile_SelectionAndBlinker() {  // 8cd13f
   static const uint8 kCopyFile_SelectionAndBlinker_FaerieX[4] = {36, 36, 36, 28};
   static const uint8 kCopyFile_SelectionAndBlinker_FaerieY[4] = {87, 111, 135, 191};
 
+  if (LanguageCart_Japanese()) {
+    CopyFile_SelectionJapanese();
+    return;
+  }
   vram_upload_offset = 0xac;
   memcpy(vram_upload_data, SelectFile_MovableTable(kCopyFile_SelectionAndBlinker_Tab, sizeof(kCopyFile_SelectionAndBlinker_Tab), 0x8ea5f7, 0x8cd148, 0xe68d, 0), 173);
 
@@ -551,7 +715,7 @@ void CopyFile_SelectionAndBlinker() {  // 8cd13f
 
   uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
   if (a & 0x2c) {
-    uint8 k = selectfile_R16;
+    int8 k = selectfile_R16;
     if (a & 8) {
       do {
         if (--k < 0) {
@@ -619,6 +783,10 @@ void CopyFile_TargetSelectionAndBlink() {  // 8cd27b
        0,  0xd, 0x12, 0x18, 0x1e, 0x18, 0x1f, 0x18, 0x38, 0x18, 0xa9, 0x18, 0x1e, 0x18, 0x1a, 0x18,
     0xff,
   };
+  if (LanguageCart_Japanese()) {
+    CopyFile_TargetJapanese();
+    return;
+  }
   static const uint8 kCopyFile_TargetSelectionAndBlink_FaerieX[3] = {0x8c, 0x8c, 0x1c};
   static const uint8 kCopyFile_TargetSelectionAndBlink_FaerieY[3] = {0x67, 0x7f, 0xbf};
   static const uint16 kCopyFile_TargetSelectionAndBlink_Dst[2] = {0x38, 0x60};
@@ -684,7 +852,10 @@ void CopyFile_TargetSelectionAndBlink() {  // 8cd27b
 
 void CopyFile_HandleConfirmation() {  // 8cd371
   static const uint8 kCopyFile_HandleConfirmation_FaerieY[2] = {0xaf, 0xbf};
-  FileSelect_DrawFairy(0x1c, kCopyFile_HandleConfirmation_FaerieY[selectfile_R16]);
+  if (LanguageCart_Japanese())  // $8C:D261
+    FileSelect_DrawFairy(0x14, selectfile_R16 ? 0xc7 : 0xae);
+  else
+    FileSelect_DrawFairy(0x1c, kCopyFile_HandleConfirmation_FaerieY[selectfile_R16]);
 
   uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xfc;
   if (a & 0x2c) {
@@ -747,6 +918,53 @@ void KILLFile_HandleConfirmation() {  // 8cd4b1
   nmi_load_bg_from_vram = 1;
 }
 
+static void KILLFile_ChooseTargetJapanese(void) {  // 8cd393
+  static const uint8 kFaerieY[4] = {0x4a, 0x6a, 0x8a, 0xc7};
+  uint8 *buf = Jp_Stripes(0x8ce0f7, 0x12d);
+  for (int k = 0; k < 3; k++)
+    if (selectfile_arr1[k])
+      SelectFile_Func17(k);
+  FileSelect_DrawFairy(0x14, kFaerieY[selectfile_R16]);
+  int k = selectfile_R16;
+  if (filtered_joypad_H & 0x2c) {
+    if (!(filtered_joypad_H & 0x24)) {
+      do {
+        if (--k < 0) {
+          k = 3;
+          break;
+        }
+      } while (!selectfile_arr1[k]);
+    } else {
+      do {
+        k++;
+        if (k >= 4)
+          k = 0;
+      } while (k != 3 && !selectfile_arr1[k]);
+    }
+    sound_effect_2 = 0x20;
+  }
+  selectfile_R16 = k;
+  uint8 a = (filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xd0;
+  if (a) {
+    sound_effect_1 = 0x2c;
+    if (k == 3) {
+      ReturnToFileSelect();
+      return;
+    }
+    memcpy(buf, LanguageCart_RawBytes(0x8cd30c, 0x51), 0x51);
+    submodule_index++;
+    if (selectfile_R16 != 2) {
+      static const uint8 kAt[2] = {0x00, 0x0c};
+      uint8 *to = buf + kAt[selectfile_R16];
+      to[0] = to[6] = 0x62;
+      to[1] = 0x28;
+      to[7] = 0x48;
+    }
+    subsubmodule_index = selectfile_R16;
+    selectfile_R16 = 0;
+  }
+}
+
 void KILLFile_ChooseTarget() {  // 8cd4ba
   static const uint8 kKILLFile_ChooseTarget_Tab[253] = {
     0x61, 0xa7,    0, 0x25, 0xe7, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18, 0xa9, 0x18,
@@ -775,6 +993,10 @@ void KILLFile_ChooseTarget() {  // 8cd4ba
     0x17, 0x18, 0xbf, 0x18, 0x32, 0x18, 0xa9, 0x18, 0x1f, 0x18, 0x1b, 0x18, 0x10, 0x18, 0x38, 0x18,
     0x14, 0x18, 0x31, 0x18, 0xff,
   };
+  if (LanguageCart_Japanese()) {
+    KILLFile_ChooseTargetJapanese();
+    return;
+  }
   static const uint8 kKILLFile_ChooseTarget_FaerieX[4] = {36, 36, 36, 28};
   static const uint8 kKILLFile_ChooseTarget_FaerieY[4] = {103, 127, 151, 191};
   memcpy(vram_upload_data, SelectFile_MovableTable(kKILLFile_ChooseTarget_Tab, sizeof(kKILLFile_ChooseTarget_Tab), 0x8ea481, 0x8cd4c0, 0xe53f, 1), 253);
@@ -858,7 +1080,13 @@ void NameFile_EraseSave() {  // 8cd89c
   attract_legend_ctr = offs;
   memset(g_zenv.sram + offs, 0, 0x500);
   uint16 *name = (uint16 *)(g_zenv.sram + offs + kSrmOffs_Name);
-  name[0] = name[1] = name[2] = name[3] = name[4] = name[5] = 0xa9;
+  uint16 blank = LanguageCart_Japanese() ? kJpNameBlank : 0xa9;
+  name[0] = name[1] = name[2] = name[3] = name[4] = name[5] = blank;
+  if (LanguageCart_Japanese()) {
+    // $8C:D96B and $8C:D91F: the keyboard's first row and column.
+    selectfile_var7 = 0x3e;
+    selectfile_var8 = 0x19c;
+  }
 }
 
 void NameFile_DoTheNaming() {  // 8cda4d
@@ -891,7 +1119,10 @@ void NameFile_DoTheNaming() {  // 8cda4d
     if (j != 0x31)
       selectfile_var9 += 4;
     j--;
-    if (kNamePlayer_Tab0[selectfile_var3] == selectfile_var8) {
+    bool scrolled = LanguageCart_Japanese() ?
+        WORD(LanguageCart_RawBytes(0x8cd91f, 64)[selectfile_var3 * 2]) == selectfile_var8 :
+        kNamePlayer_Tab0[selectfile_var3] == selectfile_var8;
+    if (scrolled) {
       selectfile_var9 = (joypad1H_last & 3) ? 0x30 : 0;
       NameFile_CheckForScrollInputX();
       continue;
@@ -907,7 +1138,8 @@ void NameFile_DoTheNaming() {  // 8cda4d
       NameFile_CheckForScrollInputY();
       break;
     }
-    uint8 diff = selectfile_var7 - kNamePlayer_Tab2[selectfile_var5];
+    uint8 diff = selectfile_var7 - (LanguageCart_Japanese() ?
+        *LanguageCart_RawBytes(0x8cd96b + selectfile_var5, 1) : kNamePlayer_Tab2[selectfile_var5]);
     if (diff != 0) {
       selectfile_var7 += sign8(diff) ? 2 : -2;
       break;
@@ -921,7 +1153,10 @@ void NameFile_DoTheNaming() {  // 8cda4d
     SetOamPlain(oam, 0x18 + i * 8, selectfile_var7, 0x2e, 0x3c, 0);
     oam++;
   }
-  SetOamPlain(oam, kNamePlayer_X[selectfile_var4], 0x58, 0x29, 0xc, 0);
+  if (LanguageCart_Japanese())
+    SetOamPlain(oam, *LanguageCart_RawBytes(0x8cd98f + selectfile_var4, 1), 0x14, 0x29, 0xc, 0);
+  else
+    SetOamPlain(oam, kNamePlayer_X[selectfile_var4], 0x58, 0x29, 0xc, 0);
 
   if (selectfile_var9 | selectfile_var11)
     return;
@@ -934,19 +1169,22 @@ void NameFile_DoTheNaming() {  // 8cda4d
     // The French Canadian keyboard ($8E:982C) holds the font tiles themselves
     // and has its own codes for the arrows and for Fin ($8E:9A4D).
     int key = selectfile_var3 + selectfile_var5 * 0x20;
+    bool japanese = LanguageCart_Japanese();
     uint8 t = g_loc_rom ? Loc_Rom(0x8e982c)[key] :
+              japanese ? LanguageCart_RawBytes(0x8cd7df, 320)[key] :
               SelectFile_Table((const uint8 *)kNamePlayer_Tab3, 0, 0x8cd935, sizeof(kNamePlayer_Tab3))[key];
-    uint8 key_left = g_loc_rom ? 0xbf : 0x5a;
-    uint8 key_right = g_loc_rom ? 0x84 : 0x44;
-    uint8 key_end = g_loc_rom ? 0x8a : 0x6f;
+    uint8 key_left = g_loc_rom ? 0xbf : japanese ? 0xca : 0x5a;
+    uint8 key_right = g_loc_rom ? 0x84 : japanese ? 0xcb : 0x44;
+    uint8 key_end = g_loc_rom ? 0x8a : japanese ? 0xcd : 0x6f;
+    int name_len = japanese ? 4 : 6;  // $8C:DAEE
     if (t == key_left) {
       if (!selectfile_var4)
-        selectfile_var4 = 5;
+        selectfile_var4 = name_len - 1;
       else
         selectfile_var4--;
       return;
     } else if (t == key_right) {
-      if (++selectfile_var4 == 6)
+      if (++selectfile_var4 == name_len)
         selectfile_var4 = 0;
       return;
     } else if (t != key_end) {
@@ -954,7 +1192,7 @@ void NameFile_DoTheNaming() {  // 8cda4d
       uint16 chr = g_loc_rom ? t : (t & 0xfff0) * 2 + (t & 0xf);
       WORD(g_zenv.sram[p + kSrmOffs_Name]) = chr;
       NameFile_DrawSelectedCharacter(selectfile_var4, chr);
-      if (++selectfile_var4 == 6)
+      if (++selectfile_var4 == name_len)
         selectfile_var4 = 0;
       return;
     }
@@ -962,7 +1200,7 @@ void NameFile_DoTheNaming() {  // 8cda4d
   int i = 0;
   for(;;) {
     uint16 a = WORD(g_zenv.sram[i * 2 + attract_legend_ctr + kSrmOffs_Name]);
-    if (a != 0xa9)
+    if (a != (LanguageCart_Japanese() ? kJpNameBlank : 0xa9))
       break;
     if (++i == 6) {
       sound_effect_1 = 0x3c;
@@ -1020,14 +1258,19 @@ void NameFile_CheckForScrollInputY() {  // 8cdcbf
 
   uint8 a = joypad1H_last & 0xc;
   if (a) {
-    if ((a * 2 | selectfile_var5) == 0x10 || (a * 4 | selectfile_var5) == 0x13) {
+    bool japanese = LanguageCart_Japanese();  // 10 rows ($8C:DC21)
+    if ((a * 2 | selectfile_var5) == 0x10 || (a * 4 | selectfile_var5) == (japanese ? 0x19 : 0x13)) {
       selectfile_arr2[1] = a;
       return;
     }
      a >>= 2;
-    int t = selectfile_var5 + kNameFile_CheckForScrollInputY_Add[a-1];
-    if (t == kNameFile_CheckForScrollInputY_Cmp[a-1])
-      t = kNameFile_CheckForScrollInputY_Set[a-1];
+    int t = selectfile_var5;
+    do {
+      t += kNameFile_CheckForScrollInputY_Add[a-1];
+      if (t == (japanese ? (a == 1 ? 10 : -1) : kNameFile_CheckForScrollInputY_Cmp[a-1]))
+        t = japanese ? (a == 1 ? 0 : 9) : kNameFile_CheckForScrollInputY_Set[a-1];
+      // The cartridge skips the rows with nothing in this column.
+    } while (japanese && LanguageCart_RawBytes(0x8cd7df, 320)[t * 32 + selectfile_var3] == 0xff);
     selectfile_var5 = t;
 
     selectfile_var11++;
@@ -1042,6 +1285,8 @@ void NameFile_DrawSelectedCharacter(int k, uint16 chr) {  // 8cdd30
   static const uint16 kNameFile_DrawSelectedCharacter_Tab[6] = {0x84, 0x86, 0x88, 0x8a, 0x8c, 0x8e};
   uint16 *dst = vram_upload_data;
   uint16 a = kNameFile_DrawSelectedCharacter_Tab[k] | (g_loc_rom ? 0x7900 : 0x6100);  // $8E:9C29
+  if (LanguageCart_Japanese())
+    a = WORD(LanguageCart_RawBytes(0x8cdc82 + k * 2, 2)[0]) | 0x6000;
   dst[0] = swap16(a);
   dst[1] = 0x100;
   dst[2] = 0x1800 | chr;

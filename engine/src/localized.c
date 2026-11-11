@@ -51,6 +51,8 @@ static const LocShift kLocShiftsFr[] = {
 static const LocShift kLocShiftsDe[] = {
   { 0x8d8000, 0x8e0000, -0xc0 },
   { 0x8e932d, 0x8e9392, -8 },     // erase: the chosen game
+  { 0x8e917a, 0x8e918a, -8 },     // copy: the fairy's places and the slot numbers
+  { 0x8e982c, 0x8e98ac, 12 },     // the name keyboard
   { 0x8ea293, 0x8ea390, 0x23 },   // name stripes
   { 0x8ea481, 0x8ea57e, 0x43 },   // erase: which game
   { 0x8ea5f7, 0x8ea729, 0x37 },   // copy: which game, and to where

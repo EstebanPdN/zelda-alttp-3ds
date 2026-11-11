@@ -1,10 +1,22 @@
 #pragma once
 #include <stdint.h>
 #include "generated_ui_sprites.h"
+#include "generated_ui_japanese.h"
 
 // Deterministic Latin and Cyrillic UI glyphs. Decode once per character; accented letters
 // use the same editable 5x7 base and an explicit accent, never byte fragments.
 enum UiFontAccent { UI_ACUTE, UI_GRAVE, UI_CEDILLA, UI_CIRCUMFLEX, UI_TILDE, UI_DIAERESIS };
+enum { UI_FONT_JAPANESE = -2, UI_FONT_JAPANESE_CODE = 0x100 };
+static inline int UiFontJapaneseIndex(unsigned cp) {
+  int lo = 0, hi = kUiJapaneseGlyphCount - 1;
+  while (lo <= hi) {
+    int mid = (lo + hi) / 2;
+    if (kUiJapaneseCodepoints[mid] == cp) return mid;
+    if (kUiJapaneseCodepoints[mid] < cp) lo = mid + 1; else hi = mid - 1;
+  }
+  return -1;
+}
+// Japanese reports a blank with *accent == UI_FONT_JAPANESE; UiFontNextCode gives its glyph.
 static inline char UiFontNext(const char **text, int *accent) {
   const unsigned char *p = (const unsigned char *)*text;
   *accent = -1;
@@ -51,23 +63,95 @@ static inline char UiFontNext(const char **text, int *accent) {
     default: return '?';
     }
   }
+  if ((*p & 0xf0) == 0xe0 && (p[1] & 0xc0) == 0x80 && (p[2] & 0xc0) == 0x80 &&
+      UiFontJapaneseIndex(((*p & 15u) << 12) | ((p[1] & 63u) << 6) | (p[2] & 63u)) >= 0) {
+    *text += 2;
+    *accent = UI_FONT_JAPANESE;
+    return ' ';
+  }
   unsigned remaining = *p >= 0xf0 && *p <= 0xf4 ? 3 : *p >= 0xe0 && *p <= 0xef ? 2 : *p >= 0xc2 && *p <= 0xdf ? 1 : 0;
   while (remaining-- && **text && ((unsigned char)**text & 0xc0) == 0x80) (*text)++;
   return '?';
 }
 
-static inline int UiFontWidth(const char *text, int scale) {
-  int width=0, accent;
-  char c;
-  while ((c=UiFontNext(&text,&accent))) width += scale==3 ? (c==' '?5:8) : (c==' ' ? 4 : 6)*scale;
-  return width;
-}
-
 static inline unsigned UiFontNextCode(const char **text) {
+  const unsigned char *p=(const unsigned char *)*text;
   int accent; char base=UiFontNext(text,&accent);
+  if (accent==UI_FONT_JAPANESE)
+    return UI_FONT_JAPANESE_CODE+UiFontJapaneseIndex(((p[0]&15u)<<12)|((p[1]&63u)<<6)|(p[2]&63u));
   if (accent>=0) for (unsigned i=0;i<sizeof(kNativeUiAccents)/sizeof(kNativeUiAccents[0]);i++)
     if(kNativeUiAccents[i].base==base && kNativeUiAccents[i].accent==accent) return kNativeUiAccents[i].code;
   return (unsigned char)base;
+}
+
+// One description of a glyph for every drawer. Japanese has the same size at scales 1 and 3,
+// and a larger face at scale 2, instead of a pixel-doubled one.
+static inline int UiFontGlyphRows(unsigned code, int scale) {
+  if (code>=UI_FONT_JAPANESE_CODE) return scale==2?12:10;
+  return scale==3?15:scale==2?21:11;
+}
+static inline int UiFontGlyphColumns(unsigned code, int scale) {
+  if (code>=UI_FONT_JAPANESE_CODE) return scale==2?12:10;
+  return scale==3?7:5*scale;
+}
+static inline int UiFontGlyphTop(unsigned code, int scale) {
+  if (code>=UI_FONT_JAPANESE_CODE) return scale==2?0:scale==3?-1:-2;
+  return scale==3?-3:-2*scale;
+}
+static inline unsigned UiFontGlyphBits(unsigned code, int scale, int row) {
+  if (code>=UI_FONT_JAPANESE_CODE) {
+    unsigned i=code-UI_FONT_JAPANESE_CODE;
+    return scale==2?kUiJapaneseGlyphs12[i][row]:kUiJapaneseGlyphs10[i][row];
+  }
+  return scale==3?kNativeUiMediumGlyphs[code][row]:scale==2?kNativeUiLargeGlyphs[code][row]:kNativeUiGlyphs[code][row];
+}
+static inline int UiFontAdvance(unsigned code, int scale) {
+  if (code>=UI_FONT_JAPANESE_CODE) return scale==2?13:11;
+  return scale==3?(code==' '?5:8):(code==' '?4:6)*scale;
+}
+
+static inline int UiFontWidth(const char *text, int scale) {
+  int width=0;
+  unsigned code;
+  while ((code=UiFontNextCode(&text))) width += UiFontAdvance(code,scale);
+  return width;
+}
+
+// A line must not begin with closing punctuation or a small kana.
+static inline int UiFontNoLineStart(const char *text) {
+  static const unsigned kMarks[]={0x3001,0x3002,0x30fc,0x3063,0x30c3,0x3083,0x3085,0x3087,0x30e3,0x30e5,0x30e7,
+    0x3041,0x3043,0x3045,0x3047,0x3049,0x30a1,0x30a3,0x30a5,0x30a7,0x30a9,0xff01,0xff1f,0xff09,0x300d,0x30fb};
+  const unsigned char *p=(const unsigned char *)text;
+  if ((*p&0xf0)!=0xe0) return 0;
+  unsigned cp=((p[0]&15u)<<12)|((p[1]&63u)<<6)|(p[2]&63u);
+  for (unsigned i=0;i<sizeof(kMarks)/sizeof(kMarks[0]);i++) if (kMarks[i]==cp) return 1;
+  return 0;
+}
+// Wrapping: an ASCII or full-width space is a break; Japanese breaks anywhere otherwise,
+// but a clause break made with a full-width space is kept.
+static inline int UiFontIsWideSpace(const char *p) {
+  return (unsigned char)p[0]==0xe3 && (unsigned char)p[1]==0x80 && (unsigned char)p[2]==0x80;
+}
+static inline const char *UiFontBreakAt(const char *p, const char *last) {
+  if (*p==' ' || UiFontIsWideSpace(p)) return p;
+  return (unsigned char)*p>=0xe0 && last && *last==' ' ? NULL : last;
+}
+static inline const char *UiFontSkipBreak(const char *p) {
+  for (;;) {
+    if (*p==' ') p++;
+    else if (UiFontIsWideSpace(p)) p+=3;
+    else return p;
+  }
+}
+// Where a wrapped line stops: at the last space of Latin text, anywhere between Japanese.
+static inline const char *UiFontLineEnd(const char *start, const char *end, const char *last_space) {
+  if (*end && last_space) return last_space;
+  if (*end && end>start && UiFontNoLineStart(end) && (unsigned char)end[-1]>=0x80) {
+    const char *back=end-1;
+    while (back>start && ((unsigned char)*back&0xc0)==0x80) back--;
+    if (back>start) return back;
+  }
+  return end;
 }
 
 // Center the actual ink, including accents/descenders, rather than the font's
@@ -76,12 +160,11 @@ static inline int UiFontCenteredY(const char *text, int scale, int top, int heig
   int first=10000,last=-10000;
   unsigned code;
   while ((code=UiFontNextCode(&text))) {
-    int rows=scale==3?15:scale==2?21:11;
+    int rows=UiFontGlyphRows(code,scale);
     for(int y=0;y<rows;y++) {
-      unsigned bits=scale==3?kNativeUiMediumGlyphs[code][y]:scale==2?kNativeUiLargeGlyphs[code][y]:kNativeUiGlyphs[code][y];
-      if(!bits) continue;
-      int a=scale==3?y-3:(scale==2?y:y*scale)-2*scale;
-      int b=a+(scale==2||scale==3?1:scale)-1;
+      if(!UiFontGlyphBits(code,scale,y)) continue;
+      int a=UiFontGlyphTop(code,scale)+y;
+      int b=a;
       if(a<first)first=a;if(b>last)last=b;
     }
   }

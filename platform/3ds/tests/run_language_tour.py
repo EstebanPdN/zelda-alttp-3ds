@@ -39,6 +39,7 @@ code = r'''
 #include "snes/ppu_ui.h"
 #include "src/load_gfx.h"
 #include "src/hud.h"
+#include "src/language_cart.h"
 #include "src/sprite.h"
 #include "src/native_file_labels.h"
 #include "src/localized.h"
@@ -66,8 +67,9 @@ static void Shot(const char *dir, const char *name) {
     bool textured=false;
     for (int y=0; y<16; y++) for (int x=0; x<16; x++)
       textured |= memcmp(pixels+(y*g_snes_width+ox+x)*4,pixels+ox*4,4) != 0;
-    assert(textured);
-    for (int y=0; y<224; y++) for (int x=0; x<16; x++)
+    assert(textured || !strcmp(g_config.language ? g_config.language : "", "ja"));
+    // The Japanese cartridge's background is a different repeating pattern.
+    for (int y=0; y<224 && strcmp(g_config.language ? g_config.language : "", "ja"); y++) for (int x=0; x<16; x++)
       assert(!memcmp(pixels+(y*g_snes_width+ox+x)*4,
                      pixels+((y%16)*g_snes_width+ox+x)*4,4));
     bool drawn = g_snes_width == 400 &&
@@ -128,9 +130,10 @@ int main(int argc, char **argv) {
   // and scroll registers. Jumping here directly from gameplay leaves stale
   // room registers and produces invalid screenshots with missing frames.
   ZeldaReset(true);
-  for (int frame=0; frame<2000 && !(main_module_index==0 && submodule_index==8); frame++)
+  int title_end = LanguageCart_Japanese() ? 7 : 8;
+  for (int frame=0; frame<2000 && !(main_module_index==0 && submodule_index==title_end); frame++)
     Run(1,0);
-  assert(main_module_index==0 && submodule_index==8);
+  assert(main_module_index==0 && submodule_index==title_end);
   Module(1, 90);  FileShot(argv[2], "3-select");
   Module(2, 90);  FileShot(argv[2], "4-copy");
   Run(1, 1<<8); Run(40,0); FileShot(argv[2], "4b-copy-target");
@@ -138,6 +141,9 @@ int main(int argc, char **argv) {
   Module(3, 90);  FileShot(argv[2], "5-erase");
   Run(1, 1<<8); Run(40,0); FileShot(argv[2], "5b-erase-confirm");
   Module(4, 120); FileShot(argv[2], "6-name");
+  // A letter goes in the name, with its tile, and the heart moves on.
+  { int before=selectfile_var4; Run(1,1<<8); Run(10,0); printf("name key: var4 %d->%d var9=%d var11=%d var3=%d var5=%d sub=%d\n",before,selectfile_var4,selectfile_var9,selectfile_var11,selectfile_var3,selectfile_var5,submodule_index);
+    assert(selectfile_var4==before+1); FileShot(argv[2], "6-name-typed"); }
   // A dungeon's map: its floor names (Eastern Palace, X opens the map).
   SaveLoadSlot(kSaveLoad_Load, 256 + atoi(argv[3]));
   LoadDefaultGraphics(); Hud_Rebuild();
@@ -191,9 +197,10 @@ int main(int argc, char **argv) {
   // Attract state is separate from submodule_index; the save can contain
   // an arbitrary old value. Enter through its graphics initialization.
   ZeldaReset(true);
-  for (int frame = 0; frame < 2000 && !(main_module_index == 0 && submodule_index == 8); frame++)
+  for (int frame = 0; frame < 2000 && !(main_module_index == 0 && submodule_index == title_end); frame++)
     Run(1, 0);
-  assert(main_module_index == 0 && submodule_index == 8);
+  assert(main_module_index == 0 && submodule_index == title_end);
+  Shot(argv[2], "8-title");
   attract_state = 0; attract_sequence = 0;
   Module(0x14, 700);
   assert(main_module_index == 0x14 && attract_state == 5);

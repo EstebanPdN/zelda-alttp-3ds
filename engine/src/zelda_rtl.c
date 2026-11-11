@@ -34,6 +34,7 @@
 #include "dungeon.h"
 #include "config.h"
 #include "quality_of_life.h"
+#include "language_cart.h"
 #ifdef __3DS__
 #include <3ds.h>
 #include "platform_3ds.h"
@@ -181,6 +182,14 @@ static void SimpleHdma_DoLine(SimpleHdma *c, Ppu *ppu) {
                 c->ppu_addr + bAdrOffsets[c->mode & 7][j],
                 v);
     }
+    // Mirror HDMA rewrites absolute scroll registers after BeginWideRender.
+    // Keep the background in the same drawn camera as Link on every line.
+    if ((c->mode & 7) == 2 &&
+        (c->ppu_addr == (uint8)BG1HOFS || c->ppu_addr == (uint8)BG2HOFS)) {
+      int layer = c->ppu_addr == (uint8)BG2HOFS;
+      ppu->bgLayer[layer].hScroll =
+          (ppu->bgLayer[layer].hScroll - ppu->renderObjXOffset) & 0x3ff;
+    }
   }
   c->rep_count--;
 }
@@ -190,7 +199,7 @@ static uint8 GetFixedCameraEffectiveContext(void) {
   if (mod == 14)
     mod = saved_module_for_menu;
   if ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
-      (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
+      (mod == 6 || mod == 8 || mod == 10 || mod == 11 || mod == 15 || mod == 16 || mod == 17 ||
        mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
     mod = player_is_indoors ? 7 : 9;
   return mod == 7 || mod == 9 ? (uint8)mod : 0;
@@ -310,6 +319,7 @@ static void GetWideBounds(uint8 context, int x, int y, WideBounds *b) {
     left = ow_scroll_vars0.xstart;
     right = ow_scroll_vars0.xend;
     bottom = ow_scroll_vars0.yend;
+
   }
   b->left = WideCamera_Unwrap16(left, x);
   b->right = WideCamera_Unwrap16(right, x);
@@ -537,6 +547,7 @@ static WideFrame WideFrameNow(uint32 render_flags, bool commit) {
   f.rows = rows;
   f.view = UpdateWideView(context, fixed && !lantern ? p->extraLeftRight : 0,
                           rows, visible, !lantern, &f.settled, commit);
+
   if(g_private_fade.active) {
     if(g_private_fade.axis==1)f.view.offset_x=(int16)(BG2HOFS_copy2-g_private_fade.source);
     else f.view.delta_y=(int16)(BG2VOFS_copy2-g_private_fade.source);
@@ -575,13 +586,20 @@ static void ConfigurePpuSideSpace(const WideFrame *f) {
     g_zenv.ppu->wideMarginRepeat = 1;
     return;
   }
+  if (g_zenv.ppu->mode == 7 &&
+      ((main_module_index == 14 && (submodule_index == 7 || submodule_index == 10)) || main_module_index == 20)) {
+    // Map coordinates are independent of the area Link was standing in.
+    PpuSetExtraSideSpace(g_zenv.ppu, kPpuExtraLeftRight, kPpuExtraLeftRight, 16);
+    g_zenv.ppu->wideMarginRepeat = 0;
+    return;
+  }
   bool repeat_margins = false;
 //  printf("main %d, sub %d  (%d, %d, %d)\n", main_module_index, submodule_index, BG2HOFS_copy2, room_bounds_x.v[2 | (quadrant_fullsize_x >> 1)], quadrant_fullsize_x >> 1);
   int mod = main_module_index;
   if (mod == 14)
     mod = saved_module_for_menu;
   if ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
-      (mod == 6 || mod == 8 || mod == 10 || mod == 15 || mod == 16 || mod == 17 ||
+      (mod == 6 || mod == 8 || mod == 10 || mod == 11 || mod == 15 || mod == 16 || mod == 17 ||
        mod == 18 || mod == 19 || mod == 21 || mod == 22 || mod == 23))
     mod = player_is_indoors ? 7 : 9;
   if (mod == 9) {
@@ -633,6 +651,20 @@ typedef struct WideRenderState {
   int16 obj_x, obj_y;
 } WideRenderState;
 
+// Match the game's overlay camera ratios; wind-only overlays do not track
+// Link at all. Work in absolute coordinates to retain half/quarter-pixel phase.
+static int WideOverlayShift(int delta, bool vertical) {
+  uint8 oi = BYTE(overlay_index);
+  if (dungeon_room_index == 0x181 || oi == 0x9c)
+    return delta;
+  if (oi == 0x97 || oi == 0x9d)
+    return 0;
+  unsigned shift = vertical ? (oi == 0xb5 || oi == 0xbe ? 2 : 1) :
+                              (oi == 0x95 || oi == 0x9e ? 2 : 1);
+  int camera = vertical ? BG2VOFS_copy2 : BG2HOFS_copy2;
+  return (camera >> shift) - ((camera - delta) >> shift);
+}
+
 static WideRenderState BeginWideRender(const WideFrame *f) {
   WideRenderState s = {0};
   Ppu *p = g_zenv.ppu;
@@ -646,13 +678,18 @@ static WideRenderState BeginWideRender(const WideFrame *f) {
   s.bg2_v = p->bgLayer[1].vScroll;
   s.obj_x = p->renderObjXOffset;
   s.obj_y = p->renderObjYOffset;
+  // Mirror HDMA scrolls both layers together; ordinary outdoor overlays
+  // retain their native parallax. Indoor layers keep their own behavior.
+  bool parallax = f->context == 9 && !(HDMAEN_copy & 0x40);
   if (s.dx) {
-    p->bgLayer[0].hScroll = (s.bg1_h - s.dx) & 0x3ff;
+    int bg1_dx = parallax ? WideOverlayShift(s.dx, false) : s.dx;
+    p->bgLayer[0].hScroll = (s.bg1_h - bg1_dx) & 0x3ff;
     p->bgLayer[1].hScroll = (s.bg2_h - s.dx) & 0x3ff;
     p->renderObjXOffset = s.obj_x + s.dx;
   }
   if (s.dy) {
-    p->bgLayer[0].vScroll = (s.bg1_v - s.dy) & 0x3ff;
+    int bg1_dy = parallax ? WideOverlayShift(s.dy, true) : s.dy;
+    p->bgLayer[0].vScroll = (s.bg1_v - bg1_dy) & 0x3ff;
     p->bgLayer[1].vScroll = (s.bg2_v - s.dy) & 0x3ff;
     p->renderObjYOffset = s.obj_y + s.dy;
   }
@@ -804,6 +841,10 @@ static void ResetWideTracking(void) {
   memset(g_wide_screens.screen, 0, sizeof(g_wide_screens.screen));
   g_wide_old_chr.valid = false;
   memset(&g_wide_rooms, 0, sizeof(g_wide_rooms));
+}
+
+void ZeldaWideForgetPlaces(void) {
+  ResetWideTracking();
 }
 
 // The WIDE picture shows tile map cells the SNES picture does not, which the
@@ -1178,7 +1219,7 @@ static void UpdatePrivateRoomFade(void) {
 
 static unsigned WideRoomOpenSides(const WideRegion *r, const uint16 *maps,
                                   int y0, int y1) {
-  if (r->context != 7 || !r->private_room) return 0;
+  if (r->context != 7) return 0;
   unsigned open = 0;
   const int edges[2] = {r->room_left, r->room_right};
   for (int side = 0; side < 2; side++) {
@@ -1192,7 +1233,6 @@ static unsigned WideRoomOpenSides(const WideRegion *r, const uint16 *maps,
 
 static bool WideRoomTileVisible(const WideRegion *r, unsigned open, int x, int y) {
   if (r->context != 7 || !WideRegionHas(r, x, y)) return false;
-  if (!r->private_room) return true;
   int rx = (int16)(x - r->x);
   if (rx >= r->room_left && rx < r->room_right) return true;
   return (open & (rx < r->room_left ? 1 : 2)) != 0;
@@ -1398,7 +1438,7 @@ static void ZeldaDrawPpuLines(Ppu *ppu, int height,
   SimpleHdma_Init(&hdma_chans[1], &g_zenv.dma->channel[7]);
 
   for (int i = 0; i <= height; i++) {
-    if (i == 128 && irq_state) {
+    if (i == (LanguageCart_Japanese() ? 0x38 : 128) && irq_state) {  // $80:8206
       ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8);
       ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8 >> 8);
       ppu_write(ppu, (uint8)BG3VOFS, 0);
@@ -1435,7 +1475,7 @@ static bool ZeldaTryGpuPpu(Ppu *ppu, int height, uint8 irq_state) {
   SimpleHdma_Init(&chans[0], &g_zenv.dma->channel[6]);
   SimpleHdma_Init(&chans[1], &g_zenv.dma->channel[7]);
   for (int i=0; i<=height; i++) {
-    if (i==128 && irq_state) {
+    if (i==(LanguageCart_Japanese() ? 0x38 : 128) && irq_state) {
       ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8);
       ppu_write(ppu, (uint8)BG3HOFS, selectfile_var8 >> 8);
       ppu_write(ppu, (uint8)BG3VOFS, 0);
@@ -1656,6 +1696,11 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   g_zenv.ppu->wideUiSaveX = (text_msgbox_topleft & 31) * 8;
   g_zenv.ppu->wideUiSaveY = ((text_msgbox_topleft >> 5) & 31) * 8;
 #endif
+  render_flags &= ~kPpuRenderFlags_WorldMapBorder;
+  if ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) &&
+      g_zenv.ppu->mode == 7 &&
+      ((main_module_index == 14 && (submodule_index == 7 || submodule_index == 10)) || main_module_index == 20))
+    render_flags |= kPpuRenderFlags_WorldMapBorder;
   UpdatePrivateRoomFade();
   uint8 original_brightness = g_zenv.ppu->brightness;
   if(QolBrightRoomActive())g_zenv.ppu->brightness=original_brightness*12/15;
@@ -2721,6 +2766,25 @@ void ZeldaFormatSavePath(const char *name, char *path, size_t size) {
 #endif
 }
 
+// A state keeps the screen of the language it was saved in, and the language
+// may have changed since: the HUD's letters and an open save box are drawn again
+// in the current one.
+static void RedrawLanguageAfterLoad(void) {
+  bool save_box = main_module_index == 14 && submodule_index == 11;
+  if (!save_box && main_module_index != 7 && main_module_index != 9)
+    return;
+  LoadHudGraphics();
+  Hud_Rebuild();
+  if (save_box) {
+    // The box stops the game's HUD uploads until it closes.
+    extern bool g_ss_hide_hud;
+    if (!g_ss_hide_hud)
+      memcpy(&g_zenv.vram[word_7E0219], hud_tile_indices_buffer, 165 * sizeof(uint16));
+    main_module_index = saved_module_for_menu;
+    DisplaySelectMenu();
+  }
+}
+
 void SaveLoadSlot(int cmd, int which) {
   char name[128];
   char path[256];
@@ -2746,6 +2810,8 @@ void SaveLoadSlot(int cmd, int which) {
       StateRecorder_Save(&state_recorder, rwops);
 
     SDL_RWclose(rwops);
+    if (cmd == kSaveLoad_Load)
+      RedrawLanguageAfterLoad();
 #ifdef __3DS__
     // Older builds wrote slot 0 even in naming/credits. Recover those boots
     // through the ordinary clean reset, which reloads SRAM from disk.
@@ -2781,7 +2847,7 @@ static void DrawStartupLogoFrame(uint32 *pixels) {
   g_rendering_startup_logo=false;
   // Cool silver highlights on the blade only. Track the native sword's
   // descending OAM position; leave the golden hilt and title art untouched.
-  if(main_module_index==0&&submodule_index>=6) {
+  if(main_module_index==0&&submodule_index>=6&&!LanguageCart_Japanese()) {
     int shift=(int16)WORD(g_ram[0xc8])-30; // intro_sword_ypos in ending.c
     int top=84+shift,bottom=165+shift;
     if(top<0)top=0;if(bottom>224)bottom=224;
@@ -2796,7 +2862,9 @@ static void DrawStartupLogoFrame(uint32 *pixels) {
 }
 void ZeldaDrawStartupLogo(uint32 *pixels) {
   int extra=g_zenv.ppu->extraLeftRight;g_zenv.ppu->extraLeftRight=0;
-  for(int f=0;f<2000&&!(main_module_index==0&&submodule_index==8);f++)ZeldaRunFrame(0);
+  // The Japanese title ends a step sooner ($8C:C2A5).
+  int last=LanguageCart_Japanese()?7:8;
+  for(int f=0;f<2000&&!(main_module_index==0&&submodule_index==last);f++)ZeldaRunFrame(0);
   DrawStartupLogoFrame(pixels);
   ZeldaReset(true);g_zenv.ppu->extraLeftRight=extra;ZeldaClearInputLog();
 }
@@ -3105,6 +3173,7 @@ void ZeldaReadSram() {
     }
     EmuSynchronizeWholeState();
     Localized_AfterSramLoad();
+    LanguageCart_AfterSramLoad(g_zenv.sram, &g_ram[0xf000]);
     return;
   }
 #ifdef __3DS__
@@ -3129,6 +3198,7 @@ void ZeldaReadSram() {
   }
 #endif
   Localized_AfterSramLoad();
+  LanguageCart_AfterSramLoad(g_zenv.sram, &g_ram[0xf000]);
 }
 
 void ZeldaWriteSram() {

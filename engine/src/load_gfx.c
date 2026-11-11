@@ -220,6 +220,8 @@ static const uint8 kSpriteTilesets[144][4] = {
 
 // As the quest's cartridge has the table ($80:DB57).
 static const uint8 *SpriteTileset(int i) {
+  if (LanguageCart_Japanese())
+    return LanguageCart_RawBytes(0x80db97 + i * 4, 4);
   return MODS_U8(kSpriteTilesets, 0x80db57) + i * 4;
 }
 
@@ -307,6 +309,15 @@ static const uint8 kAuxTilesets[82][4] = {
   {114, 113, 114, 113},
   { 23,  64,  65,  57},
 };
+
+// The Japanese cartridge's file screens and title use their own (main 35, aux 81).
+static const uint8 *MainTileset(int i) {
+  return LanguageCart_Japanese() ? LanguageCart_RawBytes(0x80e0b3 + i * 8, 8) : kMainTilesets[i];
+}
+
+static const uint8 *AuxTileset(int i) {
+  return LanguageCart_Japanese() ? LanguageCart_RawBytes(0x80ddd7 + i * 4, 4) : kAuxTilesets[i];
+}
 static const uint16 kTagalongWhich[14] = {0, 0x600, 0x300, 0x300, 0x300, 0, 0, 0x900, 0x600, 0x600, 0x900, 0x900, 0x600, 0x900};
 static const uint16 kDecodeAnimatedSpriteTile_Tab[57] = {
   0x9c0, 0x30, 0x60, 0x90, 0xc0, 0x300, 0x318, 0x330, 0x348, 0x360, 0x378, 0x390, 0x930, 0x3f0, 0x420, 0x450,
@@ -453,7 +464,7 @@ void LoadOverworldMapPalette() {
 }
 
 void EraseTileMaps_triforce() {  // 808333
-  EraseTileMaps(0xa9, 0x7f);
+  EraseTileMaps(LanguageCart_Japanese() ? 0x188 : 0xa9, 0x7f);
 }
 
 void EraseTileMaps_dungeonmap() {  // 80833f
@@ -645,7 +656,7 @@ void Expand3To4High(uint8 *dst, const uint8 *src, const uint8 *base, int num) { 
 
 void LoadTransAuxGFX() {  // 80d66e
   uint8 *dst = &g_ram[0x6000];
-  const uint8 *p = kAuxTilesets[aux_tile_theme_index];
+  const uint8 *p = AuxTileset(aux_tile_theme_index);
   int len;
 
   if (p[0]) {
@@ -808,8 +819,8 @@ void AnimateMirrorWarp() {  // 80d864
 }
 
 void AnimateMirrorWarp_DecompressNewTileSets() {  // 80d8fe
-  const uint8 *mt = kMainTilesets[main_tile_theme_index];
-  const uint8 *at = kAuxTilesets[aux_tile_theme_index];
+  const uint8 *mt = MainTileset(main_tile_theme_index);
+  const uint8 *at = AuxTileset(aux_tile_theme_index);
 
   aux_bg_subset_0 = at[0] ? at[0] : mt[3];
   aux_bg_subset_1 = at[1] ? at[1] : mt[4];
@@ -897,8 +908,8 @@ void InitializeTilesets() {  // 80e19b
   LoadSpriteGraphics(&g_zenv.vram[0x5800], sprite_gfx_subset_2, &g_ram[0x8400]);
   LoadSpriteGraphics(&g_zenv.vram[0x5c00], sprite_gfx_subset_3, &g_ram[0x8a00]);
 
-  const uint8 *mt = kMainTilesets[main_tile_theme_index];
-  const uint8 *at = kAuxTilesets[aux_tile_theme_index];
+  const uint8 *mt = MainTileset(main_tile_theme_index);
+  const uint8 *at = AuxTileset(aux_tile_theme_index);
 
   aux_bg_subset_0 = at[0] ? at[0] : mt[3];
   aux_bg_subset_1 = at[1] ? at[1] : mt[4];
@@ -1024,6 +1035,24 @@ void TransferFontToVRAM() {  // 80e556
   }
   // A translation in the USA layout draws the file screens with its own
   // letters (language_cart.h): the dialogue font of the language in use.
+  if (LanguageCart_Japanese()) {
+    // The first 256 letters, as $8E:F572 makes them: from the second column of
+    // each, 8 wide, tile rows 32 apart. 0xcc is a blank. The file screens then
+    // put menu graphics over the last ones; the ending writes with them ($80:E596).
+    const uint8 *letters = FindIndexInMemblk(g_zenv.dialogue_font_blk, 0).ptr;
+    for (int g = 0; g < 0x100; g++) {
+      const uint8 *from = letters + g * 44;
+      uint16 *to = &g_zenv.vram[0x7000 + ((g & 0xf) | (g & 0xf0) << 1) * 8];
+      for (int part = 0; part < 2; part++, from += 22, to += 16 * 8) {
+        for (int row = 0; row < 8; row++) {
+          uint8 p0 = from[row * 2] << 1 | (from[16] >> (7 - row) & 1);
+          uint8 p1 = from[row * 2 + 1] << 1 | (from[17] >> (7 - row) & 1);
+          to[row] = g == 0xcc ? 0 : p0 | p1 << 8;
+        }
+      }
+    }
+    return;
+  }
   MemBlk font = LanguageCart_UsaLayout() && g_zenv.dialogue_font_blk.ptr ?
       g_zenv.dialogue_font_blk : kDialogueFont(0);
   MemBlk chars = FindIndexInMemblk(font, 0);
@@ -1735,7 +1764,7 @@ void FloodDam_PrepFloodHDMA() {  // 80f734
       } while (a >= 480);
       hdma_table_dynamic[a >> 1] = r12 == 0xffff ? 0xff : r12;
     }
-  } while (++r4 < 225);
+  } while (++r4 < ((enhanced_features0 & kFeatures0_WidescreenVisualFixes) ? 240 : 225));
 }
 
 void ResetStarTileGraphics() {  // 80fda4
@@ -1844,20 +1873,31 @@ void Overworld_LoadAllPalettes() {  // 82c5b2
   memset(aux_palette_buffer + 0x180 / 2, 0, 128);
   memset(main_palette_buffer, 0, 512);
 
-  overworld_palette_mode = 5;
+  // The Japanese title has its own colours, and no Sp0L ($82:C345).
+  bool japanese = LanguageCart_Japanese();
+  overworld_palette_mode = japanese ? 4 : 5;
   overworld_palette_aux1_bp2to4_hi = 3;
   overworld_palette_aux2_bp5to7_hi = 3;
-  overworld_palette_aux3_bp7_lo = 0;
+  overworld_palette_aux3_bp7_lo = japanese ? 3 : 0;
   palette_sp6r_indoors = 5;
   palette_sp0l = 11;
   palette_swap_flag = 0;
   overworld_palette_aux_or_main = 0;
   Palette_BgAndFixedColor_Black();
-  Palette_Load_Sp0L();
+  if (!japanese)
+    Palette_Load_Sp0L();
   Palette_Load_SpriteMain();
   Palette_Load_OWBGMain();
-  Palette_Load_OWBG1();
-  Palette_Load_OWBG2();
+  if (japanese) {
+    // Its logo's red to yellow is in its own table, entry 3 ($9B:E8EA).
+    uint16 logo[21 * 2];
+    memcpy(logo, LanguageCart_RawBytes(0x9be8ea, sizeof(logo)), sizeof(logo));
+    Palette_LoadMultiple(logo, 0x52, 6, 2);
+    Palette_LoadMultiple(logo, 0xB2, 6, 2);
+  } else {
+    Palette_Load_OWBG1();
+    Palette_Load_OWBG2();
+  }
   Palette_Load_OWBG3();
   Palette_Load_SpriteEnvironment_Dungeon();
   Palette_Load_HUD();

@@ -85,6 +85,7 @@ for f in ['static void SetupPurpleBackground(','static const char *SetupUiText('
 code+=s[s.index('typedef struct LanguageSelectorContext'):s.index('// Returns the chosen language,')]
 code+=s[s.index("typedef struct SetupQolContext"):s.index("static void DrawLanguageSelector(")]
 code+=s[s.index('enum { kMaxMods ='):s.index('static ModEntry g_mod_entries')]
+code+='enum { kZsprHeaderSize = 29 };\nstatic bool Mods_ZsprLayout(const uint8_t *h,size_t n,size_t f,uint32_t *p,uint32_t *c){return false;}\n'
 code+=s[s.index('typedef struct ModsMenuContext'):s.index('static void SetupPurpleBackground(bool);')]
 code+=function('static void DrawModsMenu(')
 code+=function('static int SelectLanguage(')

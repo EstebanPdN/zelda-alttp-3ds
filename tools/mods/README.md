@@ -1,5 +1,9 @@
 # ZSPR skin conversion
 
+The game reads a `.zspr` copied to `mods/` directly since v4.1-E3, so most people
+never need this tool. It remains for a package with a manifest, such as a mod
+that should be bundled in the RomFS.
+
 `convert_zspr.py` converts a locally supplied version 1 Link ZSPR into one
 folder the 3DS Mods menu can read. It validates the checksum, section bounds,
 metadata termination and exact graphics/palette lengths before writing files.
@@ -32,7 +36,7 @@ The game reads these colors for gameplay, file selection, bunny gear and the
 bottom map marker. The original fifth palette stays in the base assets.
 Unloading a mod releases its table and restores normal palette lookup.
 
-The author's artwork stays external to the source repository and RomFS. This
+The author's artwork stays external to the source repository. This
 converter preserves credits; it does not grant redistribution rights.
 
 ## Verification with locally supplied inputs

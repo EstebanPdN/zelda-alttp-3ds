@@ -526,10 +526,30 @@ void Polyhedral_InitializeThread() {  // 89f7de
   memcpy(&g_ram[0x1f32], kPolyThreadInit, 13);
 }
 
+// The Japanese title has no sword: the logo waits, sparkles, and the story begins ($8C:C290).
+static void Intro_JapaneseSparkle(void) {
+  Intro_HandleAllTriforceAnimations();
+  if (!--subsubmodule_index) {
+    intro_sprite_isinited[3] = 1;
+    intro_sprite_subtype[3] = 1;
+    submodule_index++;
+  }
+}
+
+static void Intro_JapaneseWait(void) {  // 8cc2a5
+  Intro_HandleAllTriforceAnimations();
+  if (!--subsubmodule_index) {
+    main_module_index = Mods_RomByte(0x8cc2e8, 20);
+    submodule_index = 0;
+    BYTE(link_x_coord) = 0;
+  }
+}
+
 void Module00_Intro() {  // 8cc120
   // The French Canadian cartridge lets the title be skipped from step 4 on,
   // as the feature does ($8E:8002).
-  uint8 skip_at = (enhanced_features0 & kFeatures0_SkipIntroOnKeypress) || g_loc_rom ? 4 : 8;
+  uint8 skip_at = (enhanced_features0 & kFeatures0_SkipIntroOnKeypress) || g_loc_rom ||
+      LanguageCart_Japanese() ? 4 : 8;
 
   if (submodule_index >= skip_at && ((filtered_joypad_L & 0xc0 | filtered_joypad_H) & 0xd0)) {
     FadeMusicAndResetSRAMMirror();
@@ -545,8 +565,8 @@ void Module00_Intro() {  // 8cc120
   case 9:
   case 11: Intro_HandleAllTriforceAnimations(); break;
   case 5: IntroZeldaFadein(); break;
-  case 6: Intro_SwordComingDown(); break;
-  case 7: Intro_FadeInBg(); break;
+  case 6: LanguageCart_Japanese() ? Intro_JapaneseSparkle() : Intro_SwordComingDown(); break;
+  case 7: LanguageCart_Japanese() ? Intro_JapaneseWait() : Intro_FadeInBg(); break;
   case 8: Intro_WaitPlayer(); break;
   }
 }
@@ -617,11 +637,18 @@ void IntroZeldaFadein() {  // 8cc25c
   Intro_HandleAllTriforceAnimations();
   if (!(frame_counter & 1))
     return;
-  Palette_FadeIntroOneStep();
+  // The Japanese logo and its plate fade in with everything else ($8C:C274).
+  if (LanguageCart_Japanese())
+    ApplyPaletteFilter_bounce();
+  else
+    Palette_FadeIntroOneStep();
   if (BYTE(palette_filter_countdown) == 0) {
     subsubmodule_index = 42;
     submodule_index++;
-    Intro_SetupSwordAndIntroFlash();
+    if (LanguageCart_Japanese())
+      subsubmodule_index = 0x20;
+    else
+      Intro_SetupSwordAndIntroFlash();
   } else if (BYTE(palette_filter_countdown) == 13) {
     TM_copy = 0x15;
     TS_copy = 0;
@@ -808,6 +835,9 @@ void Intro_RunStep() {  // 8cc448
 
 }
 
+static void InitializeSceneSprite_JapanesePlate(int k);
+static void AnimateSceneSprite_JapanesePlate(int k);
+
 void Intro_AnimOneObj(int k) {  // 8cc534
   switch (intro_sprite_isinited[k]) {
   case 0:
@@ -815,7 +845,7 @@ void Intro_AnimOneObj(int k) {  // 8cc534
   case 1:
     switch (intro_sprite_subtype[k]) {
     case 0: Intro_SpriteType_A_0(k); break;
-    case 1: EXIT_0CCA90(k); break;
+    case 1: InitializeSceneSprite_JapanesePlate(k); break;
     case 2: InitializeSceneSprite_Copyright(k); break;
     case 3: InitializeSceneSprite_Sparkle(k); break;
     case 4:
@@ -827,7 +857,7 @@ void Intro_AnimOneObj(int k) {  // 8cc534
   case 2:
     switch (intro_sprite_subtype[k]) {
     case 0: Intro_SpriteType_B_0(k); break;
-    case 1: EXIT_0CCA90(k); break;
+    case 1: AnimateSceneSprite_JapanesePlate(k); break;
     case 2: AnimateSceneSprite_Copyright(k); break;
     case 3: AnimateSceneSprite_Sparkle(k); break;
     case 4:
@@ -956,8 +986,31 @@ void EXIT_0CCA90(int k) {  // 8cc84f
   // empty
 }
 
+// The plate under the Japanese logo, its subtitle ($8C:C6FD). The USA sprite does nothing.
+static void InitializeSceneSprite_JapanesePlate(int k) {
+  if (!LanguageCart_Japanese())
+    return;
+  intro_x_lo[k] = 0x80;
+  intro_x_hi[k] = 0;
+  intro_y_lo[k] = 0x7e;
+  intro_y_hi[k] = 0;
+  intro_sprite_isinited[k]++;
+}
+
+static void AnimateSceneSprite_JapanesePlate(int k) {
+  static const IntroSpriteEnt kEnts[6] = {
+    { 0, 0, 0x46, 0x0c, 2},
+    {16, 0, 0x48, 0x0c, 2},
+    {32, 0, 0x4a, 0x0c, 2},
+    {48, 0, 0x4c, 0x0c, 2},
+    {64, 0, 0x4e, 0x0c, 2},
+    {80, 0, 0x60, 0x0c, 2},
+  };
+  AnimateSceneSprite_AddObjectsToOamBuffer(k, kEnts, 6);
+}
+
 void InitializeSceneSprite_Copyright(int k) {  // 8cc850
-  intro_x_lo[k] = 76;
+  intro_x_lo[k] = LanguageCart_Japanese() ? 88 : 76;  // $8C:C757
   intro_x_hi[k] = 0;
   intro_y_lo[k] = 184;
   intro_y_hi[k] = 0;
@@ -980,7 +1033,23 @@ void AnimateSceneSprite_Copyright(int k) {  // 8cc864
     {88, 0, 0x53, 0x0a, 0},
     {96, 0, 0x54, 0x0a, 0},
   };
-  AnimateSceneSprite_AddObjectsToOamBuffer(k, kIntroSprite2_Ents, 13);
+  // The Japanese one only says 1991, in ten tiles in a row ($8C:C76F).
+  static const IntroSpriteEnt kIntroSprite2_EntsJapanese[10] = {
+    { 0, 0, 0x40, 0x0a, 0},
+    { 8, 0, 0x41, 0x0a, 0},
+    {16, 0, 0x42, 0x0a, 0},
+    {24, 0, 0x43, 0x0a, 0},
+    {32, 0, 0x44, 0x0a, 0},
+    {40, 0, 0x50, 0x0a, 0},
+    {48, 0, 0x51, 0x0a, 0},
+    {56, 0, 0x52, 0x0a, 0},
+    {64, 0, 0x53, 0x0a, 0},
+    {72, 0, 0x54, 0x0a, 0},
+  };
+  if (LanguageCart_Japanese())
+    AnimateSceneSprite_AddObjectsToOamBuffer(k, kIntroSprite2_EntsJapanese, 10);
+  else
+    AnimateSceneSprite_AddObjectsToOamBuffer(k, kIntroSprite2_Ents, 13);
 }
 
 void InitializeSceneSprite_Sparkle(int k) {  // 8cc8e2
@@ -2641,7 +2710,14 @@ static EndingText Ending_Text(void) {
     kEnding_Credits_Text, (const uint8 *)kEnding_Credits_Offs, (const uint8 *)kEnding_MapData,
     kEnding0_Data, (const uint8 *)kEnding0_Offs,
   };
-  if (LanguageCart_UsaLayout()) {
+  if (LanguageCart_Japanese()) {
+    // The Japanese cartridge's own map of its font ($8E:E7FC, $8E:ECE9).
+    t.credits = LanguageCart_RawBytes(0x8edba8, 1);
+    t.credits_offs = LanguageCart_RawBytes(0x8ee319, 392 * 2);
+    t.map = LanguageCart_RawBytes(0x8eda68, 320);
+    t.captions = LanguageCart_RawBytes(0x8ee924, 1);
+    t.captions_offs = LanguageCart_RawBytes(0x8eecc0, 34);
+  } else if (LanguageCart_UsaLayout()) {
     t.credits = LanguageCart_Bytes(0x8eb178, 1);
     t.credits_offs = LanguageCart_Bytes(0x8eb93d, 394 * 2);
     t.map = LanguageCart_Bytes(0x8eb038, 320);
@@ -2665,6 +2741,10 @@ void Credits_AddNextAttribution() {  // 8ebe24
   static const uint16 kEnding_Credits_DigitChar[2] = { 0x3ce6, 0x3cf6 };
 
   EndingText text = Ending_Text();
+  bool japanese = LanguageCart_Japanese();
+  // 392 lines, and other rows and tiles for the deaths ($8E:E820, $8E:E629, $8E:E7DC).
+  const uint8 *digit_rows = japanese ? LanguageCart_RawBytes(0x8ee629, 28) : (const uint8 *)kEnding_Digits_ScrollY;
+  const uint8 *digit_chars = japanese ? LanguageCart_RawBytes(0x8ee7dc, 4) : (const uint8 *)kEnding_Credits_DigitChar;
   uint16 *dst = vram_upload_data + (vram_upload_offset >> 1);
 
   dst[0] = swap16(R16);
@@ -2672,7 +2752,7 @@ void Credits_AddNextAttribution() {  // 8ebe24
   dst[2] = Ending_Word(text.map, 159);
   dst += 3;
 
-  if (R18 < 394) {
+  if (R18 < (japanese ? 392 : 394)) {
     const uint8 *src = &text.credits[Ending_Word(text.credits_offs, R18)];
     if (*src != 0xff) {
       *dst++ = swap16(R16 + *src++);
@@ -2684,8 +2764,8 @@ void Credits_AddNextAttribution() {  // 8ebe24
       } while (--n);
     }
 
-    if ((ending_which_dung & 1) || R18 * 2 == kEnding_Digits_ScrollY[ending_which_dung >> 1]) {
-      int t = kEnding_Credits_DigitChar[ending_which_dung & 1];
+    if ((ending_which_dung & 1) || R18 * 2 == Ending_Word(digit_rows, ending_which_dung >> 1)) {
+      int t = Ending_Word(digit_chars, ending_which_dung & 1);
       WORD(g_ram[0xce]) = t;
 
       dst[0] = swap16(R16 + 0x19);

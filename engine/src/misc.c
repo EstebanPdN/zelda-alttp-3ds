@@ -573,6 +573,7 @@ int Dungeon_PrepOverlayDma_watergate(int dst, uint16 r8, uint16 r6, int loops) {
 
 void Module05_LoadFile() {  // 828136
   if (ZeldaRestartTestScenario()) return;  // Continue within the isolated developer scenario
+  ZeldaWideForgetPlaces();
   EnableForceBlank();
   overworld_map_state = 0;
   dung_unk6 = 0;

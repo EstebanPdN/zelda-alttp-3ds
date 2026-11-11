@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v4.0"><img src="docs/badges/version.svg" alt="Stable release: v4.0" height="22"></a>
+  <a href="https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v4.1"><img src="docs/badges/version.svg" alt="Stable release: v4.1" height="22"></a>
   <a href="#download-and-installation"><img src="docs/badges/platform.svg" alt="Nintendo 3DS" height="22"></a>
   <a href="#updates"><img src="docs/badges/updater.svg" alt="Updates: built in" height="22"></a>
   <a href="#license-and-legal-notice"><img src="docs/badges/license.svg" alt="Component-specific licenses" height="22"></a>
@@ -46,8 +46,10 @@ No ROM or extracted game asset package is distributed in this repository. Each
 user must provide their own legally obtained USA, unheadered ROM on their own
 3DS SD card.
 
-Version [4.0](docs/v4.0.md) adds seven languages, character mods, a native
-randomizer, fifteen quality-of-life options and refined dual-screen presentation.
+Version [4.1](docs/v4.1.md) adds Japanese game and menus, direct `.zspr` skins,
+language corrections and fixes for WIDE, maps, menus and new randomizer seeds.
+The port supports eight languages, character mods, a native randomizer and
+fifteen quality-of-life options.
 See [development and build boundaries](docs/development.md) for source organization
 and the disabled developer scenarios.
 
@@ -98,11 +100,11 @@ and the disabled developer scenarios.
 ## Download and installation
 
 <p>
-  <a href="https://github.com/EstebanPdN/zelda-alttp-3ds/releases/download/v4.0/zelda3-3ds-v4.0.cia"><img src="docs/images/download-cia.svg" alt="Download A Link to the Past 3DS CIA" width="210" height="46"></a>
-  <a href="https://github.com/EstebanPdN/zelda-alttp-3ds/releases/download/v4.0/zelda3-3ds-v4.0.3dsx"><img src="docs/images/download-3dsx.svg" alt="Download Homebrew Launcher 3DSX" width="210" height="46"></a>
+  <a href="https://github.com/EstebanPdN/zelda-alttp-3ds/releases/download/v4.1/zelda3-3ds-v4.1.cia"><img src="docs/images/download-cia.svg" alt="Download A Link to the Past 3DS CIA" width="210" height="46"></a>
+  <a href="https://github.com/EstebanPdN/zelda-alttp-3ds/releases/download/v4.1/zelda3-3ds-v4.1.3dsx"><img src="docs/images/download-3dsx.svg" alt="Download Homebrew Launcher 3DSX" width="210" height="46"></a>
 </p>
 
-**Stable: [v4.0](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v4.0).**
+**Stable: [v4.1](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v4.1).**
 
 Install the CIA, then create this directory on the SD card:
 
@@ -141,7 +143,7 @@ GitHub supplies automatic source-code archives for each tag.
 The release page shows the QR code, a short changelog and bug-report instructions.
 Detailed development notes are preserved inside the source snapshot.
 
-Latest stable release: [v4.0](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v4.0)
+Latest stable release: [v4.1](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v4.1)
 
 See [CHANGELOG.md](CHANGELOG.md) for the changes since v2.8.
 
@@ -217,7 +219,7 @@ read its changelog on the top screen, with Prev/Next below for more pages.
 Choose Download Update and confirm installation, then reopen the game.
 Save in-game before installing. Startup checks also indicate newer releases.
 
-Version [v4.0](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v4.0)
+Version [v4.1](https://github.com/EstebanPdN/zelda-alttp-3ds/releases/tag/v4.1)
 is the latest stable release. Select the Stable channel to install it.
 
 Settings is Screen, Turbo Speed, Developer, Update, Restart. Restart returns to

@@ -18,6 +18,10 @@ private translated copy. Preserve the original patch and its readme.
 | ru | Chief-Net 1.01, 2022 | GD, Guyver, Tigran, alex231, Mefistotel |
 | fr | Official French (PAL) release | Nintendo |
 | de | Official German (PAL) release | Nintendo |
+| ja | Official Super Famicom release, v1.0 | Nintendo |
+
+The Spanish, Italian, Portuguese and Russian patches also carry the corrections of
+[`quality_text.py`](../../../../tools/languages/README.md).
 
 The `.bps` files remain ignored binary inputs for the local build. Recreate
 these from the owner-provided cartridges and original fan patches; never put

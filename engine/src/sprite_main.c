@@ -24555,7 +24555,11 @@ void Eyegore_Main(int k) {  // 9ec839
     if (!sprite_delay_main[k]) {
       PointU8 pt;
       Sprite_DirectionToFaceLink(k, &pt);
-      if ((uint8)(pt.x + 48) < 96 &&
+      // Offscreen WIDE actors must not alias proximity every 256 pixels.
+      bool near = !(enhanced_features0 & kFeatures0_ExtendScreen64) ||
+        ((uint16)(link_x_coord - Sprite_GetX(k) + 48) < 96 &&
+         (uint16)(link_y_coord + 8 + sprite_z[k] - Sprite_GetY(k) + 48) < 96);
+      if (near && (uint8)(pt.x + 48) < 96 &&
           (uint8)(pt.y + 48) < 96) {
         sprite_ai_state[k]++;
         sprite_delay_main[k] = 63;

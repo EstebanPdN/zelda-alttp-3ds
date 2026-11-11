@@ -6,7 +6,10 @@
 
 #include "assets.h"
 #include "mods.h"
+#include "load_gfx.h"
 #include "localized.h"
+#include "select_file.h"
+#include "variables.h"
 #include "util.h"
 #ifdef __3DS__
 #include "platform_3ds.h"
@@ -34,6 +37,9 @@ static const uint32 kLanguageTables[] = {
   0x0df569,  // kHudFluteItemText
   0x0df5a9,  // kHudMirrorItemText
   0x0df5c9,  // kHudBowItemText
+  0x08f4ee,  // kGameOverText_Tab1
+  0x08f565,  // kGameOverText_Tab2
+  0x08f5b4,  // kGameOverText_Chars
 };
 
 // Where a cartridge keeps what the game draws from it. Translations of the
@@ -53,10 +59,19 @@ typedef struct CartLayout {
   // $0E:FA00 to BG3 characters $200-$25F, past the USA ones. They go to $180
   // while the menu is open, where message text is drawn otherwise.
   uint32 menu_chars;
+  // The Japanese cartridge moved some menu tables by their own amounts.
+  const struct CartShift { uint32 lo, hi; int shift; } *shifts;
+  uint8 shift_count;
 } CartLayout;
 static const uint8 kPalBgSheets[] = { 113, 114 };
 static const uint8 kPalSprSheets[] = { 97, 105, 106, 107 };
+static const struct CartShift kJapaneseShifts[] = {
+  { 0x8df919, 0x8df9f9, 0x20 },  // gloves and abilities
+  { 0x8dfe5f, 0x8dfec7, 0x20 },  // the HUD's top row
+  { 0x8df5c9, 0x8df601, 0x20 },  // the bow's names
+};
 static const CartLayout kCartLayouts[] = {
+  { "ja", 0x4fc0, 0, false, NULL, NULL, 0, 0, 0, kJapaneseShifts, 3 },
   { "fr", 0x4f00, -0xd8, false, kPalBgSheets, kPalSprSheets, 2, 4, 0 },
   { "de", 0x4f00, -0xd8, false, kPalBgSheets, kPalSprSheets, 2, 4, 0x8efa00 },
   { NULL, 0x4f80, 0, true, NULL, NULL, 0, 0, 0 },
@@ -250,7 +265,14 @@ const uint8 *LanguageCart_Table(uint32 addr, size_t size) {
   addr &= 0x7fffff;
   for (size_t i = 0; i < sizeof(kLanguageTables) / sizeof(kLanguageTables[0]); i++) {
     if (kLanguageTables[i] == addr) {
-      size_t o = CartOffset(addr + g_layout->hud_shift);
+      // Only the menus' tables are at known places in the other layouts.
+      if (addr >> 16 != 0x0d && !g_layout->usa_layout)
+        return NULL;
+      uint32 at = addr + g_layout->hud_shift;
+      for (int k = 0; k < g_layout->shift_count; k++)
+        if ((addr | 0x800000) >= g_layout->shifts[k].lo && (addr | 0x800000) < g_layout->shifts[k].hi)
+          at += g_layout->shifts[k].shift;
+      size_t o = CartOffset(at);
       return o + size <= kCartSize ? g_cart + o : NULL;
     }
   }
@@ -262,8 +284,13 @@ bool LanguageCart_Active(void) {
 }
 
 const uint16 *LanguageCart_Words(uint16 *dst, uint32 snes_addr, int count) {
-  if (((snes_addr >> 16) & 0x7f) == 0x0d)
+  if (((snes_addr >> 16) & 0x7f) == 0x0d) {
+    uint32 a = snes_addr | 0x800000;
     snes_addr += g_layout->hud_shift;
+    for (int i = 0; i < g_layout->shift_count; i++)
+      if (a >= g_layout->shifts[i].lo && a < g_layout->shifts[i].hi)
+        snes_addr += g_layout->shifts[i].shift;
+  }
   size_t o = CartOffset(snes_addr);
   for (int i = 0; i < count; i++, o += 2)
     dst[i] = o + 1 < kCartSize ? g_cart[o] | g_cart[o + 1] << 8 : 0;
@@ -272,6 +299,84 @@ const uint16 *LanguageCart_Words(uint16 *dst, uint32 snes_addr, int count) {
 
 bool LanguageCart_UsaLayout(void) {
   return g_cart && g_layout->usa_layout;
+}
+
+bool LanguageCart_Japanese(void) {
+  return g_cart && g_layout->shift_count != 0;
+}
+
+// A name's words in this SRAM are tiles of the font of the language it was
+// typed in, and the Japanese font's are others. The mark at $701FF4 says which.
+static uint16 UsaNameToJapanese(uint16 c) {
+  static const uint8 kLetters[26] = { 0, 1, 2, 3, 4, 5, 6, 7, 0xaf, 9, 10, 11, 12, 13, 14, 15,
+                                      0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29 };
+  for (int i = 0; i < 26; i++) {
+    uint8 lower = 26 + i;  // the keyboard's code of the small letter, as a tile
+    if (c == kLetters[i] || c == (uint16)((lower & 0x70) * 2 + (lower & 0xf))) {
+      uint8 g = 0xaa + i;
+      return (g & 0xf) | (g & 0xf0) << 1;
+    }
+  }
+  if (c >= 0xe6 && c <= 0xef) {
+    uint8 g = 0xa0 + c - 0xe6;
+    return (g & 0xf) | (g & 0xf0) << 1;
+  }
+  return 0x18c;
+}
+
+static uint16 JapaneseNameToUsa(uint16 c) {
+  uint8 g = (c & 0xf) | (c >> 1 & 0xf0);
+  static const uint8 kLetters[26] = { 0, 1, 2, 3, 4, 5, 6, 7, 0xaf, 9, 10, 11, 12, 13, 14, 15,
+                                      0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29 };
+  if (g >= 0xaa && g < 0xaa + 26)
+    return kLetters[g - 0xaa];
+  if (g >= 0xa0 && g <= 0xa9)
+    return 0xe6 + g - 0xa0;
+  return 0xa9;
+}
+
+// Kana have no letters in the other fonts: such a name becomes LINK, not nothing.
+static void ConvertName(uint8 *name, bool to_japanese) {
+  static const uint16 kLink[4] = { 11, 0xaf, 13, 10 };
+  uint16 *w = (uint16 *)name;
+  bool any = false, was_blank = true;
+  for (int i = 0; i < 6; i++) {
+    was_blank &= w[i] == (to_japanese ? 0xa9 : 0x18c);
+    w[i] = to_japanese ? UsaNameToJapanese(w[i]) : JapaneseNameToUsa(w[i]);
+    any |= w[i] != (to_japanese ? 0x18c : 0xa9);
+  }
+  if (!any && !was_blank && !to_japanese)
+    memcpy(w, kLink, sizeof(kLink));
+}
+
+void LanguageCart_AfterSramLoad(uint8 *sram, uint8 *wram_save) {
+  static const uint8 kMark[4] = { 'J', 'P', 'N', 1 };
+  enum { kMarkOffs = 0x1ff4 };
+  bool now = LanguageCart_Japanese();
+  bool was = !memcmp(sram + kMarkOffs, kMark, 4);
+  if (now == was)
+    return;
+  for (int slot = 0; slot < 3; slot++) {
+    for (int copy = 0; copy < 2; copy++) {
+      uint8 *s = sram + slot * 0x500 + copy * 0xf00;
+      if (WORD(s[0x3e5]) != 0x55aa || !Intro_CheckCksum(s))
+        continue;
+      ConvertName(s + kSrmOffs_Name, now);
+      Intro_FixCksum(s);
+    }
+  }
+  ConvertName(wram_save + kSrmOffs_Name, now);
+  if (now)
+    memcpy(sram + kMarkOffs, kMark, 4);
+  else
+    memset(sram + kMarkOffs, 0, 4);
+}
+
+const uint8 *LanguageCart_RawBytes(uint32 snes_addr, size_t size) {
+  if (!g_cart)
+    return NULL;
+  size_t o = CartOffset(snes_addr);
+  return o + size <= kCartSize ? g_cart + o : NULL;
 }
 
 const uint8 *LanguageCart_Bytes(uint32 snes_addr, size_t size) {

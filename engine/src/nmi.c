@@ -311,15 +311,15 @@ void NMI_DoUpdates() {  // 8089e0
       // The cartridge's own screens, from its three interleaved pointer
       // columns ($80:932A in the French Canadian one).
       p = Loc_BgTilemap(nmi_load_bg_from_vram);
-    } else if (LanguageCart_UsaLayout() && nmi_load_bg_from_vram >= 3 &&
+    } else if ((LanguageCart_UsaLayout() || LanguageCart_Japanese()) && nmi_load_bg_from_vram >= 3 &&
                nmi_load_bg_from_vram != 4) {
       // A translation built from the USA cartridge: its own screens (file
       // select, copy, erase, name), through its pointer columns at $80:937A,
       // which it may have pointed elsewhere.
       uint8 col[3];
       for (int c = 0; c < 3; c++)
-        col[c] = *LanguageCart_Bytes(0x80937a + c * 9 + nmi_load_bg_from_vram, 1);
-      const uint8 *own = LanguageCart_Bytes(col[2] << 16 | col[1] << 8 | col[0], 4);
+        col[c] = *LanguageCart_RawBytes(0x80937a + c * 9 + nmi_load_bg_from_vram, 1);
+      const uint8 *own = LanguageCart_RawBytes(col[2] << 16 | col[1] << 8 | col[0], 4);
       if (own)
         p = own;
     }

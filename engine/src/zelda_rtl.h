@@ -82,6 +82,9 @@ void ZeldaWideBeforeAuxGfx(void);
 // picture keeps drawing the place being left from its maps.
 void ZeldaWideBeforeMapLoad(int context);
 void ZeldaWideAfterMapLoad(int context);
+// Loading a file starts a new game: the WIDE picture forgets the places of
+// the title's attract scenes, whose rooms it would draw beside the first one.
+void ZeldaWideForgetPlaces(void);
 void ZeldaRunFrameInternal(uint16 input, int run_what);
 bool ZeldaRunFrame(int input_state);
 void LoadSongBank(const uint8 *p);

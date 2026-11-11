@@ -48,7 +48,7 @@ static bool RandoSeedKey_Valid(const char*p){return false;}
 static bool EnsureProfileReady(const RomEntry*r,bool rebuild){prepared++;if(fail_once){fail_once--;return false;}return true;}
 '''+fn('static int LanguageFromSystem(')+fn('static bool ResolveActiveProfile(')+r'''
 int main(void){
- const int expected[]={0,0,4,5,3,1,0,0,0,2,6,0,0,0,0,0};
+ const int expected[]={7,0,4,5,3,1,0,0,0,2,6,0,0,0,0,0};
  for(int i=0;i<16;i++){
   g_startup_menu_seen=false;system_language=i;result=0;chosen=-1;forced=false;selected_calls=prepared=0;
   silent_progress=visible_progress=0;char profile[128];assert(ResolveActiveProfile(profile,sizeof(profile)));

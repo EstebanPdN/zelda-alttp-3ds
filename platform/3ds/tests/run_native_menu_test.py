@@ -44,6 +44,8 @@ void Rando_DeactivateSlot(void) {}
 void Rando_ApplyLoadedSaveRuntimeSettings(void) {}
 uint8 g_ram[131072];
 #include "src/variables.h"
+static bool LanguageCart_Japanese(void) { return false; }
+static const uint8 *LanguageCart_RawBytes(uint32 addr, size_t size) { return NULL; }
 #include "src/features.h"
 #define ZELDA3_TEST_NATIVE_FILE_MENU 1
 static uint8 save[8192];

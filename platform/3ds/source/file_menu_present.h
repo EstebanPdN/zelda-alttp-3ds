@@ -50,6 +50,8 @@ static inline bool FileMenu_DrawBackground(int source_width, int source_height,
 // cap is the horizontally flipped left-cap tile. Read the live tilemap:
 // translated cartridges have wider plaques than the 20-tile USA title.
 static inline int FileMenu_TitleWidth(const uint16_t *vram) {
+  // The Japanese cartridge has no plaque or panel to widen.
+  if (vram[0x1042] == 0x007f) return 0;
   if (vram[0x1042] == 0x3589) {
     for (int column=3; column<32; column++)
       if (vram[0x1040+column] == 0x7589)

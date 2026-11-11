@@ -52,6 +52,8 @@ enum {
   // Retained background planes, per-frame sprite lines, opaque rows and span
   // color math. Output is identical to the per-pixel paths.
   kPpuRenderFlags_FastPaths = 32,
+  // World-map presentation: extend its cloud border outside the 512px atlas.
+  kPpuRenderFlags_WorldMapBorder = 64,
 };
 
 

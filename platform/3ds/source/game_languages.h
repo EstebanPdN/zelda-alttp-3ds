@@ -22,6 +22,7 @@ static const GameLanguage kGameLanguages[] = {
   { "fr", kUiLanguage_French,     "FRANÇAIS",  "romfs:/languages/fr.bps" },
   { "de", kUiLanguage_German,     "DEUTSCH",   "romfs:/languages/de.bps" },
   { "ru", kUiLanguage_Russian,    "РУССКИЙ",   "romfs:/languages/ru.bps" },
+  { "ja", kUiLanguage_Japanese,   "日本語",     "romfs:/languages/ja.bps" },
 };
 
 enum {
@@ -59,4 +60,7 @@ static const char *const kLanguageSelectorText[kGameLanguageCount][kSelCount] = 
   { "ЯЗЫК", "A: ВЫБРАТЬ", "START: ВЫХОД", "Y: МОДЫ",
     "ПОДГОТОВКА...", "ROM USA НЕ НАЙДЕН", "СКОПИРУЙТЕ В /3DS/ZELDA 3DS/",
     "ПОКА НЕДОСТУПНО", "ОШИБКА ПОДГОТОВКИ" },
+  { "言語", "Aで決定", "STARTで終了", "YでMOD",
+    "準備中...", "USA ROMが見つかりません", "/3DS/ZELDA 3DS/にコピー",
+    "まだ利用できません", "準備に失敗しました" },
 };
