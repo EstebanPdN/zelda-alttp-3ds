@@ -1,5 +1,20 @@
 # Changelog
 
+## v4.1
+
+- Added Japanese game and menus, automatic language selection and a corrected title logo.
+- Added direct `.zspr` skins and support for up to 512 mods.
+- Fixed translations, missing characters and clipped text in Spanish, Portuguese, Italian and Russian.
+- Fixed German name entry, file screens and floor labels, and the Russian Game Over title.
+- Fixed German/French save-menu freezes and item-ring hangs on empty slots.
+- Fixed WIDE expanded inventory and HUD/save-box text after loading across languages.
+- Fairies now restore 10 hearts; Normal game asks before restarting.
+- Fixed initial WIDE actor loading, distant Eyegores waking and disconnected dungeon scenery.
+- Extended WIDE to Zora's River and fixed the dam's flooding window.
+- Fixed outdoor parallax, mirror-wave camera/ending and lingering flute-boy ambience.
+- Fixed world-map margins/corners and stale WIDE scenery after the title story.
+- Corrected dungeon-item locations used by new randomizer seeds.
+
 ## v4.1-E6
 
 Experimental pre-release.
