@@ -79,6 +79,9 @@ struct Ppu {
   PpuTileCache *tileCache;
   uint8_t extraLeftCur, extraRightCur, extraLeftRight, extraBottomCur;
   uint8_t wideUi, wideUiSaveX, wideUiSaveY; // derived native interface layout
+  uint8_t wideSceneArt, wideSceneWhite; // derived presentation, never serialized
+  uint16_t wideSceneLight;
+  uint8_t wideSceneNativeTips[24 * 16];
   uint8_t wideMarginRepeat; // continue room edges across black WIDE margins
   int16_t renderObjXOffset;
   int16_t renderObjYOffset;

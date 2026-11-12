@@ -519,6 +519,20 @@ static bool WideRowsEnabled(uint32 render_flags) {
   return (render_flags & kPpuRenderFlags_Height240) != 0;
 }
 
+// The vanilla special-area atlas places the pedestal and bridge beside each
+// other. Their camera limits deliberately hide those unrelated rectangles.
+// Extend only identified, unchanged layouts, and only while drawing WIDE.
+static int WideSpecialScene(void) {
+  if (player_is_indoors || overworld_screen_index != 0x80 ||
+      (dungeon_room_index != 0x180 && dungeon_room_index != 0x181))
+    return 0;
+  const uint16 *map = (const uint16 *)(g_ram + 0x2000);
+  if (map[0] != 0xc6f || map[8 * 64 + 8] != 0xc99 ||
+      map[16] != 0xdc || map[8 * 64 + 23] != 0x394)
+    return 0;
+  return dungeon_room_index == 0x181 ? 1 : 2;
+}
+
 typedef struct WideFrame {
   uint8 context;      // 7 or 9 while the picture follows the game's camera
   bool fixed_camera;  // the drawn camera and the side bands follow the view
@@ -548,6 +562,10 @@ static WideFrame WideFrameNow(uint32 render_flags, bool commit) {
   f.view = UpdateWideView(context, fixed && !lantern ? p->extraLeftRight : 0,
                           rows, visible, !lantern, &f.settled, commit);
 
+  if (fixed && context == 9 && WideSpecialScene()) {
+    f.view.offset_x = 0;
+    f.view.left = f.view.right = p->extraLeftRight;
+  }
   if(g_private_fade.active) {
     if(g_private_fade.axis==1)f.view.offset_x=(int16)(BG2HOFS_copy2-g_private_fade.source);
     else f.view.delta_y=(int16)(BG2VOFS_copy2-g_private_fade.source);
@@ -555,6 +573,46 @@ static WideFrame WideFrameNow(uint32 render_flags, bool commit) {
   }
   return f;
 }
+
+
+// State for these two decorative extensions is derived every frame. It never
+// changes collision, camera RAM, SRAM, or serialized PPU state.
+static void PrepareWideSceneArt(const WideFrame *f) {
+  Ppu *p=g_zenv.ppu;
+  p->wideSceneArt=0; p->wideSceneLight=256; p->wideSceneWhite=0;
+  if (!WideFixedCameraEnabled() || p->extraLeftRight!=72 || p->mode!=1) return;
+  if (f->context==9 && WideSpecialScene()==2) {
+    p->wideSceneArt=1;
+    const uint16 *map=(const uint16 *)(g_ram+0x2000), *map8=GetMap16toMap8Table();
+    for (unsigned row=0;row<24;row++) for (unsigned x=0;x<16;x++) {
+      unsigned sx=192+x, sy=488+(row<16?row&7:7-(row&7));
+      unsigned m=map[(sy>>4)*64+(sx>>4)];
+      uint16 c=map8[m*4+((sy&8)>>2)+((sx&8)>>3)];
+      unsigned xx=c&0x4000?7-(sx&7):sx&7, yy=c&0x8000?7-(sy&7):sy&7;
+      unsigned a=(p->bgLayer[1].tileAdr+(c&1023)*16)&0x7fff, shift=7-xx;
+      unsigned z=((p->vram[a+yy]>>shift)&1)|(((p->vram[a+yy]>>(shift+8))&1)<<1)|
+        (((p->vram[a+yy+8]>>shift)&1)<<2)|(((p->vram[a+yy+8]>>(shift+8))&1)<<3);
+      p->wideSceneNativeTips[row*16+x]=((c>>10)&7)*16+z;
+    }
+  } else if (main_module_index==25 && dungeon_room_index==0x189 &&
+             subsubmodule_index>=5) {
+    p->wideSceneArt=2;
+    if (subsubmodule_index<13) {
+      unsigned current=0, target=0;
+      for (unsigned i=32;i<128;i++) for (unsigned s=0;s<15;s+=5) {
+        current+=(main_palette_buffer[i]>>s)&31;
+        target+=(aux_palette_buffer[i]>>s)&31;
+      }
+      p->wideSceneLight=target?IntMin(current*256/target,256):0;
+    } else {
+      // Follow the palette actually uploaded to the PPU. The sequence counter
+      // can lead CGRAM by a frame at the white-filter handoff.
+      unsigned white=p->cgram[0]&31;
+      p->wideSceneWhite=(white<<3)|(white>>2);
+    }
+  }
+}
+
 
 static WideFrame BeginWideFrame(uint32 render_flags) {
   return WideFrameNow(render_flags, true);
@@ -639,7 +697,7 @@ static void ConfigurePpuSideSpace(const WideFrame *f) {
     extra_bottom = 16;
   }
   // The 240-line picture is drawn whole: delta_y moves it up instead.
-  if (f->rows && f->context)
+  if ((f->rows && f->context) || g_zenv.ppu->wideSceneArt == 2)
     extra_bottom = 16;
   PpuSetExtraSideSpace(g_zenv.ppu, extra_left, extra_right, extra_bottom);
   g_zenv.ppu->wideMarginRepeat = repeat_margins;
@@ -1086,6 +1144,193 @@ static void BeginWideTileRepair(const WideFrame *f) {
     }
     if (f->context == 9 && layer == 1)
       WideRepairOldGraphics(x, y, x0, x1, y0, y1);
+  }
+}
+
+#include "src/wide_native_foliage.h"
+
+static struct {
+  uint8 busy[512];
+  uint32 key[320];
+  uint16 slot[320];
+  unsigned count, next;
+} g_wide_foliage;
+// Generated pixels are independent of palette and camera. Verify source words
+// on reuse so language/mod/session changes cannot retain stale tile artwork.
+static struct {
+  uint32 key;
+  uint16 source[16], pixels[16];
+} g_wide_foliage_cache[512];
+
+static void WideFoliageBegin(void) {
+  Ppu *p = g_zenv.ppu;
+  memset(&g_wide_foliage, 0, sizeof(g_wide_foliage));
+  for (int layer = 0; layer < 2; layer++) {
+    const BgLayer *bg = &p->bgLayer[layer];
+    unsigned size = 1024 * (1 + bg->tilemapWider) * (1 + bg->tilemapHigher);
+    for (unsigned i = 0; i < size; i++) {
+      unsigned t = p->vram[(bg->tilemapAdr + i) & 0x7fff] & 1023;
+      if (t < 512) g_wide_foliage.busy[t] = 1;
+    }
+  }
+  // Do not borrow words that belong to HUD or sprite graphics.
+  const unsigned other[3][2] = {{p->bgLayer[2].tileAdr,0x2000},
+    {p->objTileAdr1,0x1000},{p->objTileAdr2,0x1000}};
+  for (int t = 0; t < 512; t++) {
+    unsigned a = (p->bgLayer[1].tileAdr + t * 16) & 0x7fff;
+    for (int i = 0; i < 3; i++)
+      if (((a-other[i][0])&0x7fff)<other[i][1] || ((other[i][0]-a)&0x7fff)<16)
+        g_wide_foliage.busy[t] = 1;
+  }
+}
+
+// Rebuild the brush only when its locally loaded native graphics change.
+static uint16 g_wide_native_source[272];
+static uint8 g_wide_native_pixels[1024];
+static bool g_wide_native_valid;
+static void WideNativeFoliageRefresh(const uint16 *map, const uint16 *map8) {
+  uint16 source[272];
+  Ppu *p = g_zenv.ppu;
+  for (unsigned i = 0; i < 16; i++) {
+    unsigned x = 96 + (i & 3) * 8, y = 16 + (i >> 2) * 8;
+    unsigned m = map[(y >> 4) * 64 + (x >> 4)];
+    unsigned q = ((y & 8) >> 2) | ((x & 8) >> 3);
+    uint16 c = m < kMap16ToMap8_SIZE / 8 ? map8[m * 4 + q] : 0;
+    source[i] = c;
+    unsigned a = (p->bgLayer[1].tileAdr + (c & 1023) * 16) & 0x7fff;
+    for (unsigned j = 0; j < 16; j++) source[16 + i * 16 + j] = p->vram[(a+j)&0x7fff];
+  }
+  if (g_wide_native_valid && !memcmp(source, g_wide_native_source, sizeof(source))) return;
+  memcpy(g_wide_native_source, source, sizeof(source));
+  g_wide_native_valid = true;
+  memset(g_wide_foliage_cache, 0, sizeof(g_wide_foliage_cache));
+  for (unsigned y = 0; y < 32; y++) for (unsigned x = 0; x < 32; x++) {
+    int ref = kWideFoliageSource[y][x];
+    unsigned c = 12;
+    if (ref >= 0) {
+      unsigned rx = ref & 31, ry = ref >> 5;
+      unsigned i = (ry >> 3) * 4 + (rx >> 3);
+      uint16 cell = source[i];
+      const uint16 *words = source + 16 + i * 16;
+      unsigned sx = (cell & 0x4000) ? 7-(rx&7) : rx&7;
+      unsigned sy = (cell & 0x8000) ? 7-(ry&7) : ry&7;
+      unsigned shift = 7-sx;
+      if ((cell & 0x1c00) == 0x1c00)
+        c = ((words[sy]>>shift)&1) | (((words[sy]>>(shift+8))&1)<<1) |
+          (((words[sy+8]>>shift)&1)<<2) | (((words[sy+8]>>(shift+8))&1)<<3);
+    }
+    g_wide_native_pixels[y*32+x] = c;
+  }
+}
+
+static uint16 WideFoliageTile(uint16 cell, int x, int y, unsigned index, uint64 mask) {
+  Ppu *p = g_zenv.ppu;
+  if ((cell & 0x1c00) != 0x1c00 || !mask) return cell;
+  uint32 key = cell | ((index + 1) << 16);
+  for (unsigned i = 0; i < g_wide_foliage.count; i++)
+    if (g_wide_foliage.key[i] == key)
+      return (cell & 0x3c00) | g_wide_foliage.slot[i];
+  unsigned next = g_wide_foliage.next;
+  while (next < 512 && g_wide_foliage.busy[next]) next++;
+  if (next == 512 || g_wide_foliage.count == countof(g_wide_foliage.key)) return cell;
+  unsigned a = (p->bgLayer[1].tileAdr + (cell & 1023) * 16) & 0x7fff;
+  uint16 source[16], output[16] = {0};
+  for (unsigned i=0;i<16;i++) source[i] = p->vram[(a+i)&0x7fff];
+  unsigned cache_slot = (key * 2654435761u) >> 23;
+  bool cached = g_wide_foliage_cache[cache_slot].key == key &&
+    !memcmp(source, g_wide_foliage_cache[cache_slot].source, sizeof(source));
+  if (cached) {
+    memcpy(output, g_wide_foliage_cache[cache_slot].pixels, sizeof(output));
+  } else {
+    for (int py=0;py<8;py++) for (int px=0;px<8;px++) {
+      int sy=(cell&0x8000)?7-py:py, sx=(cell&0x4000)?7-px:px, shift=7-sx;
+      unsigned c=((source[sy]>>shift)&1)|((source[sy]>>(shift+8)&1)<<1)|
+        (((source[sy+8]>>shift)&1)<<2)|(((source[sy+8]>>(shift+8))&1)<<3);
+      if (mask & (UINT64_C(1) << (py*8+px)))
+        c=g_wide_native_pixels[((y+py)&31)*32+((x+px)&31)];
+      shift=7-px;
+      output[py] |= ((c&1)<<shift)|(((c>>1)&1)<<(shift+8));
+      output[py+8] |= (((c>>2)&1)<<shift)|(((c>>3)&1)<<(shift+8));
+    }
+    g_wide_foliage_cache[cache_slot].key = key;
+    memcpy(g_wide_foliage_cache[cache_slot].source, source, sizeof(source));
+    memcpy(g_wide_foliage_cache[cache_slot].pixels, output, sizeof(output));
+  }
+  unsigned dst = (p->bgLayer[1].tileAdr + next * 16) & 0x7fff;
+  for (unsigned i=0;i<16;i++) if (!WidePatchVram(dst+i, output[i])) return cell;
+  unsigned i=g_wide_foliage.count++;
+  g_wide_foliage.key[i]=key; g_wide_foliage.slot[i]=next;
+  g_wide_foliage.busy[next]=1; g_wide_foliage.next=next+1;
+  return (cell & 0x3c00) | next;
+}
+
+// Scene-specific tile layouts, composed from locally extracted terrain.
+// This patches presentation cells and is rolled back by EndWideTileRepair.
+// The original 256-pixel playfield, actors and collision remain untouched.
+static void BeginWideSpecialScene(const WideFrame *f) {
+  int scene = WideSpecialScene();
+  Ppu *p = g_zenv.ppu;
+  if (!scene || scene == 2 || !f->fixed_camera || f->context != 9 || p->mode != 1)
+    return;
+  const uint16 *map8 = GetMap16toMap8Table();
+  const uint16 *map = (const uint16 *)(g_ram + 0x2000);
+  if (!map8) return;
+  if (scene == 2) { WideFoliageBegin(); WideNativeFoliageRefresh(map, map8); }
+  int left = scene == 1 ? 256 : 0, right = left + 256;
+  int y0 = (int16)BG2VOFS_copy2 + 1 - f->view.delta_y;
+  int y1 = y0 + (f->rows ? 240 : 224);
+  for (int y = y0 & ~7; y < y1; y += 8) {
+    for (int x = (left - p->extraLeftRight) & ~7; x < right + p->extraLeftRight; x += 8) {
+      if (x >= left && x < right) continue;
+      int sx = x < left ? left + (x & 15) : right - 16 + (x & 15);
+      int sy = y;
+      unsigned flip = 0;
+      if (scene == 2) {
+        int distance = x < left ? left - x - 8 : x - right;
+        int phase = distance & 63;
+        int inward = phase < 32 ? phase : 56 - phase;
+        sx = x < left ? left + inward : right - 8 - inward;
+        flip = phase < 32 ? 0x4000 : 0;
+      } else if (x < left) {
+        sx = right - 16 + (x & 15);
+        // The partial stones are right-hand halves of native 16x16 tiles.
+        // Supply their entire matching left halves, including foam/shadow.
+        // Mirroring other edge cells would duplicate the nearby whole rocks.
+        if (y >= 88 && y < 208) { sx = 400 + (x & 15); sy = 160 + (y & 15); }
+        if (x == left - 8 && ((y >= 144 && y < 176) || (y >= 200 && y < 216))) {
+          sx = left; sy = y; flip = 0x4000;
+        }
+      } else if (y >= 96 && y < 192) {
+        sx = 400 + (x & 15); sy = 160 + (y & 15);
+      }
+      if (sy < 0 || sy >= (scene == 1 ? 256 : 512)) continue;
+      unsigned tile = map[(sy >> 4) * 64 + (sx >> 4)];
+      if (tile >= kMap16ToMap8_SIZE / 8) continue;
+      unsigned q = ((sy & 8) >> 2) | ((sx & 8) >> 3);
+      uint16 cell = map8[tile * 4 + q] ^ flip;
+      if (scene == 2 && y >= 0 && y < 512) {
+        int col = x < left ? (x - left + 72) / 8 : (x - right) / 8;
+        unsigned index = (x < left ? 0 : 576) + (y >> 3) * 9 + col;
+        if (col >= 0 && col < 9)
+          for (unsigned i = 0; i < countof(kWideForestHoles); i++)
+            if (kWideForestHoles[i].cell == index) {
+              cell = WideFoliageTile(cell, x, y, index, kWideForestHoles[i].mask);
+              break;
+            }
+      }
+
+      if (!WidePatchVram(WideMapAddress(&p->bgLayer[1], x, y), cell)) return;
+      if (scene == 1) {
+        // The spatial bridge shadow has its own bounds. Continue its
+        // unshadowed field, not the neighboring forest, outside those bounds.
+        unsigned neutral = map[25 * 64 + 16];
+        if (neutral >= kMap16ToMap8_SIZE / 8) continue;
+        int ox = (int16)(BG1HOFS_copy2 - BG2HOFS_copy2);
+        int oy = (int16)(BG1VOFS_copy2 - BG2VOFS_copy2);
+        q = (((y + oy) & 8) >> 2) | (((x + ox) & 8) >> 3);
+        if (!WidePatchVram(WideMapAddress(&p->bgLayer[0], x + ox, y + oy), map8[neutral * 4 + q])) return;
+      }
+    }
   }
 }
 
@@ -1707,6 +1952,9 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
   if(g_private_fade.active||g_private_fade.reveal)g_zenv.ppu->brightness=g_zenv.ppu->brightness*g_private_fade.light/15;
   WideFrame wide = BeginWideFrame(render_flags);
   BeginWideTileRepair(&wide);
+  BeginWideSpecialScene(&wide);
+  PrepareWideSceneArt(&wide);
+  if (g_zenv.ppu->wideSceneArt) render_flags |= kPpuRenderFlags_NewRenderer;
   g_wide_picture_shift = wide.fixed_camera ? wide.view.offset_x : 0;
   BeginWideRoomVoid(&wide);
   g_wide_render_flags = render_flags;
@@ -1714,7 +1962,7 @@ void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags) {
 
 #ifdef __3DS__
   bool gpu_candidate = (render_flags & kPpuRenderFlags_Old3DS) &&
-    !QolBrightRoomActive() && PpuGpuCanAttempt();
+    !g_zenv.ppu->wideSceneArt && !QolBrightRoomActive() && PpuGpuCanAttempt();
   if (gpu_candidate) {
     // The GPU consumes register/tile/OAM state; do not rasterize or rebuild
     // E11's software background cache on a GPU frame.

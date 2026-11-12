@@ -10,6 +10,7 @@
 #include "ppu_retained.h"
 #include "ppu_ui.h"
 #include "src/types.h"
+#include "wide_scene_art.h"
 
 #ifdef __3DS__
 extern uint64_t svcGetSystemTick(void);
@@ -1309,6 +1310,7 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
 
   // Render main screen
   PpuDrawBackgrounds(ppu, y, false);
+  PpuDrawForestArt(ppu, y);
   if (profile) {
     uint64_t now = PpuProfileTick();
     ppu->phase.main += now - phase_start; phase_start = now;
@@ -1444,6 +1446,7 @@ static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {
     if (right_margin != 0)
       memset(dst_org + first, 0, sizeof(*dst_org) * right_margin);
   }
+  PpuDrawTriforceArt(ppu, y, dst_org);
   PpuDrawWideUi(ppu, y, dst_org);
   if (profile) ppu->phase.compose += PpuProfileTick() - phase_start;
 }
