@@ -27,6 +27,8 @@
 <p align="center">
   <a href="https://estebanpdn.github.io/"><img src="docs/images/website.svg" alt="Visit Esteban’s Forge" width="142" height="46"></a>
   <a href="https://discord.gg/BjbzfRYpV"><img src="docs/images/discord-official.svg" alt="Join our Discord community" width="166" height="46"></a>
+  <!-- <a href="https://ko-fi.com/estebanpdn"><img src="docs/images/kofi.svg" alt="Support EstebanPdN on Ko-fi" width="190" height="46"></a> -->
+  <a href="https://www.patreon.com/c/EstebanPdN"><img src="docs/images/patreon.svg" alt="Support EstebanPdN on Patreon" width="216" height="46"></a>
 </p>
 
 Nintendo 3DS dual-screen port of Zelda3.
@@ -46,7 +48,7 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 
 Version [4.1](docs/v4.1.md) adds Japanese game and menus, direct `.zspr` skins,
 language corrections and fixes for WIDE, maps, menus and new randomizer seeds.
-The port supports eight languages, character mods, a native randomizer and
+The port supports nine languages, character mods, a native randomizer and
 fifteen quality-of-life options.
 See [development and build boundaries](docs/development.md) for source organization
 and the disabled developer scenarios.

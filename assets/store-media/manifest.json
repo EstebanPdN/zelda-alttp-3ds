@@ -1,0 +1,17 @@
+{
+  "format": "FVID1",
+  "videos": [
+    {
+      "id": "alttp/trailer",
+      "file": "alttp-trailer.fvid",
+      "bytes": 36963131,
+      "sha256": "c1ef1daadd5b4f11cebb1e167fcbfbc243d7216d67086f7460621c6ac74b1b00"
+    },
+    {
+      "id": "alttp/light-world",
+      "file": "alttp-light-world.fvid",
+      "bytes": 8402715,
+      "sha256": "c51101bb7a5cb7548fc4c638568ef776d9b5622806507f1a3d1547d8af78a2f1"
+    }
+  ]
+}

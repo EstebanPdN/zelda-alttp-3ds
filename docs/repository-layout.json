@@ -11,7 +11,8 @@
     "scripts",
     "third_party",
     "tools",
-    "CREDITS.md"
+    "CREDITS.md",
+    "assets"
   ],
   "current_documents": [
     "README.md",
