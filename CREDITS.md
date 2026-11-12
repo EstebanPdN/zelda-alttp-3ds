@@ -116,6 +116,7 @@ the original authors' licenses or permissions.
 | Official French, French Canadian and German releases | Nintendo and the original localization teams. |
 | Japanese game text and font | Official Super Famicom release, Nintendo. |
 | Japanese menu font | PixelMplus 10 and 12, Itou Hiroki; M+ bitmap fonts, Copyright (C) 2002-2013 M+ FONTS PROJECT, free to use, copy and distribute with or without modification, provided "as is" without warranty. |
+| Simplified Chinese game text and font | LinkFish (@LinkFish1) — `tables/dialogue_cn.txt` and the 16x16 font of the translation; port, pack tooling and UI strings by frilxy. |
 
 See [language provenance](platform/3ds/romfs/languages/README.md) for the
 specific patch versions and the local extraction workflow. Thank you also to
