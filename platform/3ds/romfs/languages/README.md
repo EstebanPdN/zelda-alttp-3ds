@@ -19,11 +19,26 @@ private translated copy. Preserve the original patch and its readme.
 | fr | Official French (PAL) release | Nintendo |
 | de | Official German (PAL) release | Nintendo |
 | ja | Official Super Famicom release, v1.0 | Nintendo |
+| zh | Simplified Chinese translation carried by this fork, text and a 16x16 font | see [CREDITS.md](../../../../CREDITS.md) |
 
 The Spanish, Italian, Portuguese and Russian patches also carry the corrections of
 [`quality_text.py`](../../../../tools/languages/README.md).
 
-The `.bps` files remain ignored binary inputs for the local build. Recreate
+`zh` is the one language with no cartridge behind it: its `<code>.bin` holds the
+translation's text and its 16x16 font, and `zh.bps` dresses that pack as the
+cartridge the extractor reads (USA cartridge + pack + a `ZCNP` footer). Like the
+other patches, the pack is a build input and never enters this repository: put
+`zh.bin` next to this file (or a ready `zh.bps`) and the port picks either up.
+The engine draws it with the page-coded glyphs it shares with Japanese; see
+`engine/src/dialogue_cjk.h`.
+
+The pack comes from the translation's own project, and `zh.bps` is built from it
+with [`make_zh_bps.py`](../../../../tools/languages/make_zh_bps.py). A pack from
+the older 3.2-era layout first goes through
+[`reencode_pages.py`](../../../../tools/languages/reencode_pages.py), which moves
+its glyph escapes to the page bytes the engine reads.
+
+The `.bps` and `.bin` files remain ignored binary inputs for the local build. Recreate
 these from the owner-provided cartridges and original fan patches; never put
 cartridges or extracted assets in Git. This source records the supplementary
 text transformations and their provenance, rather than private game data.

@@ -181,6 +181,42 @@ static void verify_dungeon_backgrounds(void) {
  free(expected);free(actual);
 }
 
+
+// SDL_RenderCopy refuses a texture built by another renderer, and every renderer
+// teardown here goes through destroy_textures: the wide atlases are freed with
+// the rest, so the next draw rebuilds them. This reproduces one rebuild and
+// checks that Chinese still reaches the frame.
+static void verify_wide_atlas_follows_renderer(SDL_Surface *surface) {
+  // draw_wide_glyph is the atlas path and does not reach observe_text, so this
+  // check adds no text boxes to the collision budget.
+  scene = "text-atlas"; scene_lang = kUiLanguage_Chinese;
+  int a = UiCjk_Index(0x8FD4), b = UiCjk_Index(0x56DE);
+  assert(a >= 0 && b >= 0);
+  SDL_SetRenderDrawColor(ss_r, 0, 0, 0, 255);
+  SDL_RenderClear(ss_r);
+  draw_wide_glyph(UI_FONT_CHINESE_CODE + a, 3, 20, 40, 0xffffffff);
+  draw_wide_glyph(UI_FONT_CHINESE_CODE + b, 3, 40, 40, 0xffffffff);
+  SDL_RenderFlush(ss_r);
+
+  // Exactly what rebuild_renderer does, in the same order.
+  destroy_textures();
+  SDL_DestroyRenderer(ss_r);
+  ss_r = SDL_CreateSoftwareRenderer(surface);
+  assert(ss_r);
+
+  SDL_SetRenderDrawColor(ss_r, 0, 0, 0, 255);
+  SDL_RenderClear(ss_r);
+  draw_wide_glyph(UI_FONT_CHINESE_CODE + a, 3, 20, 40, 0xffffffff);
+  draw_wide_glyph(UI_FONT_CHINESE_CODE + b, 3, 40, 40, 0xffffffff);
+  SDL_RenderFlush(ss_r);
+
+  static uint32_t pixels[320 * 240];
+  assert(SDL_RenderReadPixels(ss_r, NULL, SDL_PIXELFORMAT_ARGB8888, pixels, 320 * 4) == 0);
+  unsigned ink = 0;
+  for (int i = 0; i < 320 * 240; i++) if (pixels[i] & 0xffffff) ink++;
+  assert(ink > 0);
+}
+
 int main(int argc,char **argv){
  assert(argc==2||argc==3);Qol_LoadPreferences("qol.ini");if(argc==3)art_directory=argv[2];assert(SDL_Init(0)==0);
  W=320;H=240;u=.5f;RectFS panel={5,5,310,191};
@@ -352,6 +388,7 @@ int main(int argc,char **argv){
    begin("back");screen_mode=true;draw_settings(panel);apply_tap(screen_back_r.x+5,screen_back_r.y+5);assert(!screen_mode);
    begin("back");developer_mode=true;draw_settings(panel);apply_tap(developer_back_r.x+5,developer_back_r.y+5);assert(!developer_mode);
   }
+  verify_wide_atlas_follows_renderer(surface);
   destroy_textures();SDL_DestroyRenderer(ss_r);ss_r=NULL;SDL_FreeSurface(surface);
  }
  SDL_Quit();printf("PASS %u production UI captures, %u text checks, 7 languages, Old RGB565/New ARGB8888, no text collisions, bounded controls, language confirmation/cancel/selector and Back navigation%s\n",captures,text_checks,art_directory?", private USA art":"");return 0;

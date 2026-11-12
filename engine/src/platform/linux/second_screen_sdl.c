@@ -180,7 +180,24 @@ static float         u = 1.0f;
 #include "heart_layout.h"
 #include "heart_pixels.h"
 
-static SDL_Texture *tex_japanese_font[2];
+// Wide glyphs: Japanese and Chinese each have their own tables and sizes. One
+// atlas per (family, size) is built on first use and freed by destroy_textures,
+// the one path every renderer teardown goes through (see rebuild_renderer and
+// SecondScreenSDL_Shutdown), exactly as upstream does for the Japanese atlas.
+static SDL_Texture *tex_wide_font[2][4];
+static int wide_font_family(unsigned code) { return code >= UI_FONT_CHINESE_CODE ? 1 : 0; }
+static unsigned wide_font_base(int family) { return family ? UI_FONT_CHINESE_CODE : UI_FONT_JAPANESE_CODE; }
+static int wide_font_count(int family) { return family ? (int)kUiCjkGlyphCount : (int)kUiJapaneseGlyphCount; }
+static int wide_font_slot(int size) { return size == 10 ? 0 : size == 12 ? 1 : size == 16 ? 2 : 3; }
+
+static void destroy_wide_font_atlases(void) {
+  for (int family = 0; family < 2; family++)
+    for (int slot = 0; slot < 4; slot++) {
+      if (tex_wide_font[family][slot])
+        SDL_DestroyTexture(tex_wide_font[family][slot]);
+      tex_wide_font[family][slot] = NULL;
+    }
+}
 static SDL_Texture *tex_native_font, *tex_native_font_large, *tex_native_font_medium, *tex_native_sprites, *tex_native_cog;
 static SDL_Texture *tex_map[2], *tex_icons, *tex_glyphs, *tex_letters, *tex_face;
 static SDL_Texture *tex_floor, *tex_mapicons;
@@ -457,28 +474,31 @@ static float tiny_text_width(const char *s, float sc) {
   return UiFontWidth(s, (int)fmaxf(1, floorf(sc + 0.5f)));
 }
 
-// Built when Japanese first appears; other languages never pay for the atlases.
-static void draw_japanese_glyph(unsigned code, int scale, int x, int y, uint32_t c) {
-  SDL_Texture **atlas=tex_japanese_font;
-  int big=scale==2, size=UiFontGlyphRows(code,scale), cell=size+1, per_row=(256-1)/cell;
-  if(!atlas[big]) {
-    int rows=kUiJapaneseGlyphCount/per_row+1, h=rows*cell;
+// Built when a wide language first appears; other languages never pay for the atlases.
+static void draw_wide_glyph(unsigned code, int scale, int x, int y, uint32_t c) {
+  int family=wide_font_family(code);
+  int size=UiFontGlyphRows(code,scale), slot=wide_font_slot(size);
+  int cell=size+1, per_row=(256-1)/cell;
+  SDL_Texture *atlas=tex_wide_font[family][slot];
+  if(!atlas) {
+    int rows=wide_font_count(family)/per_row+1, h=rows*cell;
     uint32_t *pixels=calloc(256*h,sizeof(*pixels));
     if(!pixels) return;
-    for(int i=0;i<kUiJapaneseGlyphCount;i++) for(int yy=0;yy<size;yy++) {
-      unsigned bits=UiFontGlyphBits(UI_FONT_JAPANESE_CODE+i,scale,yy);
+    for(int i=0;i<wide_font_count(family);i++) for(int yy=0;yy<size;yy++) {
+      unsigned bits=UiFontGlyphBits(wide_font_base(family)+i,scale,yy);
       for(int xx=0;xx<size;xx++) if(bits&(1u<<(size-1-xx)))
         pixels[(i/per_row*cell+yy)*256+i%per_row*cell+xx]=0xffffffff;
     }
-    atlas[big]=make_tex(256,h,pixels,true);
+    atlas=make_tex(256,h,pixels,true);
     free(pixels);
-    if(!atlas[big]) return;
+    if(!atlas) return;
+    tex_wide_font[family][slot]=atlas;
   }
-  int i=code-UI_FONT_JAPANESE_CODE;
-  SDL_SetTextureColorMod(atlas[big],(c>>16)&255,(c>>8)&255,c&255);
-  SDL_SetTextureAlphaMod(atlas[big],c>>24);
+  int i=code-wide_font_base(family);
+  SDL_SetTextureColorMod(atlas,(c>>16)&255,(c>>8)&255,c&255);
+  SDL_SetTextureAlphaMod(atlas,c>>24);
   SDL_Rect src={i%per_row*cell,i/per_row*cell,size,size},dst={x,y+UiFontGlyphTop(code,scale),size,size};
-  SDL_RenderCopy(ss_r,atlas[big],&src,&dst);
+  SDL_RenderCopy(ss_r,atlas,&src,&dst);
 }
 
 static void draw_tiny_text(const char *s, float x, float y, float sc, uint32_t c) {
@@ -522,10 +542,10 @@ static void draw_tiny_text(const char *s, float x, float y, float sc, uint32_t c
   char ch;
   const char *glyph_start=s;
   while ((ch=UiFontNext(&s,&accent))) {
-    if (accent==UI_FONT_JAPANESE) {
-      unsigned jp=UiFontNextCode(&glyph_start);
-      draw_japanese_glyph(jp,scale,cx,cy,c);
-      cx+=UiFontAdvance(jp,scale);
+    if (accent==UI_FONT_JAPANESE || accent==UI_FONT_CHINESE) {
+      unsigned wide=UiFontNextCode(&glyph_start);
+      draw_wide_glyph(wide,scale,cx,cy,c);
+      cx+=UiFontAdvance(wide,scale);
       glyph_start=s;
       continue;
     }
@@ -3649,13 +3669,14 @@ void SecondScreenSDL_Update(int logic_frames) {
 
 static void destroy_textures(void) {
   SDL_Texture **texes[] = {&tex_map[0], &tex_map[1], &tex_icons, &tex_glyphs,
-                           &tex_japanese_font[0], &tex_japanese_font[1], &tex_letters, &tex_native_font, &tex_native_font_large, &tex_native_font_medium, &tex_native_sprites, &tex_native_cog, &tex_face, &tex_floor, &tex_mapicons,
+                           &tex_letters, &tex_native_font, &tex_native_font_large, &tex_native_font_medium, &tex_native_sprites, &tex_native_cog, &tex_face, &tex_floor, &tex_mapicons,
                            &tex_bg_menu, &tex_bg_parch, &tex_bg_stone, &tex_dungeon_bg,
                            &tex_triforce,&tex_menu_purple};
   for (size_t i = 0; i < sizeof(texes) / sizeof(texes[0]); i++) {
     if (*texes[i]) SDL_DestroyTexture(*texes[i]);
     *texes[i] = NULL;
   }
+  destroy_wide_font_atlases();
   art_ready = false;
 }
 

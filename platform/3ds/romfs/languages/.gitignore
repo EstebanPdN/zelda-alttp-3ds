@@ -1,2 +1,3 @@
-# Generated language patches; see README.md
+# Language packs are build inputs; see README.md
 *.bps
+*.bin

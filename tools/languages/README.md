@@ -1,7 +1,7 @@
 # Language patch preparation
 
 The local selector offers English, Spanish, Portuguese, Italian, French,
-German, Russian and Japanese. One choice selects both the cartridge translation
+German, Russian, Japanese and Simplified Chinese. One choice selects both the cartridge translation
 and the port UI. The Settings globe asks for
 confirmation before opening this selector. Cancelling returns to the current
 screen; confirming discards the transient session/autosave and preserves SRAM.
