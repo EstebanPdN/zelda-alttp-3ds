@@ -26,12 +26,17 @@ The Spanish, Italian, Portuguese and Russian patches also carry the corrections 
 
 `zh` is the one language with no cartridge behind it: its `<code>.bin` holds the
 translation's text and its 16x16 font, and `zh.bps` dresses that pack as the
-cartridge the extractor reads (USA cartridge + pack + a `ZCNP` footer). The pack
-is a build input only: `zh.bps` already carries its bytes, so the RomFS ships the
-patch alone and a build without one falls back to a `.bin` if it has it. The
-engine draws it with the page-coded glyphs it shares with Japanese; see
-`engine/src/dialogue_cjk.h`. The pack is migrated from the v3.2 line by
-[`reencode_pages.py`](../../../../tools/languages/reencode_pages.py).
+cartridge the extractor reads (USA cartridge + pack + a `ZCNP` footer). Like the
+other patches, the pack is a build input and never enters this repository: put
+`zh.bin` next to this file (or a ready `zh.bps`) and the port picks either up.
+The engine draws it with the page-coded glyphs it shares with Japanese; see
+`engine/src/dialogue_cjk.h`.
+
+The pack comes from the translation's own project, and `zh.bps` is built from it
+with [`make_zh_bps.py`](../../../../tools/languages/make_zh_bps.py). A pack from
+the older 3.2-era layout first goes through
+[`reencode_pages.py`](../../../../tools/languages/reencode_pages.py), which moves
+its glyph escapes to the page bytes the engine reads.
 
 The `.bps` and `.bin` files remain ignored binary inputs for the local build. Recreate
 these from the owner-provided cartridges and original fan patches; never put
