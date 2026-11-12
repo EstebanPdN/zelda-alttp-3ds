@@ -5830,13 +5830,10 @@ bool Platform3DS_PrepareStorage(void) {
 }
 
 void Platform3DS_ApplyConfig(struct Config *config) {
-  // Runs after the ini has been parsed, which is what makes it the place to
-  // pin the chosen language: the file may be stale, carry a second [General]
-  // block, or sit somewhere the engine does not read, and the text still has
-  // to come out in the language the player chose. This is the same for every
-  // language - a pack (Chinese) and a translated cartridge alike.
-  if (g_build_language &&
-      (g_build_language->patch || g_build_language->block)) {
+  // A pack language has no cartridge to speak for it: the language is only in
+  // this file name, so the ini must not decide what the game speaks. Cartridge
+  // languages keep upstream's behaviour and are not touched here.
+  if (g_build_language && g_build_language->block) {
     config->language = g_build_language->code;
     // The port's own screens follow the same choice: their language comes from
     // the ini too, and a stale file used to leave them English while the game
