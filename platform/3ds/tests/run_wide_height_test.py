@@ -11,10 +11,16 @@ def function(text,signature):
 code=r'''
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include "src/config.h"
 #include "src/features.h"
 #include "snes/ppu.h"
 #include "platform_3ds.h"
+#include "src/ui_strings.h"
+#include "game_languages.h"
+static const GameLanguage *g_build_language;
+static int ui_language;
+void UI_SetLanguage(int language) { ui_language=language; }
 struct Config g_config;
 static bool g_autosave=true;
 static Ppu ppu;
@@ -48,6 +54,10 @@ static void check(int mode,int flags) {
  assert(g_config.features0&kFeatures0_MiscBugFixes);
 }
 int main(void) {
+ g_build_language=&kGameLanguages[kGameLanguageCount-1];
+ Platform3DS_ApplyConfig(&g_config);
+ assert(!strcmp(g_config.language,"zh") && ui_language==kUiLanguage_Chinese);
+ g_build_language=NULL;
  for(int old=0;old<2;old++)for(int boot=0;boot<3;boot++) {
   g_display_mode=boot;g_config.features0=kFeatures0_MiscBugFixes;
   Platform3DS_ApplyConfig(&g_config);BootSize();
@@ -66,5 +76,5 @@ int main(void) {
 '''
 with tempfile.TemporaryDirectory() as t:
  p=Path(t);(p/'test.c').write_text(code)
- subprocess.run(['cc','-O1','-fsanitize=address,undefined','-I'+str(r/'engine'),'-I'+str(r/'third_party/SDL2/include'),'-I'+str(r/'platform/3ds/source'),str(p/'test.c'),'-o',str(p/'test')],check=True)
+ subprocess.run(['cc','-O1','-fsanitize=address,undefined','-I'+str(r/'engine'),'-iquote'+str(r/'engine/src'),'-I'+str(r/'third_party/SDL2/include'),'-I'+str(r/'platform/3ds/source'),str(p/'test.c'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)

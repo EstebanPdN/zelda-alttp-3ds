@@ -135,11 +135,17 @@ def check_append_crc():
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    args = []
     rom_path = None
-    for i, a in enumerate(sys.argv[1:]):
-        if a == '--rom':
-            rom_path = Path(sys.argv[i + 2])
+    it = iter(sys.argv[1:])
+    for arg in it:
+        if arg == '--rom':
+            value = next(it, None)
+            if value is None:
+                sys.exit('--rom requires a cartridge path')
+            rom_path = Path(value)
+        else:
+            args.append(arg)
     if len(args) != 2:
         sys.exit(__doc__)
     pack = Path(args[0]).read_bytes()

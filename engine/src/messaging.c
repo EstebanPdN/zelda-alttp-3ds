@@ -2596,7 +2596,8 @@ uint32 Text_DecodeCmd(uint8 a, const uint8 *src) {
     if (g_zenv.dialogue_flags & kDialogueCjkFlag) {
       // Chinese: a page byte and an index carry a 16x16 glyph of its own width.
       uint32 cjk_char;
-      if (DialogueCjk_DecodePage(a, *src, &cjk_char))
+      if (a >= kDialogueCjkPageFirst && a <= kDialogueCjkPageLast &&
+          DialogueCjk_DecodePage(a, *src, &cjk_char))
         return TEXTCMD_MK(cjk_char, kTextCmd_IsLetter, 1);
       if (a < kTextCommandStart_US)
         return TEXTCMD_MK(a, kTextCmd_IsLetter, 0);
@@ -2764,7 +2765,9 @@ void Text_LoadCharacterBuffer() {  // 8ec4e2
     // and decoded when the text is drawn.
     uint32 cjk_char;
     if ((g_zenv.dialogue_flags & kDialogueCjkFlag) &&
-        DialogueCjk_DecodePage(c, *src, &cjk_char)) {
+        c >= kDialogueCjkPageFirst && c <= kDialogueCjkPageLast) {
+      if (src == src_end) break;  // Ignore a truncated final page pair.
+      DialogueCjk_DecodePage(c, *src, &cjk_char);
       *dst++ = c;
       *dst++ = *src++;
       continue;

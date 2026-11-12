@@ -9,7 +9,7 @@
 //    font block:  4096 bytes of 256 8x16 letter tiles, then
 //                 glyph_count * 64 bytes, one 16x16 1bpp glyph each
 //                 (top-left, top-right, bottom-left, bottom-right, 16B each)
-//    width block: 99 letter widths, then one total width byte per glyph
+//    width block: 111 letter widths, then one total width byte per glyph
 //
 // Its messages then name a glyph with two bytes, a page byte and its index,
 // the shape the Japanese cartridge uses (see Text_DecodeCmd): page 0xf0 holds

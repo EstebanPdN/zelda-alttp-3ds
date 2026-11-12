@@ -188,3 +188,7 @@ Additional testing, clarifications and suggestions in issue comments: [@Akira808
 Thank you as well to the upstream contributors and people whose feedback reaches
 this project outside GitHub. Original authorship, license notices and credits
 inside each component or mod remain authoritative.
+
+## Chinese UI font notices
+
+The baked Chinese menu glyph subset uses [Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font) by TakWolf and contributors at 10/12 pixels and [GNU Unifont 18.0.01](https://unifoundry.com/unifont/index.html) by its credited authors at 16 pixels. These glyph subsets retain the SIL Open Font License 1.1. Copyright and license notices are included in `platform/3ds/romfs/licenses/` and in the packaged RomFS. The in-game translation font is credited separately to LinkFish above.

@@ -48,7 +48,8 @@ user must provide their own legally obtained USA, unheadered ROM on their own
 
 Version [4.1](docs/v4.1.md) adds Japanese game and menus, direct `.zspr` skins,
 language corrections and fixes for WIDE, maps, menus and new randomizer seeds.
-The port supports nine languages, character mods, a native randomizer and
+Experimental [4.2-E2](docs/v4.2-E2.md) adds Simplified Chinese and revised WIDE scenery. Stable 4.1 remains available.
+The development version supports nine languages, character mods, a native randomizer and
 fifteen quality-of-life options.
 See [development and build boundaries](docs/development.md) for source organization
 and the disabled developer scenarios.

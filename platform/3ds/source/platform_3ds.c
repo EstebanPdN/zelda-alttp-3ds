@@ -2275,7 +2275,8 @@ static uint8_t SetupGlyph(uint32_t code, int row) {
 // Chinese has no scaled face on the setup views: its 16x16 table is drawn at
 // one pixel per pixel, so its width does not follow `scale`.
 static int SetupCharWidth(uint32_t c, int scale) {
-  if (UiCjk_HasGlyph(c))
+  if (UiCjk_HasGlyph(c) &&
+      (UI_GetLanguage() == kUiLanguage_Chinese || UiFontJapaneseIndex(c) < 0))
     return 16;
   return (UiFontJapaneseIndex(c) >= 0 ? 11 : 6) * scale;
 }
@@ -2292,7 +2293,8 @@ static void SetupDrawChar(gfxScreen_t screen, uint32_t c, int x, int y,
   if (c == ' ')
     return;
   const uint16_t *chinese = UiCjk_RowsFor(c);
-  if (chinese) {
+  if (chinese &&
+      (UI_GetLanguage() == kUiLanguage_Chinese || UiFontJapaneseIndex(c) < 0)) {
     // The setup views start their Latin ink at -3 for scale 3 while the bottom
     // screen uses -2*scale, so they get their own offset (4.0.11).
     int latin_rows = scale == 3 ? 15 : scale == 2 ? 21 : 11;
@@ -4705,6 +4707,8 @@ static int ReadChosenLanguage(void);
 
 static void DrawModsMenu(void *context) {
   const ModsMenuContext *menu=context;int language=ReadChosenLanguage();if(language<0)language=0;
+  int font_language = UI_GetLanguage();
+  UI_SetLanguage(kGameLanguages[language].menu);
   SetupPurpleBackground(false);uint16_t white=SetupRgb565(255,255,255),green=SetupRgb565(120,232,120);
   char title[64];const char *category="";
   int begin=0,end=0;if(menu->count) {
@@ -4748,6 +4752,7 @@ static void DrawModsMenu(void *context) {
   int pages=NativeListPages(end-begin+1);
   SetupFooter(language,menu->categories>1||page>0,menu->categories>1||page+1<pages,true);
   if(menu->status)SetupMenuText(GFX_BOTTOM,SetupUiText(language,kUi_ErrorSdWrite),14,190,1,white);
+  UI_SetLanguage(font_language);
 }
 
 // The mods of one ROM, from the ROM selector (Y), one category at a time:
@@ -5373,6 +5378,8 @@ static void DrawGameplayQolTop(int language,int selected) {
   g_qol_gameplay_theme=false;
 }
 static void DrawQolListTop(int language,int selected,int first) {
+  int font_language = UI_GetLanguage();
+  UI_SetLanguage(kGameLanguages[language].menu);
   if(g_qol_gameplay_theme) {
     for(int y=0;y<240;y++)for(int x=0;x<400;x++) {
       uint32_t c=kSSTexMenu[(y%kSSTexMenu_H)*kSSTexMenu_W+x%kSSTexMenu_W];
@@ -5399,9 +5406,12 @@ static void DrawQolListTop(int language,int selected,int first) {
   }
   char page_text[16];snprintf(page_text,sizeof(page_text),"%d / 3",page+1);
   SetupMenuText(GFX_TOP,page_text,(400-UiFontWidth(page_text,3))/2,kNativeListCounterY,3,SetupRgb565(255,255,255));
+  UI_SetLanguage(font_language);
 }
 static void DrawSetupQol(void *opaque) {
   SetupQolContext *menu=opaque;DrawQolListTop(menu->language,menu->selected,menu->first);
+  int font_language = UI_GetLanguage();
+  UI_SetLanguage(kGameLanguages[menu->language].menu);
   uint16_t white=SetupRgb565(255,255,255);
   SetupPanel(GFX_BOTTOM,10,10,300,182);
   SetupWrap(GFX_BOTTOM,SetupUiText(menu->language,kUi_QolDescFastSwitch+menu->selected),22,32,276,7,3,white);
@@ -5411,6 +5421,7 @@ static void DrawSetupQol(void *opaque) {
   }
   SetupFooter(menu->language,Qol_Page(menu->selected)>0,Qol_Page(menu->selected)<2,true);
   if(menu->error)SetupMenuText(GFX_BOTTOM,SetupUiText(menu->language,kUi_ErrorSdWrite),20,190,1,white);
+  UI_SetLanguage(font_language);
 }
 static bool ShowSetupQol(int language) {
   SetupQolContext menu={language,0,0,false};bool changed=false,redraw=true;u32 blocked=hidKeysHeld();
@@ -5438,6 +5449,8 @@ static bool ShowSetupQol(int language) {
 }
 
 static void DrawLanguageSelector(int selected,int status) {
+  int font_language = UI_GetLanguage();
+  UI_SetLanguage(kGameLanguages[selected].menu);
   SetupPurpleBackground(false);uint16_t white=SetupRgb565(255,255,255);
   SetupTitle(GFX_TOP,8,264,38,SetupUiText(selected,kUi_Language));
   SetupPanel(GFX_TOP,60,58,280,174);
@@ -5445,7 +5458,9 @@ static void DrawLanguageSelector(int selected,int status) {
   for(int row=0;row<rows;row++) {
     int index=first+row,y=NativeListRowY(rows,row);const char *name=kGameLanguages[index].name;
     if(index==selected)SetupDrawMaskedRgb565Image(GFX_TOP,70,y-5,kSetupFairyWidth,kSetupFairyHeight,kSetupFairyRgb565,kSetupFairyMask);
+    UI_SetLanguage(kGameLanguages[index].menu);
     SetupMenuText(GFX_TOP,name,94,y,3,index==selected?SetupRgb565(120,232,120):white);
+    UI_SetLanguage(kGameLanguages[selected].menu);
   }
   char pages[16];snprintf(pages,sizeof(pages),"%d / %d",NativeListPage(selected)+1,NativeListPages(kGameLanguageCount));
   SetupMenuText(GFX_TOP,pages,(400-UiFontWidth(pages,3))/2,kNativeListCounterY,3,white);
@@ -5458,6 +5473,7 @@ static void DrawLanguageSelector(int selected,int status) {
   SetupMenuText(GFX_BOTTOM,help,(320-UiFontWidth(help,3))/2,174,3,white);
   SetupFooter(selected,first>0,first+rows<kGameLanguageCount,can_back);
   if(status>=0)SetupMenuText(GFX_BOTTOM,LanguageText(selected,status),16,190,1,white);
+  UI_SetLanguage(font_language);
 }
 
 typedef struct LanguageSelectorContext { int selected, status; } LanguageSelectorContext;
@@ -5523,10 +5539,13 @@ static int g_startup_started_cache=-1;
 static void DrawStartupMenu(void *opaque) {
   bool started=g_startup_started_cache<0?SetupHasStarted():g_startup_started_cache!=0;
   StartupMenuContext *menu=opaque;
+  int font_language = UI_GetLanguage();
+  UI_SetLanguage(kGameLanguages[menu->language].menu);
   SetupPurpleBackground(false);
   g_setup_menu_logo=menu->logo;SetupDrawLogo(menu->logo);SetupDrawStartupCredits(menu->logo);
   static const int labels[]={kUi_Continue,kUi_Language,kUi_Mods,kUi_QolTitle,kUi_Quit};
   for(int i=0;i<5;i++)SetupMenuButton(i,5,SetupUiText(menu->language,i==0&&!started?kUi_Start:labels[i]),i==menu->selected);
+  UI_SetLanguage(font_language);
 }
 
 static uint16_t SetupFadePixel(uint16_t c,unsigned level) {

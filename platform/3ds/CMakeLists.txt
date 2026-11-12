@@ -146,6 +146,7 @@ configure_file(
 )
 
 configure_file("${CMAKE_CURRENT_LIST_DIR}/romfs/update-ca.pem" "${ZELDA3_ROMFS}/update-ca.pem" COPYONLY)
+file(COPY "${CMAKE_CURRENT_LIST_DIR}/romfs/licenses" DESTINATION "${ZELDA3_ROMFS}")
 
 # Language patches (romfs:/languages/<code>.bps), USA ROM -> translation; see
 # romfs/languages/README.md. A language whose patch is missing is offered but

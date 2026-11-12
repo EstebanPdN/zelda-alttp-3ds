@@ -1,5 +1,15 @@
 # Changelog
 
+## v4.2-E2
+
+Experimental pre-release.
+
+- Added Simplified Chinese dialogue and menus.
+- Fixed Chinese/Japanese font selection and trailing Chinese dialogue decoding.
+- Extended the Master Sword forest background across its full scrolling area in WIDE.
+- Added Triforce chamber side curtains and fixed the black strip below its floor.
+- Corrected chamber palette fades, bridge shoreline and cut-off rocks.
+
 ## v4.1
 
 - Added Japanese game and menus, automatic language selection and a corrected title logo.

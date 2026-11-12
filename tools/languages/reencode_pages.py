@@ -163,7 +163,7 @@ def count_escapes(messages, first, last):
             elif byte < EU_REST:
                 i += 1
             else:
-                i += 3
+                i += 2
     return total
 
 

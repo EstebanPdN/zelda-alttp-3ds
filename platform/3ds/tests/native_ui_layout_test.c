@@ -391,5 +391,5 @@ int main(int argc,char **argv){
   verify_wide_atlas_follows_renderer(surface);
   destroy_textures();SDL_DestroyRenderer(ss_r);ss_r=NULL;SDL_FreeSurface(surface);
  }
- SDL_Quit();printf("PASS %u production UI captures, %u text checks, 7 languages, Old RGB565/New ARGB8888, no text collisions, bounded controls, language confirmation/cancel/selector and Back navigation%s\n",captures,text_checks,art_directory?", private USA art":"");return 0;
+ SDL_Quit();printf("PASS %u production UI captures, %u text checks, %d languages, Old RGB565/New ARGB8888, no text collisions, bounded controls, language confirmation/cancel/selector and Back navigation%s\n",captures,text_checks,kUiLanguageCount,art_directory?", private USA art":"");return 0;
 }
