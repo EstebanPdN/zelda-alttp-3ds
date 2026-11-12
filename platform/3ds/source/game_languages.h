@@ -12,17 +12,21 @@ typedef struct GameLanguage {
   int menu;           // enum UiLanguage, -1 while the menus lack the language
   const char *name;   // native name, drawn with the setup font
   const char *patch;  // USA -> translation BPS in romfs, NULL for English
+  const char *block;  // language pack in romfs, for a language with no cartridge
 } GameLanguage;
 
 static const GameLanguage kGameLanguages[] = {
-  { "en", kUiLanguage_English,    "ENGLISH",   NULL },
-  { "es", kUiLanguage_Spanish,    "ESPAÑOL",   "romfs:/languages/es.bps" },
-  { "pt", kUiLanguage_Portuguese, "PORTUGUÊS", "romfs:/languages/pt.bps" },
-  { "it", kUiLanguage_Italian,    "ITALIANO",  "romfs:/languages/it.bps" },
-  { "fr", kUiLanguage_French,     "FRANÇAIS",  "romfs:/languages/fr.bps" },
-  { "de", kUiLanguage_German,     "DEUTSCH",   "romfs:/languages/de.bps" },
-  { "ru", kUiLanguage_Russian,    "РУССКИЙ",   "romfs:/languages/ru.bps" },
-  { "ja", kUiLanguage_Japanese,   "日本語",     "romfs:/languages/ja.bps" },
+  { "en", kUiLanguage_English,    "ENGLISH",   NULL, NULL },
+  { "es", kUiLanguage_Spanish,    "ESPAÑOL",   "romfs:/languages/es.bps", NULL },
+  { "pt", kUiLanguage_Portuguese, "PORTUGUÊS", "romfs:/languages/pt.bps", NULL },
+  { "it", kUiLanguage_Italian,    "ITALIANO",  "romfs:/languages/it.bps", NULL },
+  { "fr", kUiLanguage_French,     "FRANÇAIS",  "romfs:/languages/fr.bps", NULL },
+  { "de", kUiLanguage_German,     "DEUTSCH",   "romfs:/languages/de.bps", NULL },
+  { "ru", kUiLanguage_Russian,    "РУССКИЙ",   "romfs:/languages/ru.bps", NULL },
+  { "ja", kUiLanguage_Japanese,   "日本語",     "romfs:/languages/ja.bps", NULL },
+  // A Chinese cartridge does not exist; the pack carries its text and its
+  // 16x16 glyphs, and zh.bps dresses it as the cartridge the extractor reads.
+  { "zh", kUiLanguage_Chinese,    "简体中文",   "romfs:/languages/zh.bps", "romfs:/languages/zh.bin" },
 };
 
 enum {
@@ -63,4 +67,7 @@ static const char *const kLanguageSelectorText[kGameLanguageCount][kSelCount] = 
   { "言語", "Aで決定", "STARTで終了", "YでMOD",
     "準備中...", "USA ROMが見つかりません", "/3DS/ZELDA 3DS/にコピー",
     "まだ利用できません", "準備に失敗しました" },
+  { "语言", "按 A 选择", "按 START 退出", "按 Y 查看模组",
+    "准备中...", "未找到 USA ROM", "请复制到 /3DS/ZELDA 3DS/",
+    "暂不可用", "准备失败" },
 };

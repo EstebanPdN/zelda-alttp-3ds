@@ -1,4 +1,5 @@
 #include "messaging.h"
+#include "dialogue_cjk.h"
 #include "zelda_rtl.h"
 #include "test_scenarios.h"
 #include "rando/rando.h"  // Phase B Slice 1 — Rando_OnGameSave
@@ -2592,7 +2593,14 @@ static uint8 Text_UsLetterToJapanese(uint8 a) {
 
 uint32 Text_DecodeCmd(uint8 a, const uint8 *src) {
   if (g_zenv.dialogue_flags & 4) {
-    if (a == kTextJp_Page0 || a == kTextJp_Page1)
+    if (g_zenv.dialogue_flags & kDialogueCjkFlag) {
+      // Chinese: a page byte and an index carry a 16x16 glyph of its own width.
+      uint32 cjk_char;
+      if (DialogueCjk_DecodePage(a, *src, &cjk_char))
+        return TEXTCMD_MK(cjk_char, kTextCmd_IsLetter, 1);
+      if (a < kTextCommandStart_US)
+        return TEXTCMD_MK(a, kTextCmd_IsLetter, 0);
+    } else if (a == kTextJp_Page0 || a == kTextJp_Page1)
       return TEXTCMD_MK((a & 1) << 8 | *src, kTextCmd_IsLetter, 1);
     if (a < kTextCommandStart_US)
       return TEXTCMD_MK(Text_UsLetterToJapanese(a), kTextCmd_IsLetter, 0);
@@ -2742,7 +2750,7 @@ void Text_LoadCharacterBuffer() {  // 8ec4e2
   MemBlk dictionary = FindIndexInMemblk(g_zenv.dialogue_blk, 0);
   MemBlk dialogue = FindIndexInMemblk(g_zenv.dialogue_blk, 1);
   MemBlk text_str = FindIndexInMemblk(dialogue, dialogue_message_index);
-  if (g_zenv.dialogue_flags & 4) {
+  if ((g_zenv.dialogue_flags & 4) && !(g_zenv.dialogue_flags & kDialogueCjkFlag)) {
     Text_LoadJapanese(text_str);
     dialogue_msg_read_pos = 0;
     return;
@@ -2751,6 +2759,16 @@ void Text_LoadCharacterBuffer() {  // 8ec4e2
   uint8 *dst = messaging_text_buffer;
   while (src < src_end) {
     uint8 c = *src++;
+    // A Chinese glyph is a page byte and its index; the page bytes would look
+    // like dictionary references below, so they are copied through as they are
+    // and decoded when the text is drawn.
+    uint32 cjk_char;
+    if ((g_zenv.dialogue_flags & kDialogueCjkFlag) &&
+        DialogueCjk_DecodePage(c, *src, &cjk_char)) {
+      *dst++ = c;
+      *dst++ = *src++;
+      continue;
+    }
     if (c >= kTextDictBase) {
       MemBlk blk = FindIndexInMemblk(dictionary, c - kTextDictBase);
       memcpy(dst, blk.ptr, blk.size);
@@ -2812,7 +2830,7 @@ void Text_LoadCharacterBuffer() {  // 8ec4e2
 uint8 *Text_WritePlayerName(uint8 *p) {  // 8ec5b3
   uint8 slot = srm_var1;
   int offs = ((slot>>1) - 1) * 0x500;
-  if (g_zenv.dialogue_flags & 4) {
+  if ((g_zenv.dialogue_flags & 4) && !(g_zenv.dialogue_flags & kDialogueCjkFlag)) {
     // The name's words become letters of the font; 0xcc is its blank ($8E:EFE9).
     // Four of them: a longer name from another language would leave the lines.
     uint8 *d = p, *end = p;
@@ -3088,7 +3106,7 @@ static void VWF_RenderJapanese(int g) {
 }
 
 void VWF_RenderSingle(int c) {  // 8ecab8
-  if (g_zenv.dialogue_flags & 4) {
+  if ((g_zenv.dialogue_flags & 4) && !(g_zenv.dialogue_flags & kDialogueCjkFlag)) {
     VWF_RenderJapanese(c);
     return;
   }
@@ -3100,6 +3118,25 @@ void VWF_RenderSingle(int c) {  // 8ecab8
     vwf_line_ptr = kVWF_RenderCharacter_renderPos[vwf_curline>>1];
     vwf_var1 = kVWF_RenderCharacter_linePositions[vwf_curline>>1];
     vwf_flag_next_line = 0;
+  }
+
+  // The line advance above must run first: a break arrives as a command and
+  // the glyph after it is the one that moves to the new line (4.0 did the same).
+  // A Chinese glyph is 16x16 and carries its own width; it cannot go through
+  // the letter path below, which looks its width up in the 99-letter table.
+  // The language block keeps the glyphs behind those letters.
+  if ((g_zenv.dialogue_flags & kDialogueCjkFlag) && DialogueCjk_IsGlyph(c)) {
+    DialogueCjkTarget target = {
+      .buf = (uint8 *)messaging_buf,
+      .arr = vwf_arr,
+      .pen = &vwf_var1,
+      .line = vwf_line_ptr,
+      .glyphs = FindIndexInMemblk(g_zenv.dialogue_font_blk, 0).ptr +
+                kDialogueCjkFontOffset,
+      .widths = FindIndexInMemblk(g_zenv.dialogue_font_blk, 1).ptr,
+    };
+    DialogueCjk_Render(&target, c - kDialogueCjkFirstChar);
+    return;
   }
   
   const uint8 *kFontData = FindIndexInMemblk(g_zenv.dialogue_font_blk, 0).ptr;

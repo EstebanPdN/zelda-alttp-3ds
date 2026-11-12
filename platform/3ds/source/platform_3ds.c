@@ -2272,10 +2272,18 @@ static uint8_t SetupGlyph(uint32_t code, int row) {
   }
 }
 
+// Chinese has no scaled face on the setup views: its 16x16 table is drawn at
+// one pixel per pixel, so its width does not follow `scale`.
+static int SetupCharWidth(uint32_t c, int scale) {
+  if (UiCjk_HasGlyph(c))
+    return 16;
+  return (UiFontJapaneseIndex(c) >= 0 ? 11 : 6) * scale;
+}
+
 static int SetupTextWidth(const char *text, int scale) {
   int width = 0;
   while (text && *text)
-    width += (UiFontJapaneseIndex(SetupNextChar(&text)) >= 0 ? 11 : 6) * scale;
+    width += SetupCharWidth(SetupNextChar(&text), scale);
   return width;
 }
 
@@ -2283,6 +2291,19 @@ static void SetupDrawChar(gfxScreen_t screen, uint32_t c, int x, int y,
                           int scale, uint16_t color) {
   if (c == ' ')
     return;
+  const uint16_t *chinese = UiCjk_RowsFor(c);
+  if (chinese) {
+    // The setup views start their Latin ink at -3 for scale 3 while the bottom
+    // screen uses -2*scale, so they get their own offset (4.0.11).
+    int latin_rows = scale == 3 ? 15 : scale == 2 ? 21 : 11;
+    int latin_top = -(scale == 3 ? 3 : 2 * scale);
+    int top = UiCjk_TopOffsetFor(latin_top, latin_rows, 16);
+    for (int row = 0; row < 16; row++)
+      for (int col = 0; col < 16; col++)
+        if (chinese[row] & (1 << (15 - col)))
+          SetupFillRect(screen, x + col, y + top + row, 1, 1, color);
+    return;
+  }
   int japanese = UiFontJapaneseIndex(c);
   if (japanese >= 0) {
     for (int row = 0; row < 10; row++)
@@ -2312,7 +2333,7 @@ static void SetupDrawText(gfxScreen_t screen, const char *text, int x, int y,
       break;
     uint32_t c = SetupNextChar(&text);
     SetupDrawChar(screen, c, cursor, y, scale, color);
-    cursor += (UiFontJapaneseIndex(c) >= 0 ? 11 : 6) * scale;
+    cursor += SetupCharWidth(c, scale);
   }
 }
 
@@ -3138,6 +3159,263 @@ static bool RomLooksJapanese(const uint8 *rom, size_t rom_size) {
 
 // only_language: the assets carry no dialogue yet (the French Canadian
 // cartridge's own build) and this one becomes dialogue 0, the only one.
+// A pack language carries its text and its 16x16 font in one file: the flags
+// say the text is page-coded (bit 2) and that each glyph is 16x16 with its own
+// width (bit 3), which is the shape engine/src/dialogue_cjk.h documents.
+enum { kLanguagePackDialogueFlags = 1 | 2 | 4 | 8 };
+
+// Declared where the profile is prepared; the pack path reports through it too.
+static const char *g_profile_prepare_status;
+
+static bool LanguageUsesPatch(const GameLanguage *language) {
+  if (!language || !language->patch)
+    return false;
+  FILE *file = fopen(language->patch, "rb");
+  if (!file)
+    return false;
+  fclose(file);
+  return true;
+}
+
+// A Chinese cartridge is the USA cartridge with the finished language pack
+// appended ('ZCNB' ..., then 'ZCNP' and the pack size): the translation is text
+// and a 16x16 font, which the cartridge's own text engine cannot draw, so there
+// is nothing to parse. The port never runs the cartridge, it reads the same
+// pack a pack-only build ships - see tools/languages/make_zh_bps.py.
+static const uint8 *CartridgePack(const uint8 *cart, size_t cart_size,
+                                  size_t *pack_size) {
+  enum { kFooter = 8 };
+  if (!cart || cart_size < kFooter ||
+      memcmp(cart + cart_size - kFooter, "ZCNP", 4) != 0)
+    return NULL;
+  uint32 size = ReadU32LE(cart + cart_size - 4);
+  if (size == 0 || (size_t)size + kFooter > cart_size)
+    return NULL;
+  const uint8 *pack = cart + cart_size - kFooter - size;
+  if (memcmp(pack, "ZCNB", 4) != 0)
+    return NULL;
+  *pack_size = size;
+  return pack;
+}
+
+static bool AppendLanguageToAssets(const uint8 *assets_data,
+                                   size_t assets_size,
+                                   OwnedBlock *language_dialogue,
+                                   OwnedBlock *language_font,
+                                   const char *language_code,
+                                   uint8 dialogue_flags,
+                                   bool only_language,
+                                   uint8 **out_data,
+                                   size_t *out_size) {
+  *out_data = NULL;
+  *out_size = 0;
+  if (assets_size < 88) {
+    FreeBlocks(language_dialogue, 1);
+    FreeBlocks(language_font, 1);
+    return false;
+  }
+  static const uint8 signature[] = { kAssets_Sig };
+  uint32 asset_count = ReadU32LE(assets_data + 80);
+  uint32 names_size = ReadU32LE(assets_data + 84);
+  if (memcmp(assets_data, signature, sizeof(signature)) != 0 ||
+      asset_count != kNumberOfAssets ||
+      assets_size < 88 + asset_count * 4 + names_size) {
+    FreeBlocks(language_dialogue, 1);
+    FreeBlocks(language_font, 1);
+    return false;
+  }
+
+  OwnedBlock *assets = calloc(asset_count, sizeof(*assets));
+  if (!assets) {
+    FreeBlocks(language_dialogue, 1);
+    FreeBlocks(language_font, 1);
+    return false;
+  }
+  bool ok = true;
+  size_t offset = 88 + asset_count * 4 + names_size;
+  for (uint32 i = 0; ok && i < asset_count; i++) {
+    uint32 size = ReadU32LE(assets_data + 88 + i * 4);
+    offset = (offset + 3) & ~3;
+    if (offset + size > assets_size ||
+        !CopyBlock(&assets[i], assets_data + offset, size))
+      ok = false;
+    offset += size;
+  }
+  OwnedBlock *dialogues = NULL, *fonts = NULL, *map = NULL;
+  int dialogue_count = 0, font_count = 0, map_count = 0;
+  if (ok && !only_language)
+    ok = UnpackBlocks(assets[94].data, assets[94].size,
+                      &dialogues, &dialogue_count) &&
+         UnpackBlocks(assets[95].data, assets[95].size,
+                      &fonts, &font_count) &&
+         UnpackBlocks(assets[96].data, assets[96].size,
+                      &map, &map_count);
+  if (ok && !only_language && (dialogue_count != font_count || map_count <= 0))
+    ok = false;
+  if (ok) {
+    int index = dialogue_count;
+    OwnedBlock *new_dialogues = calloc(dialogue_count + 1, sizeof(*new_dialogues));
+    OwnedBlock *new_fonts = calloc(font_count + 1, sizeof(*new_fonts));
+    OwnedBlock *new_map = calloc(map_count + 1, sizeof(*new_map));
+    if (!new_dialogues || !new_fonts || !new_map) {
+      free(new_dialogues);
+      free(new_fonts);
+      free(new_map);
+      ok = false;
+    } else {
+      if (dialogue_count)
+        memcpy(new_dialogues, dialogues, dialogue_count * sizeof(*dialogues));
+      if (font_count)
+        memcpy(new_fonts, fonts, font_count * sizeof(*fonts));
+      if (map_count)
+        memcpy(new_map, map, map_count * sizeof(*map));
+      free(dialogues);
+      free(fonts);
+      free(map);
+      dialogues = new_dialogues;
+      fonts = new_fonts;
+      map = new_map;
+      dialogue_count++;
+      font_count++;
+      map_count++;
+      dialogues[index] = *language_dialogue;
+      fonts[index] = *language_font;
+      language_dialogue->data = NULL;
+      language_font->data = NULL;
+      OwnedBlock map_parts[2] = {0};
+      OwnedBlock packed_map_entry = {0};
+      uint8 name[8];
+      size_t name_size = strlen(language_code);
+      if (name_size == 0 || name_size > sizeof(name)) {
+        ok = false;
+      }
+      if (ok)
+        memcpy(name, language_code, name_size);
+      uint8 conf[] = { (uint8)index, (uint8)index, dialogue_flags };
+      ok = ok &&
+           CopyBlock(&map_parts[0], name, name_size) &&
+           CopyBlock(&map_parts[1], conf, sizeof(conf)) &&
+           PackBlocks(map_parts, 2, &packed_map_entry);
+      FreeBlocks(map_parts, 2);
+      if (ok) {
+        map[index] = packed_map_entry;
+        packed_map_entry.data = NULL;
+        packed_map_entry.size = 0;
+      }
+    }
+  }
+  OwnedBlock packed_dialogues = {0};
+  OwnedBlock packed_fonts = {0};
+  OwnedBlock packed_map = {0};
+  if (ok)
+    ok = PackBlocks(dialogues, dialogue_count, &packed_dialogues) &&
+         PackBlocks(fonts, font_count, &packed_fonts) &&
+         PackBlocks(map, map_count, &packed_map);
+  if (ok) {
+    free(assets[94].data);
+    free(assets[95].data);
+    free(assets[96].data);
+    assets[94] = packed_dialogues;
+    assets[95] = packed_fonts;
+    assets[96] = packed_map;
+    packed_dialogues.data = NULL;
+    packed_fonts.data = NULL;
+    packed_map.data = NULL;
+    size_t total = 88 + asset_count * 4 + names_size;
+    for (uint32 i = 0; i < asset_count; i++)
+      total = ((total + 3) & ~3) + assets[i].size;
+    uint8 *out = calloc(1, total);
+    if (!out) {
+      ok = false;
+    } else {
+      memcpy(out, assets_data, 88);
+      for (uint32 i = 0; i < asset_count; i++)
+        WriteU32LE(out + 88 + i * 4, (uint32)assets[i].size);
+      memcpy(out + 88 + asset_count * 4,
+             assets_data + 88 + asset_count * 4, names_size);
+      offset = 88 + asset_count * 4 + names_size;
+      for (uint32 i = 0; i < asset_count; i++) {
+        offset = (offset + 3) & ~3;
+        memcpy(out + offset, assets[i].data, assets[i].size);
+        offset += assets[i].size;
+      }
+      *out_data = out;
+      *out_size = total;
+    }
+  }
+
+  FreeBlocks(language_dialogue, 1);
+  FreeBlocks(language_font, 1);
+  FreeBlocks(dialogues, dialogue_count);
+  FreeBlocks(fonts, font_count);
+  FreeBlocks(map, map_count);
+  free(dialogues);
+  free(fonts);
+  free(map);
+  FreeBlocks(&packed_dialogues, 1);
+  FreeBlocks(&packed_fonts, 1);
+  FreeBlocks(&packed_map, 1);
+  FreeBlocks(assets, asset_count);
+  free(assets);
+  return ok;
+}
+
+static bool AddLanguagePackToAssets(const uint8 *assets_data, size_t assets_size,
+                                    const uint8 *pack, size_t pack_size,
+                                    const char *language_code, bool only_language,
+                                    uint8 **out_data, size_t *out_size) {
+  enum { kHeader = 8 };
+  *out_data = NULL;
+  *out_size = 0;
+  if (pack_size < kHeader || memcmp(pack, "ZCNB", 4) != 0)
+    return false;
+  uint32 dialogue_size = ReadU32LE(pack + 4);
+  if (dialogue_size == 0 || kHeader + (size_t)dialogue_size + 4 > pack_size)
+    return false;
+  uint32 font_size = ReadU32LE(pack + kHeader + dialogue_size);
+  size_t font_offset = kHeader + (size_t)dialogue_size + 4;
+  if (font_size == 0 || font_offset + font_size > pack_size)
+    return false;
+  OwnedBlock dialogue = {0};
+  OwnedBlock font = {0};
+  if (!CopyBlock(&dialogue, pack + kHeader, dialogue_size) ||
+      !CopyBlock(&font, pack + font_offset, font_size)) {
+    FreeBlocks(&dialogue, 1);
+    FreeBlocks(&font, 1);
+    return false;
+  }
+  return AppendLanguageToAssets(assets_data, assets_size, &dialogue, &font,
+                                language_code, kLanguagePackDialogueFlags,
+                                only_language, out_data, out_size);
+}
+
+static bool AddBuildLanguagePack(uint8 **assets, size_t *assets_size) {
+  const GameLanguage *language = g_build_language;
+  size_t pack_size = 0;
+  uint8 *pack = ReadWholeFile(language->block, &pack_size);
+  bool read = pack != NULL;
+  uint8 *combined = NULL;
+  size_t combined_size = 0;
+  bool ok = read &&
+            AddLanguagePackToAssets(*assets, *assets_size, pack, pack_size,
+                                    language->code, false, &combined,
+                                    &combined_size) &&
+            AssetsBlobLooksValid(combined, combined_size);
+  LogSetup("Language %s: pack %s, %s", language->code, read ? "read" : "missing",
+           ok ? "OK" : "FAIL");
+  free(pack);
+  if (!ok) {
+    free(combined);
+    g_profile_prepare_status = read ? "Translation failed"
+                                    : "Translation unavailable";
+    return false;
+  }
+  free(*assets);
+  *assets = combined;
+  *assets_size = combined_size;
+  return true;
+}
+
 static bool AddTranslatedLanguageToAssets(const uint8 *assets_data,
                                           size_t assets_size,
                                           const uint8 *rom,
@@ -3546,21 +3824,53 @@ static const char *g_profile_prepare_status = "ROM preparation failed";
 static bool AddBuildLanguage(uint8 **assets, size_t *assets_size,
                              const uint8 *rom, size_t rom_size) {
   const GameLanguage *language = g_build_language;
-  if (!language || !language->patch)
+  if (!language)
     return true;
+  if (!LanguageUsesPatch(language)) {
+    // A build that ships only the pack (no patch for this language) takes it
+    // here; English has neither.
+    if (language->block)
+      return AddBuildLanguagePack(assets, assets_size);
+    if (language->patch) {
+      // Declared by the selector, absent from this build and with no pack
+      // behind it: that is "Translation unavailable", not English.
+      LogSetup("Language %s: patch missing, no pack in this build",
+               language->code);
+      g_profile_prepare_status = "Translation unavailable";
+      return false;
+    }
+    return true;
+  }
   size_t patch_size = 0, translated_size = 0;
   uint8 *patch = ReadWholeFile(language->patch, &patch_size);
   uint8 *translated = patch ? ApplyBps(rom, rom_size, patch, patch_size,
                                        &translated_size) : NULL;
   free(patch);
-  LogSetup("Language %s: patch %s, translated cartridge %s", language->code,
-           patch_size ? "read" : "missing", translated ? "OK" : "FAIL");
+  size_t pack_size = 0;
+  const uint8 *pack = translated ? CartridgePack(translated, translated_size,
+                                                 &pack_size) : NULL;
+  LogSetup("Language %s: patch %s, translated cartridge %s%s", language->code,
+           patch_size ? "read" : "missing", translated ? "OK" : "FAIL",
+           pack ? " carrying the language pack" : "");
+  // A pack language is never parsed as a translated cartridge: without its pack
+  // in the cartridge, the bundled pack is the only right source. Parsing would
+  // read the USA text and call it Chinese.
+  if (translated && language->block && !pack) {
+    LogSetup("Language %s: cartridge carries no pack, using the bundled pack",
+             language->code);
+    free(translated);
+    return AddBuildLanguagePack(assets, assets_size);
+  }
   uint8 *combined = NULL;
   size_t combined_size = 0;
   bool ok = translated &&
-            AddTranslatedLanguageToAssets(*assets, *assets_size, translated,
-                                          translated_size, language->code, false,
-                                          &combined, &combined_size) &&
+            (pack ? AddLanguagePackToAssets(*assets, *assets_size, pack,
+                                            pack_size, language->code, false,
+                                            &combined, &combined_size)
+                  : AddTranslatedLanguageToAssets(*assets, *assets_size,
+                                                  translated, translated_size,
+                                                  language->code, false,
+                                                  &combined, &combined_size)) &&
             AssetsBlobLooksValid(combined, combined_size);
   // Its lettering (sheets, names) is drawn from the cartridge it built.
   if (ok && !FileStore_Write(LANGUAGE_CART_FILE, translated, translated_size))
@@ -3568,6 +3878,13 @@ static bool AddBuildLanguage(uint8 **assets, size_t *assets_size,
   free(translated);
   if (!ok) {
     free(combined);
+    // A patch that cannot be read must not cost the player a language the
+    // package already carries.
+    if (language->block) {
+      LogSetup("Language %s: patch unusable, using the bundled pack",
+               language->code);
+      return AddBuildLanguagePack(assets, assets_size);
+    }
     g_profile_prepare_status = patch_size ? "Translation failed" : "Translation unavailable";
     return false;
   }
@@ -4622,7 +4939,13 @@ static const char kProfileLanguageFile[] = "assets-language.txt";
 
 static bool LanguageCacheStamp(const GameLanguage *language, char stamp[64]) {
   uint32_t crc = 0;
-  if (language->patch) {
+  // The extractor schema: bumped when the blocks a language produces change
+  // shape. Moving the CJK dialogue flag to bit 3 changed the map entry a pack
+  // is stored with, so its assets must be read again - whether the pack arrives
+  // as romfs:/languages/zh.bin or inside the cartridge its patch builds. A
+  // translated cartridge's blocks did not change.
+  int schema = language->block ? 3 : 2;
+  if (LanguageUsesPatch(language)) {
     FILE *file = fopen(language->patch, "rb");
     if (!file)
       return false;
@@ -4635,8 +4958,23 @@ static bool LanguageCacheStamp(const GameLanguage *language, char stamp[64]) {
       return false;
     crc = (uint32_t)footer[0] | (uint32_t)footer[1] << 8 |
           (uint32_t)footer[2] << 16 | (uint32_t)footer[3] << 24;
+  } else if (language->block) {
+    // A pack has no BPS footer, so the file itself is the stamp: replacing it
+    // must rebuild the assets even when the language is unchanged.
+    FILE *file = fopen(language->block, "rb");
+    if (!file)
+      return false;
+    uint32_t hash = 2166136261u;
+    int byte;
+    while ((byte = fgetc(file)) != EOF)
+      hash = (hash ^ (uint8_t)byte) * 16777619u;
+    fclose(file);
+    crc = hash;
+  } else if (language->patch) {
+    // Declared but not in this build, and no pack behind it.
+    return false;
   }
-  snprintf(stamp, 64, "%s:2:%08lx", language->code, (unsigned long)crc);
+  snprintf(stamp, 64, "%s:%d:%08lx", language->code, schema, (unsigned long)crc);
   return true;
 }
 
@@ -4644,7 +4982,7 @@ static bool ProfileLanguageMatches(const char *profile, const GameLanguage *lang
   char path[640], line[64] = "", stamp[64];
   if (!LanguageCacheStamp(language, stamp))
     return false;
-  if (language->patch) {
+  if (LanguageUsesPatch(language)) {
     snprintf(path, sizeof(path), "%s/%s", profile, LANGUAGE_CART_FILE);
     if (!IsRegularFile(path))
       return false;
@@ -4669,10 +5007,13 @@ static bool ApplyProfileLanguage(void) {
   if (!LanguageCacheStamp(language, stamp))
     return false;
   bool ok = true;
-  if (!language->patch)
+  if (!LanguageUsesPatch(language))
     remove(LANGUAGE_CART_FILE);
+  // A pack is a dialogue language too: only English has neither a patch nor a
+  // pack, and only English clears the setting.
+  bool has_dialogue = language->patch || language->block;
   ok &= IniEdit_SetValue("zelda3.ini", "[General]", "Language",
-                         language->patch ? language->code : "");
+                         has_dialogue ? language->code : "");
   ok &= IniEdit_SetValue("zelda3.ini", "[General]", "MenuLanguage",
                          UI_LanguageCode(g_profile_menu_language ? g_profile_menu_language->menu :
                                          language->menu >= 0 ? language->menu : kUiLanguage_English));
@@ -5489,6 +5830,20 @@ bool Platform3DS_PrepareStorage(void) {
 }
 
 void Platform3DS_ApplyConfig(struct Config *config) {
+  // Runs after the ini has been parsed, which is what makes it the place to
+  // pin the chosen language: the file may be stale, carry a second [General]
+  // block, or sit somewhere the engine does not read, and the text still has
+  // to come out in the language the player chose. This is the same for every
+  // language - a pack (Chinese) and a translated cartridge alike.
+  if (g_build_language &&
+      (g_build_language->patch || g_build_language->block)) {
+    config->language = g_build_language->code;
+    // The port's own screens follow the same choice: their language comes from
+    // the ini too, and a stale file used to leave them English while the game
+    // spoke Chinese.
+    if (g_build_language->menu >= 0)
+      UI_SetLanguage(g_build_language->menu);
+  }
   config->autosave = g_autosave;
   // Preserve the user's Sound/PannedSoundEffects setting (defaulted by the INI).
   config->window_width = 400;
