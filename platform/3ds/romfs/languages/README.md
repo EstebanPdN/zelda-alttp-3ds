@@ -6,6 +6,7 @@ boot the language selector applies the chosen patch on the console and reads
 the translated text from the result; the player's ROM is never changed.
 
 Make them with `tools/languages/make_bps.py USA TRANSLATED OUT.bps`.
+For Swedish, make TRANSLATED with `tools/languages/prepare_sv.py USA svz1001.ips OUT.sfc`.
 For the supplemental Spanish, Italian and Portuguese text, first run
 [`complete_text.py`](../../../../tools/languages/README.md) on a separate,
 private translated copy. Preserve the original patch and its readme.
@@ -19,6 +20,7 @@ private translated copy. Preserve the original patch and its readme.
 | fr | Official French (PAL) release | Nintendo |
 | de | Official German (PAL) release | Nintendo |
 | ja | Official Super Famicom release, v1.0 | Nintendo |
+| sv | [The Translators](https://sen.zophar.net/tt/) "Gudarnas trekraft" 1.001, 2004 (`svz1001.ips`, prepared by [`prepare_sv.py`](../../../../tools/languages/prepare_sv.py): headered apply, name-entry stripe moved from past 1 MiB into bank $07) | Mattias Thorelli |
 | zh | Simplified Chinese translation carried by this fork, text and a 16x16 font | see [CREDITS.md](../../../../CREDITS.md) |
 
 The Spanish, Italian, Portuguese and Russian patches also carry the corrections of

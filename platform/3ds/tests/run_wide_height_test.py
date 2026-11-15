@@ -54,7 +54,7 @@ static void check(int mode,int flags) {
  assert(g_config.features0&kFeatures0_MiscBugFixes);
 }
 int main(void) {
- g_build_language=&kGameLanguages[kGameLanguageCount-1];
+ for(int i=0;i<kGameLanguageCount;i++)if(!strcmp(kGameLanguages[i].code,"zh"))g_build_language=&kGameLanguages[i];
  Platform3DS_ApplyConfig(&g_config);
  assert(!strcmp(g_config.language,"zh") && ui_language==kUiLanguage_Chinese);
  g_build_language=NULL;

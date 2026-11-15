@@ -13,6 +13,8 @@ static inline const char *NativeFileLabels_Word(const char *language, unsigned m
     {"de", {"SPIEL", "KOPIEREN", "L\x80SCHEN", "NAME"}},
     {"it", {"PARTITA", "COPIA", "ELIMINA", "NOME"}},
     {"pt", {"PARTIDA", "COPIAR", "APAGAR", "NOME"}},
+    // \x81: the Swedish cartridge's plain O (its O cell now draws Ö).
+    {"sv", {"SPEL", "K\x81PIERA", "RADERA", "NAMN"}},
     // Chief-Net's native glyph indices: ИГРА, КОПИЯ, УДАЛИТЬ, ИМЯ.
     {"ru", {"\x05\x01\x0c\xab", "\x07\x64\x0b\x05\x2a",
             "\x0f\x02\xab\x08\x05\x0e\x27", "\x05\x09\x2a"}},
@@ -27,6 +29,7 @@ static inline const char *NativeFileLabels_Word(const char *language, unsigned m
 static inline unsigned NativeFileLabels_Glyph(unsigned char c, bool localized, bool russian) {
   if (russian) return c;
   if (c == 0x80) return 0xcd; // German Ö, as in the original LÖSCHEN label.
+  if (c == 0x81) return 0x64; // Swedish O top, as in the cartridge's KOPIERA.
   if (c == 'I') return localized ? 0xe0 : 0xaf;
   if (c >= 'A' && c <= 'P') return c-'A';
   return c-'Q'+0x20;
@@ -44,7 +47,9 @@ static inline void NativeFileLabels_Write(uint16_t *vram, unsigned base,
   for (unsigned i=0;i<len;i++) {
     unsigned glyph=NativeFileLabels_Glyph((unsigned char)word[i],localized,russian);
     vram[base+row*32+start+i]=(uint16_t)(0x1800|glyph);
-    vram[base+(row+1)*32+start+i]=(uint16_t)(0x1800|(glyph+16));
+    // The Swedish O keeps the original O's lower half; every other cell's is 16 on.
+    unsigned lower=(!russian && (unsigned char)word[i]==0x81) ? 0x1e : glyph+16;
+    vram[base+(row+1)*32+start+i]=(uint16_t)(0x1800|lower);
   }
 }
 

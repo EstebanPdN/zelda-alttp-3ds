@@ -27,6 +27,9 @@ static const GameLanguage kGameLanguages[] = {
   // A Chinese cartridge does not exist; the pack carries its text and its
   // 16x16 glyphs, and zh.bps dresses it as the cartridge the extractor reads.
   { "zh", kUiLanguage_Chinese,    "简体中文",   "romfs:/languages/zh.bps", "romfs:/languages/zh.bin" },
+  // Swedish fan translation "Legenden om Zelda: Gudarnas trekraft" 1.001 by
+  // Mattias Thorelli (The Translators, 2004).
+  { "sv", kUiLanguage_Swedish,    "SVENSKA",   "romfs:/languages/sv.bps", NULL },
 };
 
 enum {
@@ -70,4 +73,7 @@ static const char *const kLanguageSelectorText[kGameLanguageCount][kSelCount] = 
   { "语言", "按 A 选择", "按 START 退出", "按 Y 查看模组",
     "准备中...", "未找到 USA ROM", "请复制到 /3DS/ZELDA 3DS/",
     "暂不可用", "准备失败" },
+  { "SPRÅK", "TRYCK A FÖR ATT VÄLJA", "TRYCK START FÖR ATT AVSLUTA", "TRYCK Y FÖR MODS",
+    "FÖRBEREDER...", "USA-ROM HITTADES INTE", "KOPIERA DEN TILL /3DS/ZELDA 3DS/",
+    "INTE TILLGÄNGLIGT ÄN", "FÖRBEREDELSEN MISSLYCKADES" },
 };

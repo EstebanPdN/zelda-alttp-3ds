@@ -7,7 +7,7 @@
 
 // Deterministic Latin and Cyrillic UI glyphs. Decode once per character; accented letters
 // use the same editable 5x7 base and an explicit accent, never byte fragments.
-enum UiFontAccent { UI_ACUTE, UI_GRAVE, UI_CEDILLA, UI_CIRCUMFLEX, UI_TILDE, UI_DIAERESIS };
+enum UiFontAccent { UI_ACUTE, UI_GRAVE, UI_CEDILLA, UI_CIRCUMFLEX, UI_TILDE, UI_DIAERESIS, UI_RING };
 enum { UI_FONT_JAPANESE = -2, UI_FONT_JAPANESE_CODE = 0x100 };
 // Chinese reuses the same "blank base, wide code" shape over its own tables.
 enum { UI_FONT_CHINESE = -3, UI_FONT_CHINESE_CODE = 0x400 };
@@ -45,6 +45,7 @@ static inline char UiFontNext(const char **text, int *accent) {
     case 0xc2: *accent=UI_CIRCUMFLEX; return 'A';
     case 0xc3: *accent=UI_TILDE; return 'A';
     case 0xc4: *accent=UI_DIAERESIS; return 'A';
+    case 0xc5: *accent=UI_RING; return 'A';
     case 0xc7: *accent=UI_CEDILLA; return 'C';
     case 0xc8: *accent=UI_GRAVE; return 'E';
     case 0xc9: *accent=UI_ACUTE; return 'E';
