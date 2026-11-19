@@ -65,3 +65,10 @@ google-services.json
 # Maintained repository layout manifest.
 !docs/repository-layout.json
 !docs/REPOSITORY.md
+
+# Local environment and private signing containers
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
