@@ -14,6 +14,7 @@ enum UiLanguage {
   // platform/linux/ui_font_cjk.h); it is last so the other languages keep
   // their values.
   kUiLanguage_Chinese,
+  kUiLanguage_Swedish,
   kUiLanguageCount,
 };
 

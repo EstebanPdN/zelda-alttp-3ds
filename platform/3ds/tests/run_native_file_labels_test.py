@@ -9,8 +9,8 @@ code=r'''
 #include "native_file_labels.h"
 static uint16_t before[32768],vram[32768],first[32768];
 int main(void) {
-  const char *languages[]={"en","es","fr","de","it","pt","ru","fr-c"};
-  for(unsigned l=0;l<8;l++)for(unsigned module=1;module<=4;module++)for(unsigned cap=21;cap<=27;cap+=2) {
+  const char *languages[]={"en","es","fr","de","it","pt","ru","fr-c","sv"};
+  for(unsigned l=0;l<9;l++)for(unsigned module=1;module<=4;module++)for(unsigned cap=21;cap<=27;cap+=2) {
     bool localized=l==2||l==3||l==7;
     unsigned row=module==4?4:2,frame=0x1000+row*32,base=localized?0x7800:0x6000;
     for(unsigned i=0;i<32768;i++)vram[i]=0x1234;
@@ -30,15 +30,19 @@ int main(void) {
     for(unsigned i=0;i<strlen(word);i++) {
       unsigned glyph=NativeFileLabels_Glyph((unsigned char)word[i],localized,l==6);
       assert(vram[base+(row+1)*32+start+i]==(0x1800|glyph));
-      assert(vram[base+(row+2)*32+start+i]==(0x1800|(glyph+16)));
+      unsigned lower=(unsigned char)word[i]==0x81?0x1e:glyph+16;
+      assert(vram[base+(row+2)*32+start+i]==(0x1800|lower));
     }
   }
+  // The Swedish cartridge's plain O: top 0x64 over the original O's lower half.
+  assert(!strcmp(NativeFileLabels_Word("sv",1),"K\x81PIERA"));
+  assert(NativeFileLabels_Glyph(0x81,false,false)==0x64);
   memcpy(before,vram,sizeof(vram));
   NativeFileLabels_Apply(vram,7,"es",false);assert(!memcmp(before,vram,sizeof(vram)));
   assert(!strcmp(NativeFileLabels_Word("es",0),"PARTIDA"));
   assert(!strcmp(NativeFileLabels_Word("es",3),"NOMBRE"));
   assert(NativeFileLabels_Glyph(0x80,true,false)==0xcd);
-  puts("PASS 128 native file-label scenes: all languages, four menus, translated frame widths, exact glyph rows, bounded writes and repeated frames");
+  puts("PASS 144 native file-label scenes: all languages, four menus, translated frame widths, exact glyph rows, bounded writes and repeated frames");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='alttp-file-labels-') as directory:
