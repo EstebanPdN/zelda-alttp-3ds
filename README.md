@@ -26,7 +26,7 @@
 
 <p align="center">
   <a href="https://estebanpdn.github.io/"><img src="docs/images/website.svg" alt="Visit Esteban’s Forge" width="142" height="46"></a>
-  <a href="https://discord.gg/BjbzfRYpV"><img src="docs/images/discord-official.svg" alt="Join our Discord community" width="166" height="46"></a>
+  <a href="https://discord.com/servers/esteban-s-forge-1533248895663210506"><img src="docs/images/discord-official.svg" alt="Join our Discord community" width="166" height="46"></a>
   <!-- <a href="https://ko-fi.com/estebanpdn"><img src="docs/images/kofi.svg" alt="Support EstebanPdN on Ko-fi" width="190" height="46"></a> -->
   <a href="https://www.patreon.com/c/EstebanPdN"><img src="docs/images/patreon.svg" alt="Support EstebanPdN on Patreon" width="216" height="46"></a>
 </p>
@@ -234,7 +234,7 @@ opening Update.
 
 ## Community and bug reports
 
-[Join the project Discord](https://discord.gg/BjbzfRYpV) for updates, testing,
+[Join the project Discord](https://discord.com/servers/esteban-s-forge-1533248895663210506) for updates, testing,
 suggestions and support. Use [GitHub issues](https://github.com/EstebanPdN/zelda-alttp-3ds/issues)
 for reproducible reports, including your version, console model and steps to
 reproduce the problem. Review diagnostic captures before sharing them.
@@ -243,7 +243,7 @@ reproduce the problem. Review diagnostic captures before sharing them.
 
 <p align="center">
   <a href="https://estebanpdn.github.io/">Esteban’s Forge</a> ·
-  <a href="https://discord.gg/BjbzfRYpV">Discord</a> ·
+  <a href="https://discord.com/servers/esteban-s-forge-1533248895663210506">Discord</a> ·
   <a href="#documentation">Documentation</a> ·
   <a href="#license-and-legal-notice">License and notices</a><br>
   <sub>An independent fan project. Game names and content belong to their respective owners.</sub>
