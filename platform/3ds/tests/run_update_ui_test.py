@@ -45,6 +45,9 @@ static bool Platform3DS_GetShowFps(void){return false;}
 static bool Platform3DS_IsNew3DS(void){return model;}
 static bool Platform3DS_CanUseCore1PpuWorker(void){return !model;}
 static void Platform3DS_SetShowFps(bool v){}
+static bool Platform3DS_StereoSupported(void){return false;}
+static int Platform3DS_GetStereoLevel(void){return 0;}
+static void Platform3DS_SetStereoLevel(int v){}
 static void Platform3DS_RequestRomSelection(void){restarts++;}
 static void Platform3DS_RequestStartupMenu(void){restarts++;}
 static void Platform3DS_PlayMenuMove(void){}

@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "snes/ppu.h"
+struct PicaTerrain;
 
 enum { PICA_ATLAS_W=1024, PICA_ATLAS_H=512, PICA_SLOTS=8192,
        PICA_HASH=16384, PICA_MAX_LINES=240, PICA_MAX_VERTICES=262140,
@@ -27,6 +28,11 @@ typedef struct {
   int16_t u0,v0,u1,v1; // normalized UV * 4096
   uint16_t depth;
   uint8_t r,g,b,a;
+  uint8_t parallax; // stereo depth at the bottom edge, in eighths of a unit; trailing so positional initializers default to 0
+  uint8_t parallaxTop; // same for the top edge: a tall tile leans from its floor to its tall depth
+  // Right-edge depths. Neighbouring terrain tiles share edge depths so the stereo
+  // shift bends the surface instead of opening one-pixel cracks between columns.
+  uint8_t parallaxRight, parallaxTopRight;
 } PicaQuad;
 // Groups 0/2: main/sub backdrop and BG. 1/3: their OBJ, in OAM order.
 // Groups 4..19: compose flags subtract=1 half=2 clip=4 prevent=8.
@@ -44,6 +50,7 @@ typedef struct {
   uint32_t quads[PICA_GROUPS];
   uint16_t bandEnd[PICA_MAX_LINES],commonEnd[PICA_MAX_LINES],layerEnd[PICA_MAX_LINES];
   bool sharedWindow;
+  const struct PicaTerrain *terrain; // stereo depth from collision data; NULL = layer rules
 } PicaFrame;
 void PicaAtlasInit(PicaAtlas *cache, uint32_t *pixels);
 void PicaAtlasBegin(PicaAtlas *cache);

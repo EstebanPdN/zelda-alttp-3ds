@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Stereoscopic 3D on Old 3DS and Old 3DS XL with the GPU renderer: the 3D slider
+  sets the depth, Settings > Screen > 3D DEPTH picks OFF, LOW, MID or HIGH.
+- Optional terrain depth, off by default: `Stereo3DTerrain = 1` in zelda3.ini makes
+  ledges, cliff faces and stairs give the ground its height, statues, trees and walls
+  stand up from their own base as one piece, and sprites stand on the ground under
+  their feet. The solve runs on the system core.
+
 ## v4.2-E2
 
 Experimental pre-release.

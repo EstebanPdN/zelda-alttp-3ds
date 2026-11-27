@@ -34,6 +34,8 @@ static void Platform3DS_RequestOrdinaryGame(void){}
 static void Platform3DS_RequestRandomizerMenu(void){}
 static int Platform3DS_GetDisplayMode(void){return 1;}
 static int Platform3DS_GetWideEdgeMode(void){return 1;}
+static bool Platform3DS_StereoSupported(void){return !new_model;}
+static int Platform3DS_GetStereoLevel(void){return 2;}
 static int Platform3DS_GetWideZoomIndex(void){return 0;}
 static int Platform3DS_GetTurboMultiplier(void){return 5;}
 static int Platform3DS_GetTurboControl(void){return fixture_turbo;}
@@ -253,7 +255,7 @@ int main(int argc,char **argv){
     // Every settings list shares the header inset, first row, height and gap.
     RectFS expected=settings_option_row(panel,0,6);
     RectFS *rows=screen==0?settings_row_r:screen==1?gameplay_row_r:screen==2?screen_row_r:developer_row_r;
-    int n=screen==0||screen==1?5:screen==2?4:screen==3?6:0;
+    int n=screen==0||screen==1?5:screen==2?(new_model?4:5):screen==3?6:0;
     for(int i=0;i<n;i++) {
       bounds(rows[i],panel);assert(rows[i].x==panel.x+8&&rows[i].w==panel.w-16);
       assert(rows[i].h==expected.h&&rows[i].y==expected.y+i*(expected.h+3));
