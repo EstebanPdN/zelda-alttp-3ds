@@ -92,7 +92,7 @@ static bool g_reset_requested;
 
 static bool g_menu_language_seen;
 static int g_stereo_level; /* 0 = off, 1..3 = 3D depth strength */
-static bool g_stereo_terrain = true; /* depth from collision data (terrain, objects) */
+static bool g_stereo_terrain; /* opt-in: depth from collision data (terrain, objects) */
 static unsigned g_current_fps;
 static uint64_t g_dump_saved_overlay_until_ms;
 static bool g_quick_dump_requested;
@@ -618,7 +618,7 @@ void Platform3DS_LoadRuntimeSettings(void) {
   g_runtime_wide_edge_seen = false;
   g_show_fps = false;
   g_stereo_level = 0;
-  g_stereo_terrain = true;
+  g_stereo_terrain = false;
   FILE *file = fopen("zelda3.ini", "rb");
   if (!file) {
     UI_SetLanguage(MenuLanguageFromSystem());
